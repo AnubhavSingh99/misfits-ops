@@ -96,7 +96,7 @@ export function HealthDashboard() {
 
       // Construct URL with club status filter
       const statusParam = selectedClubStatus !== 'all' ? `?status=${selectedClubStatus}` : '?status=all';
-      const response = await fetch(`http://localhost:3001/api/health/clubs${statusParam}`);
+      const response = await fetch(`http://localhost:5001/api/health/clubs${statusParam}`);
 
       if (response.ok) {
         const data = await response.json();

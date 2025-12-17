@@ -253,7 +253,7 @@ export function calculateClubHealth(clubData: {
     capacity: Math.round(clubData.capacity_percentage || 0),
     capacity_health: capacityHealthColor,
     repeat_rate: Math.round(isNewClub ? 0 : clubData.repeat_rate_percentage || 0),
-    rating: parseFloat((clubData.avg_rating || 0).toFixed(1)),
+    rating: parseFloat((Number(clubData.avg_rating) || 0).toFixed(1)),
     revenue: Math.round(clubData.weekly_revenue || 0), // Show weekly revenue in paisa
     health_status: healthStatusForUI,
     health_score: healthScore,

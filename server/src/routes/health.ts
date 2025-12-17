@@ -138,7 +138,7 @@ router.get('/clubs', async (req, res) => {
           CASE
             WHEN SUM(CASE WHEN e.created_at >= DATE_TRUNC('week', CURRENT_DATE - INTERVAL '1 week')
                               AND e.created_at < DATE_TRUNC('week', CURRENT_DATE)
-                          THEN e.max_capacity ELSE 0 END) > 0
+                          THEN e.max_people ELSE 0 END) > 0
             THEN ROUND(
               (COUNT(CASE WHEN b.booking_status = 'REGISTERED'
                               AND e.created_at >= DATE_TRUNC('week', CURRENT_DATE - INTERVAL '1 week')
@@ -146,7 +146,7 @@ router.get('/clubs', async (req, res) => {
                           THEN b.id ELSE NULL END) * 100.0) /
               SUM(CASE WHEN e.created_at >= DATE_TRUNC('week', CURRENT_DATE - INTERVAL '1 week')
                               AND e.created_at < DATE_TRUNC('week', CURRENT_DATE)
-                          THEN e.max_capacity ELSE 0 END)
+                          THEN e.max_people ELSE 0 END)
             )
             ELSE 0
           END as last_week_capacity_percentage,
@@ -174,12 +174,12 @@ router.get('/clubs', async (req, res) => {
             ELSE 0
           END as last_week_repeat_rate_percentage,
 
-          -- Average rating from last week's events
+          -- Average rating from last week's events (using feedback from bookings)
           ROUND(
-            AVG(CASE WHEN r.rating IS NOT NULL
+            AVG(CASE WHEN (b.feedback_details->>'rating')::numeric IS NOT NULL
                          AND e.created_at >= DATE_TRUNC('week', CURRENT_DATE - INTERVAL '1 week')
                          AND e.created_at < DATE_TRUNC('week', CURRENT_DATE)
-                     THEN r.rating ELSE NULL END), 1
+                     THEN (b.feedback_details->>'rating')::numeric ELSE NULL END), 1
           ) as last_week_avg_rating,
 
           -- Revenue from completed payments last week
@@ -192,7 +192,6 @@ router.get('/clubs', async (req, res) => {
         LEFT JOIN activity a ON c.activity_id = a.id
         LEFT JOIN event e ON c.pk = e.club_id
         LEFT JOIN booking b ON e.pk = b.event_id
-        LEFT JOIN rating r ON e.pk = r.event_id
         WHERE 1=1 ${statusFilter}
         GROUP BY c.pk, c.id, c.name, c.status, c.created_at, a.name
       ),
@@ -203,7 +202,7 @@ router.get('/clubs', async (req, res) => {
           CASE
             WHEN SUM(CASE WHEN e.created_at >= DATE_TRUNC('week', CURRENT_DATE - INTERVAL '2 weeks')
                               AND e.created_at < DATE_TRUNC('week', CURRENT_DATE - INTERVAL '1 week')
-                          THEN e.max_capacity ELSE 0 END) > 0
+                          THEN e.max_people ELSE 0 END) > 0
             THEN ROUND(
               (COUNT(CASE WHEN b.booking_status = 'REGISTERED'
                               AND e.created_at >= DATE_TRUNC('week', CURRENT_DATE - INTERVAL '2 weeks')
@@ -211,7 +210,7 @@ router.get('/clubs', async (req, res) => {
                           THEN b.id ELSE NULL END) * 100.0) /
               SUM(CASE WHEN e.created_at >= DATE_TRUNC('week', CURRENT_DATE - INTERVAL '2 weeks')
                               AND e.created_at < DATE_TRUNC('week', CURRENT_DATE - INTERVAL '1 week')
-                          THEN e.max_capacity ELSE 0 END)
+                          THEN e.max_people ELSE 0 END)
             )
             ELSE 0
           END as last_to_last_week_capacity_percentage,
@@ -239,10 +238,10 @@ router.get('/clubs', async (req, res) => {
           END as last_to_last_week_repeat_rate_percentage,
 
           ROUND(
-            AVG(CASE WHEN r.rating IS NOT NULL
+            AVG(CASE WHEN (b.feedback_details->>'rating')::numeric IS NOT NULL
                          AND e.created_at >= DATE_TRUNC('week', CURRENT_DATE - INTERVAL '2 weeks')
                          AND e.created_at < DATE_TRUNC('week', CURRENT_DATE - INTERVAL '1 week')
-                     THEN r.rating ELSE NULL END), 1
+                     THEN (b.feedback_details->>'rating')::numeric ELSE NULL END), 1
           ) as last_to_last_week_avg_rating,
 
           COALESCE(SUM(CASE WHEN b.booking_payment_status = 'COMPLETED'
@@ -253,7 +252,6 @@ router.get('/clubs', async (req, res) => {
         FROM club c
         LEFT JOIN event e ON c.pk = e.club_id
         LEFT JOIN booking b ON e.pk = b.event_id
-        LEFT JOIN rating r ON e.pk = r.event_id
         WHERE 1=1 ${statusFilter}
         GROUP BY c.pk
       )
