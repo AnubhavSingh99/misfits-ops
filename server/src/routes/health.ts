@@ -115,12 +115,16 @@ router.get('/clubs', async (req, res) => {
           AND e.created_at < DATE_TRUNC('week', CURRENT_DATE)
       ),
       last_week_bookings AS (
-        -- Get bookings from last week events
+        -- Get bookings from last week events (Claude Control logic)
         SELECT
           lwe.club_id,
-          COUNT(CASE WHEN b.booking_status = 'REGISTERED' THEN b.id ELSE NULL END) as registered_count,
-          COUNT(DISTINCT CASE WHEN b.booking_status = 'REGISTERED' THEN b.user_id ELSE NULL END) as unique_users,
-          COUNT(b.id) as total_bookings,
+          -- Capacity calculation: REGISTERED + WAITLISTED + OPEN_FOR_REPLACEMENT + ATTENDED + NOT_ATTENDED
+          COUNT(CASE WHEN b.booking_status IN ('REGISTERED', 'WAITLISTED', 'OPEN_FOR_REPLACEMENT', 'ATTENDED', 'NOT_ATTENDED')
+                     THEN b.id ELSE NULL END) as capacity_bookings_count,
+          COUNT(DISTINCT CASE WHEN b.booking_status IN ('REGISTERED', 'WAITLISTED', 'OPEN_FOR_REPLACEMENT', 'ATTENDED', 'NOT_ATTENDED')
+                              THEN b.user_id ELSE NULL END) as unique_users,
+          COUNT(CASE WHEN b.booking_status IN ('REGISTERED', 'WAITLISTED', 'OPEN_FOR_REPLACEMENT', 'ATTENDED', 'NOT_ATTENDED')
+                     THEN b.id ELSE NULL END) as total_valid_bookings,
           AVG(CASE WHEN (b.feedback_details->>'rating')::numeric IS NOT NULL
                    THEN (b.feedback_details->>'rating')::numeric ELSE NULL END) as avg_rating
         FROM last_week_events lwe
@@ -166,10 +170,10 @@ router.get('/clubs', async (req, res) => {
             ORDER BY COUNT(*) DESC
             LIMIT 1
           ) as area,
-          -- Capacity utilization = Number of registrations / Number of slots opened
+          -- Capacity utilization = All valid bookings / Total capacity (Claude Control logic)
           CASE
             WHEN COALESCE(lwc.total_slots, 0) > 0
-            THEN ROUND((COALESCE(lwb.registered_count, 0) * 100.0) / lwc.total_slots)
+            THEN ROUND((COALESCE(lwb.capacity_bookings_count, 0) * 100.0) / lwc.total_slots)
             ELSE 0
           END as last_week_capacity_percentage,
 
@@ -177,7 +181,7 @@ router.get('/clubs', async (req, res) => {
           CASE
             WHEN COALESCE(lwb.unique_users, 0) > 0
             THEN ROUND(
-              ((COALESCE(lwb.total_bookings, 0) - COALESCE(lwb.unique_users, 0)) * 100.0) /
+              ((COALESCE(lwb.total_valid_bookings, 0) - COALESCE(lwb.unique_users, 0)) * 100.0) /
               COALESCE(lwb.unique_users, 0)
             )
             ELSE 0
@@ -200,8 +204,8 @@ router.get('/clubs', async (req, res) => {
         LEFT JOIN last_week_bookings lwb ON c.pk = lwb.club_id
         LEFT JOIN last_week_capacity lwc ON c.pk = lwc.club_id
         WHERE 1=1 ${statusFilter}
-        GROUP BY c.pk, c.id, c.name, c.status, c.created_at, a.name, lwb.registered_count,
-                 lwb.unique_users, lwb.total_bookings, lwb.avg_rating, lwc.total_slots
+        GROUP BY c.pk, c.id, c.name, c.status, c.created_at, a.name, lwb.capacity_bookings_count,
+                 lwb.unique_users, lwb.total_valid_bookings, lwb.avg_rating, lwc.total_slots
       ),
       last_to_last_week_data AS (
         -- Get week before last week data for comparison
