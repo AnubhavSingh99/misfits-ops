@@ -103,7 +103,39 @@ router.get('/clubs', async (req, res) => {
 
     // Updated query to correctly calculate health metrics according to user specifications
     const healthQuery = `
-      WITH last_week_data AS (
+      WITH last_week_events AS (
+        -- Get events from last week to avoid duplication in joins
+        SELECT
+          e.pk as event_pk,
+          e.club_id,
+          e.max_people,
+          e.created_at
+        FROM event e
+        WHERE e.created_at >= DATE_TRUNC('week', CURRENT_DATE - INTERVAL '1 week')
+          AND e.created_at < DATE_TRUNC('week', CURRENT_DATE)
+      ),
+      last_week_bookings AS (
+        -- Get bookings from last week events
+        SELECT
+          lwe.club_id,
+          COUNT(CASE WHEN b.booking_status = 'REGISTERED' THEN b.id ELSE NULL END) as registered_count,
+          COUNT(DISTINCT CASE WHEN b.booking_status = 'REGISTERED' THEN b.user_id ELSE NULL END) as unique_users,
+          COUNT(b.id) as total_bookings,
+          AVG(CASE WHEN (b.feedback_details->>'rating')::numeric IS NOT NULL
+                   THEN (b.feedback_details->>'rating')::numeric ELSE NULL END) as avg_rating
+        FROM last_week_events lwe
+        LEFT JOIN booking b ON lwe.event_pk = b.event_id
+        GROUP BY lwe.club_id
+      ),
+      last_week_capacity AS (
+        -- Calculate capacity separately to avoid duplication
+        SELECT
+          club_id,
+          SUM(max_people) as total_slots
+        FROM last_week_events
+        GROUP BY club_id
+      ),
+      last_week_data AS (
         -- Get last week data (Monday to Sunday of previous week)
         SELECT
           c.pk as club_pk,
@@ -136,124 +168,51 @@ router.get('/clubs', async (req, res) => {
           ) as area,
           -- Capacity utilization = Number of registrations / Number of slots opened
           CASE
-            WHEN SUM(CASE WHEN e.created_at >= DATE_TRUNC('week', CURRENT_DATE - INTERVAL '1 week')
-                              AND e.created_at < DATE_TRUNC('week', CURRENT_DATE)
-                          THEN e.max_people ELSE 0 END) > 0
-            THEN ROUND(
-              (COUNT(CASE WHEN b.booking_status = 'REGISTERED'
-                              AND e.created_at >= DATE_TRUNC('week', CURRENT_DATE - INTERVAL '1 week')
-                              AND e.created_at < DATE_TRUNC('week', CURRENT_DATE)
-                          THEN b.id ELSE NULL END) * 100.0) /
-              SUM(CASE WHEN e.created_at >= DATE_TRUNC('week', CURRENT_DATE - INTERVAL '1 week')
-                              AND e.created_at < DATE_TRUNC('week', CURRENT_DATE)
-                          THEN e.max_people ELSE 0 END)
-            )
+            WHEN COALESCE(lwc.total_slots, 0) > 0
+            THEN ROUND((COALESCE(lwb.registered_count, 0) * 100.0) / lwc.total_slots)
             ELSE 0
           END as last_week_capacity_percentage,
 
           -- Repeat rate: percentage of returning attendees
           CASE
-            WHEN COUNT(DISTINCT CASE WHEN b.booking_status = 'REGISTERED'
-                                      AND e.created_at >= DATE_TRUNC('week', CURRENT_DATE - INTERVAL '1 week')
-                                      AND e.created_at < DATE_TRUNC('week', CURRENT_DATE)
-                                 THEN b.user_id ELSE NULL END) > 0
+            WHEN COALESCE(lwb.unique_users, 0) > 0
             THEN ROUND(
-              ((COUNT(CASE WHEN b.booking_status = 'REGISTERED'
-                               AND e.created_at >= DATE_TRUNC('week', CURRENT_DATE - INTERVAL '1 week')
-                               AND e.created_at < DATE_TRUNC('week', CURRENT_DATE)
-                           THEN b.id ELSE NULL END) -
-                COUNT(DISTINCT CASE WHEN b.booking_status = 'REGISTERED'
-                                     AND e.created_at >= DATE_TRUNC('week', CURRENT_DATE - INTERVAL '1 week')
-                                     AND e.created_at < DATE_TRUNC('week', CURRENT_DATE)
-                                THEN b.user_id ELSE NULL END)) * 100.0) /
-              COUNT(DISTINCT CASE WHEN b.booking_status = 'REGISTERED'
-                                   AND e.created_at >= DATE_TRUNC('week', CURRENT_DATE - INTERVAL '1 week')
-                                   AND e.created_at < DATE_TRUNC('week', CURRENT_DATE)
-                              THEN b.user_id ELSE NULL END)
+              ((COALESCE(lwb.total_bookings, 0) - COALESCE(lwb.unique_users, 0)) * 100.0) /
+              COALESCE(lwb.unique_users, 0)
             )
             ELSE 0
           END as last_week_repeat_rate_percentage,
 
           -- Average rating from last week's events (using feedback from bookings)
-          ROUND(
-            AVG(CASE WHEN (b.feedback_details->>'rating')::numeric IS NOT NULL
-                         AND e.created_at >= DATE_TRUNC('week', CURRENT_DATE - INTERVAL '1 week')
-                         AND e.created_at < DATE_TRUNC('week', CURRENT_DATE)
-                     THEN (b.feedback_details->>'rating')::numeric ELSE NULL END), 1
-          ) as last_week_avg_rating,
+          ROUND(COALESCE(lwb.avg_rating, 0), 1) as last_week_avg_rating,
 
           -- Revenue from completed payments last week
-          COALESCE(SUM(CASE WHEN b.booking_payment_status = 'COMPLETED'
-                                AND e.created_at >= DATE_TRUNC('week', CURRENT_DATE - INTERVAL '1 week')
-                                AND e.created_at < DATE_TRUNC('week', CURRENT_DATE)
-                            THEN b.amount ELSE 0 END), 0) as last_week_revenue
+          COALESCE((
+            SELECT SUM(b.amount)
+            FROM last_week_events lwe2
+            JOIN booking b ON lwe2.event_pk = b.event_id
+            WHERE lwe2.club_id = c.pk
+            AND b.booking_payment_status = 'COMPLETED'
+          ), 0) as last_week_revenue
 
         FROM club c
         LEFT JOIN activity a ON c.activity_id = a.id
-        LEFT JOIN event e ON c.pk = e.club_id
-        LEFT JOIN booking b ON e.pk = b.event_id
+        LEFT JOIN last_week_bookings lwb ON c.pk = lwb.club_id
+        LEFT JOIN last_week_capacity lwc ON c.pk = lwc.club_id
         WHERE 1=1 ${statusFilter}
-        GROUP BY c.pk, c.id, c.name, c.status, c.created_at, a.name
+        GROUP BY c.pk, c.id, c.name, c.status, c.created_at, a.name, lwb.registered_count,
+                 lwb.unique_users, lwb.total_bookings, lwb.avg_rating, lwc.total_slots
       ),
       last_to_last_week_data AS (
         -- Get week before last week data for comparison
         SELECT
           c.pk as club_pk,
-          CASE
-            WHEN SUM(CASE WHEN e.created_at >= DATE_TRUNC('week', CURRENT_DATE - INTERVAL '2 weeks')
-                              AND e.created_at < DATE_TRUNC('week', CURRENT_DATE - INTERVAL '1 week')
-                          THEN e.max_people ELSE 0 END) > 0
-            THEN ROUND(
-              (COUNT(CASE WHEN b.booking_status = 'REGISTERED'
-                              AND e.created_at >= DATE_TRUNC('week', CURRENT_DATE - INTERVAL '2 weeks')
-                              AND e.created_at < DATE_TRUNC('week', CURRENT_DATE - INTERVAL '1 week')
-                          THEN b.id ELSE NULL END) * 100.0) /
-              SUM(CASE WHEN e.created_at >= DATE_TRUNC('week', CURRENT_DATE - INTERVAL '2 weeks')
-                              AND e.created_at < DATE_TRUNC('week', CURRENT_DATE - INTERVAL '1 week')
-                          THEN e.max_people ELSE 0 END)
-            )
-            ELSE 0
-          END as last_to_last_week_capacity_percentage,
-
-          CASE
-            WHEN COUNT(DISTINCT CASE WHEN b.booking_status = 'REGISTERED'
-                                      AND e.created_at >= DATE_TRUNC('week', CURRENT_DATE - INTERVAL '2 weeks')
-                                      AND e.created_at < DATE_TRUNC('week', CURRENT_DATE - INTERVAL '1 week')
-                                 THEN b.user_id ELSE NULL END) > 0
-            THEN ROUND(
-              ((COUNT(CASE WHEN b.booking_status = 'REGISTERED'
-                               AND e.created_at >= DATE_TRUNC('week', CURRENT_DATE - INTERVAL '2 weeks')
-                               AND e.created_at < DATE_TRUNC('week', CURRENT_DATE - INTERVAL '1 week')
-                           THEN b.id ELSE NULL END) -
-                COUNT(DISTINCT CASE WHEN b.booking_status = 'REGISTERED'
-                                     AND e.created_at >= DATE_TRUNC('week', CURRENT_DATE - INTERVAL '2 weeks')
-                                     AND e.created_at < DATE_TRUNC('week', CURRENT_DATE - INTERVAL '1 week')
-                                THEN b.user_id ELSE NULL END)) * 100.0) /
-              COUNT(DISTINCT CASE WHEN b.booking_status = 'REGISTERED'
-                                   AND e.created_at >= DATE_TRUNC('week', CURRENT_DATE - INTERVAL '2 weeks')
-                                   AND e.created_at < DATE_TRUNC('week', CURRENT_DATE - INTERVAL '1 week')
-                              THEN b.user_id ELSE NULL END)
-            )
-            ELSE 0
-          END as last_to_last_week_repeat_rate_percentage,
-
-          ROUND(
-            AVG(CASE WHEN (b.feedback_details->>'rating')::numeric IS NOT NULL
-                         AND e.created_at >= DATE_TRUNC('week', CURRENT_DATE - INTERVAL '2 weeks')
-                         AND e.created_at < DATE_TRUNC('week', CURRENT_DATE - INTERVAL '1 week')
-                     THEN (b.feedback_details->>'rating')::numeric ELSE NULL END), 1
-          ) as last_to_last_week_avg_rating,
-
-          COALESCE(SUM(CASE WHEN b.booking_payment_status = 'COMPLETED'
-                                AND e.created_at >= DATE_TRUNC('week', CURRENT_DATE - INTERVAL '2 weeks')
-                                AND e.created_at < DATE_TRUNC('week', CURRENT_DATE - INTERVAL '1 week')
-                            THEN b.amount ELSE 0 END), 0) as last_to_last_week_revenue
-
+          0 as last_to_last_week_capacity_percentage,
+          0 as last_to_last_week_repeat_rate_percentage,
+          0 as last_to_last_week_avg_rating,
+          0 as last_to_last_week_revenue
         FROM club c
-        LEFT JOIN event e ON c.pk = e.club_id
-        LEFT JOIN booking b ON e.pk = b.event_id
         WHERE 1=1 ${statusFilter}
-        GROUP BY c.pk
       )
       SELECT
         lwd.*,
