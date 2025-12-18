@@ -591,7 +591,6 @@ router.get('/activities', async (req, res) => {
         AND a.name != ''
         AND a.name != 'Test'
         AND c.is_private = false
-        AND c.status = 'ACTIVE'
       GROUP BY a.id, a.name
       HAVING COUNT(c.pk) > 0
       ORDER BY active_clubs DESC, club_count DESC
@@ -687,10 +686,18 @@ router.get('/clubs', async (req, res) => {
     const { activity, city, area, status } = req.query;
 
     let whereConditions = [
-      "c.status = 'ACTIVE'",
       "c.is_private = false",
       "a.name != 'Test'"
     ];
+
+    // Add status filter if specified, otherwise show all statuses
+    if (status && status !== 'all') {
+      if (status === 'active') {
+        whereConditions.push("c.status = 'ACTIVE'");
+      } else if (status === 'inactive') {
+        whereConditions.push("c.status = 'INACTIVE'");
+      }
+    }
 
     if (activity && activity !== 'all') {
       whereConditions.push(`a.name = '${activity}'`);
