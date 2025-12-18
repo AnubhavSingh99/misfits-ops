@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react'
+// Cache bust: 2024-12-18-14:00
 import { Users, Star, TrendingUp, Building2, Plus, Edit, Save, X, Trash2, ChevronDown, ChevronUp, UserPlus } from 'lucide-react'
 import { getActivities, getCities } from '../services/api'
 
@@ -95,8 +96,17 @@ export function POCManagement() {
   const [dataSource, setDataSource] = useState<'default' | 'database' | 'mock'>('default')
   const [editingActivity, setEditingActivity] = useState<string | null>(null)
   const [showAddActivityForm, setShowAddActivityForm] = useState(false)
-  const [newActivity, setNewActivity] = useState<Omit<Activity, 'id' | 'clubCount' | 'activeClubs' | 'inactiveClubs'>>({
-    name: ''
+  const [newActivity, setNewActivity] = useState<{name: string, type: 'scale' | 'long_tail'}>({
+    name: '',
+    type: 'scale'
+  })
+
+  const [categorizedActivities, setCategorizedActivities] = useState<{
+    scale: string[]
+    long_tail: string[]
+  }>({
+    scale: [],
+    long_tail: []
   })
   const [editingActivityHead, setEditingActivityHead] = useState<string | null>(null)
   const [showAddActivityHeadForm, setShowAddActivityHeadForm] = useState(false)
@@ -439,27 +449,43 @@ export function POCManagement() {
 
   // Activity management functions
   const updateActivityType = (activityName: string, newType: 'scale' | 'long_tail') => {
-    setActivities(activities.map(activity =>
-      activity.name === activityName ? { ...activity, type: newType } : activity
-    ))
+    setCategorizedActivities(prev => {
+      // Remove from both categories first
+      const newState = {
+        scale: prev.scale.filter(name => name !== activityName),
+        long_tail: prev.long_tail.filter(name => name !== activityName)
+      }
+      // Add to the new category
+      newState[newType] = [...newState[newType], activityName]
+      return newState
+    })
   }
 
   const addNewActivity = () => {
     if (!newActivity.name) return
 
-    const activity: Activity = {
-      ...newActivity,
-      clubs: 0,
-      revenue: 0
+    // Check if activity already exists in either category
+    if (categorizedActivities.scale.includes(newActivity.name) ||
+        categorizedActivities.long_tail.includes(newActivity.name)) {
+      alert('Activity already categorized!')
+      return
     }
 
-    setActivities([...activities, activity])
+    // Add to the selected category
+    setCategorizedActivities(prev => ({
+      ...prev,
+      [newActivity.type]: [...prev[newActivity.type], newActivity.name]
+    }))
+
     setNewActivity({ name: '', type: 'scale' })
     setShowAddActivityForm(false)
   }
 
   const deleteActivity = (activityName: string) => {
-    setActivities(activities.filter(activity => activity.name !== activityName))
+    setCategorizedActivities(prev => ({
+      scale: prev.scale.filter(name => name !== activityName),
+      long_tail: prev.long_tail.filter(name => name !== activityName)
+    }))
   }
 
   // Activity Head management functions
@@ -519,8 +545,9 @@ export function POCManagement() {
     setShowAddActivityHeadForm(false)
   }
 
-  const scaleActivities = activities.filter(a => a.activeClubs >= 10) // Scale activities have 10+ clubs
-  const longTailActivities = activities.filter(a => a.activeClubs < 10) // Long tail activities have <10 clubs
+  // Get categorized activities with their full data
+  const scaleActivities = activities.filter(a => categorizedActivities.scale.includes(a.name))
+  const longTailActivities = activities.filter(a => categorizedActivities.long_tail.includes(a.name))
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 p-6">
@@ -602,11 +629,20 @@ export function POCManagement() {
 
           {/* Long Tail Activities */}
           <div className="bg-white rounded-xl p-6 shadow-lg border border-gray-100">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="p-2 bg-gray-500 rounded-lg">
-                <Star className="h-5 w-5 text-white" />
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-gray-500 rounded-lg">
+                  <Star className="h-5 w-5 text-white" />
+                </div>
+                <h3 className="text-xl font-bold text-gray-900">Long Tail Activities ({longTailActivities.length})</h3>
               </div>
-              <h3 className="text-xl font-bold text-gray-900">Long Tail Activities ({longTailActivities.length})</h3>
+              <button
+                onClick={() => setShowAddActivityForm(true)}
+                className="p-1 bg-gray-600 text-white rounded hover:bg-gray-700"
+                title="Add New Activity"
+              >
+                <Plus className="h-4 w-4" />
+              </button>
             </div>
             <div className="grid grid-cols-2 gap-2">
               {longTailActivities.map(activity => (
@@ -1156,14 +1192,19 @@ export function POCManagement() {
 
               <div className="space-y-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Activity Name</label>
-                  <input
-                    type="text"
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Select Activity</label>
+                  <select
                     value={newActivity.name}
                     onChange={(e) => setNewActivity({...newActivity, name: e.target.value})}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-                    placeholder="e.g., Hiking"
-                  />
+                  >
+                    <option value="">Select an activity...</option>
+                    {activities.map(activity => (
+                      <option key={activity.id} value={activity.name}>
+                        {activity.name} ({activity.clubCount} clubs, {activity.activeClubs} active)
+                      </option>
+                    ))}
+                  </select>
                 </div>
 
                 <div>
