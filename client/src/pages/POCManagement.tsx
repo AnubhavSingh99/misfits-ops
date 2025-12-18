@@ -1,11 +1,20 @@
 import React, { useState, useEffect } from 'react'
 import { Users, Star, TrendingUp, Building2, Plus, Edit, Save, X, Trash2, ChevronDown, ChevronUp, UserPlus } from 'lucide-react'
+import { getActivities, getCities } from '../services/api'
 
 interface Activity {
+  id: string
   name: string
-  type: 'scale' | 'long_tail'
-  clubs: number
-  revenue: number
+  clubCount: number
+  activeClubs: number
+  inactiveClubs: number
+}
+
+interface City {
+  id: string
+  name: string
+  areas: Array<{id: string, name: string}>
+  clubCount: number
 }
 
 interface TeamMember {
@@ -41,35 +50,11 @@ interface CityHead {
   dualRoleDescription?: string
 }
 
-// Default activities (fallback)
-const DEFAULT_ACTIVITIES: Activity[] = [
-  { name: 'Running', type: 'scale', clubs: 45, revenue: 450000 },
-  { name: 'Photography', type: 'scale', clubs: 38, revenue: 380000 },
-  { name: 'Books', type: 'scale', clubs: 32, revenue: 320000 },
-  { name: 'Music', type: 'scale', clubs: 28, revenue: 280000 },
-  { name: 'Art', type: 'scale', clubs: 25, revenue: 250000 },
-  { name: 'Cycling', type: 'scale', clubs: 22, revenue: 220000 },
-  { name: 'Dance', type: 'scale', clubs: 20, revenue: 200000 },
-  { name: 'Sports', type: 'scale', clubs: 18, revenue: 180000 },
-  { name: 'Fitness', type: 'scale', clubs: 15, revenue: 150000 },
-  { name: 'Tech Talks', type: 'scale', clubs: 12, revenue: 120000 },
-  { name: 'Poetry', type: 'scale', clubs: 10, revenue: 100000 },
-  { name: 'Business', type: 'scale', clubs: 8, revenue: 80000 },
-  { name: 'Cooking', type: 'scale', clubs: 7, revenue: 70000 },
-  // Long tail activities
-  { name: 'Gardening', type: 'long_tail', clubs: 5, revenue: 25000 },
-  { name: 'Chess', type: 'long_tail', clubs: 4, revenue: 20000 },
-  { name: 'Yoga', type: 'long_tail', clubs: 3, revenue: 15000 },
-  { name: 'Meditation', type: 'long_tail', clubs: 3, revenue: 15000 },
-  { name: 'Board Games', type: 'long_tail', clubs: 2, revenue: 10000 },
-]
-
-const CITIES = ['Mumbai', 'Delhi', 'Bangalore', 'Pune']
 const TEAMS = ['Phoenix', 'Rocket', 'Thunder']
 
 function getActivityBadge(activity: string, activities: Activity[], onClick?: () => void) {
   const activityData = activities.find(a => a.name === activity)
-  const isScale = activityData?.type === 'scale'
+  const isScale = activityData ? activityData.activeClubs >= 10 : false // Scale activities have 10+ clubs
 
   return (
     <span
@@ -77,7 +62,7 @@ function getActivityBadge(activity: string, activities: Activity[], onClick?: ()
         isScale ? 'bg-blue-100 text-blue-800 hover:bg-blue-200' : 'bg-gray-100 text-gray-800 hover:bg-gray-200'
       }`}
       onClick={onClick}
-      title={onClick ? "Click to edit activities" : `${activity} - ${isScale ? 'Scale Activity' : 'Long Tail Activity'}`}
+      title={onClick ? "Click to edit activities" : `${activity} - ${activityData ? `${activityData.activeClubs} clubs` : 'Activity'}`}
     >
       {activity} {isScale ? '🚀' : '📝'}
     </span>
@@ -103,14 +88,15 @@ function formatRevenue(amount: number) {
 }
 
 export function POCManagement() {
-  const [activities, setActivities] = useState<Activity[]>(DEFAULT_ACTIVITIES)
-  const [activitiesLoading, setActivitiesLoading] = useState(false)
+  const [activities, setActivities] = useState<Activity[]>([])
+  const [activitiesLoading, setActivitiesLoading] = useState(true)
+  const [cities, setCities] = useState<City[]>([])
+  const [citiesLoading, setCitiesLoading] = useState(true)
   const [dataSource, setDataSource] = useState<'default' | 'database' | 'mock'>('default')
   const [editingActivity, setEditingActivity] = useState<string | null>(null)
   const [showAddActivityForm, setShowAddActivityForm] = useState(false)
-  const [newActivity, setNewActivity] = useState<Omit<Activity, 'clubs' | 'revenue'>>({
-    name: '',
-    type: 'scale'
+  const [newActivity, setNewActivity] = useState<Omit<Activity, 'id' | 'clubCount' | 'activeClubs' | 'inactiveClubs'>>({
+    name: ''
   })
   const [editingActivityHead, setEditingActivityHead] = useState<string | null>(null)
   const [showAddActivityHeadForm, setShowAddActivityHeadForm] = useState(false)
@@ -123,11 +109,7 @@ export function POCManagement() {
   const [activityHeads, setActivityHeads] = useState<ActivityHead[]>([])
   const [activityHeadsLoading, setActivityHeadsLoading] = useState(true)
 
-  const [cityHeads, setCityHeads] = useState<CityHead[]>([
-    { id: '1', name: 'Priya', city: 'Mumbai', allActivities: true, clubs: 50, revenue: 500000, health: 72, healthStatus: 'green', isDualRole: true, dualRoleDescription: 'Also Photography Head' },
-    { id: '2', name: 'Rakesh', city: 'Delhi', allActivities: true, clubs: 45, revenue: 450000, health: 70, healthStatus: 'green' },
-    { id: '3', name: 'Sunita', city: 'Bangalore', allActivities: true, clubs: 40, revenue: 400000, health: 75, healthStatus: 'green' },
-  ])
+  const [cityHeads, setCityHeads] = useState<CityHead[]>([])
 
   const [showAddActivityHead, setShowAddActivityHead] = useState(false)
   const [showAddCityHead, setShowAddCityHead] = useState(false)
@@ -137,7 +119,7 @@ export function POCManagement() {
 
   const [newCityHead, setNewCityHead] = useState({
     name: '',
-    city: 'Mumbai',
+    city: '',
     isDualRole: false,
     dualRoleDescription: ''
   })
@@ -153,46 +135,36 @@ export function POCManagement() {
   useEffect(() => {
     const fetchData = async () => {
       setActivitiesLoading(true)
+      setCitiesLoading(true)
       setActivityHeadsLoading(true)
+
       try {
-        // Fetch both activity heads and activities list
-        const [activityHeadsResponse, activitiesResponse] = await Promise.all([
-          fetch('http://localhost:3001/api/database/activity-heads'),
-          fetch('http://localhost:3001/api/database/activities')
+        // Fetch real data from scaling APIs
+        const [activitiesData, citiesData] = await Promise.all([
+          getActivities(),
+          getCities()
         ])
 
-        const activityHeadsData = await activityHeadsResponse.json()
-        const activitiesData = await activitiesResponse.json()
+        // Set real activities data
+        setActivities(activitiesData)
+        console.log('Activities loaded from database:', activitiesData)
 
-        // Process activity heads
-        if (activityHeadsData.success && activityHeadsData.data) {
-          setActivityHeads(activityHeadsData.data)
-          setDataSource(activityHeadsData.source === 'database' ? 'database' : 'mock')
-          console.log(`Activity heads loaded from ${activityHeadsData.source}:`, activityHeadsData.data)
-        } else {
-          console.warn('Failed to fetch activity heads, using defaults')
+        // Set real cities data
+        setCities(citiesData)
+        console.log('Cities loaded from database:', citiesData)
+
+        // Set default city for new city head form
+        if (citiesData.length > 0) {
+          setNewCityHead(prev => ({ ...prev, city: citiesData[0].name }))
         }
 
-        // Process activities list for dropdown
-        if (activitiesData.success && activitiesData.data) {
-          const formattedActivities = activitiesData.data.map(activity => ({
-            name: activity.name,
-            type: activity.clubCount >= 10 ? 'scale' as const : 'long_tail' as const,
-            clubs: activity.clubCount,
-            revenue: activity.revenue * 100 // Convert back to cents for consistency
-          }))
-          setActivities(formattedActivities)
-          console.log('Activities list loaded from database:', formattedActivities)
-        } else {
-          console.warn('Failed to fetch activities list, using defaults')
-          setActivities(DEFAULT_ACTIVITIES)
-        }
+        setDataSource('database')
       } catch (error) {
-        console.warn('Error fetching data:', error)
+        console.error('Error fetching POC management data:', error)
         setDataSource('default')
-        setActivities(DEFAULT_ACTIVITIES)
       } finally {
         setActivitiesLoading(false)
+        setCitiesLoading(false)
         setActivityHeadsLoading(false)
       }
     }
@@ -212,12 +184,12 @@ export function POCManagement() {
         const processedHeads: ActivityHead[] = savedHeads.map((head: any) => {
           const totalClubs = head.activities.reduce((sum: number, activity: string) => {
             const activityData = activities.find(a => a.name === activity)
-            return sum + (activityData?.clubs || 0)
+            return sum + (activityData?.clubCount || 0)
           }, 0)
 
           const totalRevenue = head.activities.reduce((sum: number, activity: string) => {
             const activityData = activities.find(a => a.name === activity)
-            return sum + (activityData?.revenue || 0)
+            return sum + (activityData?.activeClubs * 10000 || 0) // Estimate revenue based on active clubs
           }, 0)
 
           return {
@@ -423,7 +395,7 @@ export function POCManagement() {
       }
 
       setCityHeads([...cityHeads, newHead])
-      setNewCityHead({ name: '', city: 'Mumbai', isDualRole: false, dualRoleDescription: '' })
+      setNewCityHead({ name: '', city: cities[0]?.name || '', isDualRole: false, dualRoleDescription: '' })
       setShowAddCityHead(false)
     }
   }
@@ -547,8 +519,8 @@ export function POCManagement() {
     setShowAddActivityHeadForm(false)
   }
 
-  const scaleActivities = activities.filter(a => a.type === 'scale')
-  const longTailActivities = activities.filter(a => a.type === 'long_tail')
+  const scaleActivities = activities.filter(a => a.activeClubs >= 10) // Scale activities have 10+ clubs
+  const longTailActivities = activities.filter(a => a.activeClubs < 10) // Long tail activities have <10 clubs
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 p-6">
@@ -726,14 +698,14 @@ export function POCManagement() {
                     <optgroup label="🚀 Scale Activities (High Growth)">
                       {scaleActivities.map(activity => (
                         <option key={activity.name} value={activity.name}>
-                          {activity.name} ({activity.clubs} clubs, ₹{(activity.revenue/1000).toFixed(0)}K)
+                          {activity.name} ({activity.clubCount} clubs, {activity.activeClubs} active)
                         </option>
                       ))}
                     </optgroup>
                     <optgroup label="📝 Long Tail Activities (Specialized)">
                       {longTailActivities.map(activity => (
                         <option key={activity.name} value={activity.name}>
-                          {activity.name} ({activity.clubs} clubs, ₹{(activity.revenue/1000).toFixed(0)}K)
+                          {activity.name} ({activity.clubCount} clubs, {activity.activeClubs} active)
                         </option>
                       ))}
                     </optgroup>
@@ -1061,9 +1033,15 @@ export function POCManagement() {
                     onChange={(e) => setNewCityHead({...newCityHead, city: e.target.value})}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
                   >
-                    {CITIES.map(city => (
-                      <option key={city} value={city}>{city}</option>
-                    ))}
+                    {citiesLoading ? (
+                      <option value="">Loading cities...</option>
+                    ) : (
+                      cities.map(city => (
+                        <option key={city.id} value={city.name}>
+                          {city.name} ({city.clubCount} clubs)
+                        </option>
+                      ))
+                    )}
                   </select>
                 </div>
                 <div>

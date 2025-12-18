@@ -379,6 +379,53 @@ export class ScalingPlannerService {
   }
 }
 
+// Additional helper functions for POC Management
+export async function getActivities(): Promise<Array<{
+  id: string;
+  name: string;
+  clubCount: number;
+  activeClubs: number;
+  inactiveClubs: number;
+}>> {
+  const response = await apiRequest<{
+    success: boolean;
+    activities: Array<{
+      id: string;
+      name: string;
+      clubCount: number;
+      activeClubs: number;
+      inactiveClubs: number;
+    }>;
+  }>('/scaling/activities');
+
+  if (response.success) {
+    return response.activities;
+  }
+  throw new Error('Failed to fetch activities');
+}
+
+export async function getCities(): Promise<Array<{
+  id: string;
+  name: string;
+  areas: Array<{id: string, name: string}>;
+  clubCount: number;
+}>> {
+  const response = await apiRequest<{
+    success: boolean;
+    cities: Array<{
+      id: string;
+      name: string;
+      areas: Array<{id: string, name: string}>;
+      clubCount: number;
+    }>;
+  }>('/scaling/cities');
+
+  if (response.success) {
+    return response.cities;
+  }
+  throw new Error('Failed to fetch cities');
+}
+
 // Export functions for easy access
 export const api = {
   system: SystemStateService,
