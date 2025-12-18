@@ -1189,6 +1189,12 @@ export function POCManagement() {
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
             <div className="bg-white rounded-lg p-6 max-w-md w-full">
               <h2 className="text-lg font-semibold mb-4">Add New Activity</h2>
+              {/* Debug info */}
+              {process.env.NODE_ENV === 'development' && (
+                <div className="mb-4 p-2 bg-gray-100 rounded text-xs">
+                  Debug: {activities.length} total activities, {activities.filter(a => a.activeClubs > 0).length} with active clubs
+                </div>
+              )}
 
               <div className="space-y-4">
                 <div>
@@ -1199,12 +1205,25 @@ export function POCManagement() {
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg"
                   >
                     <option value="">Select an activity...</option>
-                    {activities.map(activity => (
-                      <option key={activity.id} value={activity.name}>
-                        {activity.name} ({activity.clubCount} clubs, {activity.activeClubs} active)
-                      </option>
-                    ))}
+                    {activities
+                      .filter(activity => activity.activeClubs > 0)
+                      .map(activity => (
+                        <option key={activity.id} value={activity.name}>
+                          {activity.name} ({activity.clubCount} clubs, {activity.activeClubs} active)
+                        </option>
+                      ))}
                   </select>
+                  {activities.length === 0 && (
+                    <p className="text-sm text-gray-500 mt-1">Loading activities...</p>
+                  )}
+                  {activities.length > 0 && activities.filter(a => a.activeClubs > 0).length === 0 && (
+                    <p className="text-sm text-red-500 mt-1">No activities with active clubs found</p>
+                  )}
+                  {activities.length > 0 && (
+                    <p className="text-sm text-gray-500 mt-1">
+                      Showing {activities.filter(a => a.activeClubs > 0).length} of {activities.length} activities
+                    </p>
+                  )}
                 </div>
 
                 <div>
