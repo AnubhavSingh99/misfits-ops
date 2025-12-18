@@ -18,6 +18,7 @@ import {
   BarChart3
 } from 'lucide-react';
 import ScalingPlanner from '../components/ScalingPlanner';
+import { API_URL } from '../config/api';
 
 interface ClubHealth {
   id: number;
@@ -85,10 +86,24 @@ export function HealthDashboard() {
   const [sortBy, setSortBy] = useState<string>('health_score');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
   const [showTrends, setShowTrends] = useState(false);
+  const [autoRefresh, setAutoRefresh] = useState(true);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
   useEffect(() => {
     fetchHealthData();
-  }, [selectedClubStatus]);
+
+    // Set up auto-refresh every 30 seconds if enabled
+    let interval: NodeJS.Timeout;
+    if (autoRefresh) {
+      interval = setInterval(() => {
+        fetchHealthData();
+      }, 30000); // 30 seconds
+    }
+
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [selectedClubStatus, autoRefresh]);
 
   const fetchHealthData = async () => {
     try {
@@ -96,7 +111,7 @@ export function HealthDashboard() {
 
       // Construct URL with club status filter
       const statusParam = selectedClubStatus !== 'all' ? `?status=${selectedClubStatus}` : '?status=all';
-      const response = await fetch(`http://localhost:5001/api/health/clubs${statusParam}`);
+      const response = await fetch(`${API_URL}/api/health/clubs${statusParam}`);
 
       if (response.ok) {
         const data = await response.json();
@@ -108,6 +123,7 @@ export function HealthDashboard() {
         console.error('Health API error:', errorData);
         throw new Error(errorData.message || 'Failed to fetch health data');
       }
+      setLastUpdated(new Date());
     } catch (error) {
       console.error('Health data fetch failed:', error);
       // No fallback - show empty state with error message
@@ -227,14 +243,8 @@ export function HealthDashboard() {
           <Activity className="mx-auto h-12 w-12 text-gray-400" />
           <h3 className="mt-2 text-sm font-medium text-gray-900">No Health Data Available</h3>
           <p className="mt-1 text-sm text-gray-500">
-            Unable to connect to database. Please ensure SSH tunnel is established.
+            Unable to connect to database. Please try refreshing or contact support if the issue persists.
           </p>
-          <div className="mt-6 space-y-2 text-xs text-gray-500">
-            <p>To connect manually:</p>
-            <code className="block bg-gray-100 p-2 rounded text-left">
-              ssh -i ~/Downloads/claude-control-key -f -N -L 5433:misfits.cgncbvolnhe7.ap-south-1.rds.amazonaws.com:5432 claude-control@15.207.255.212
-            </code>
-          </div>
         </div>
       </div>
     );
@@ -260,9 +270,27 @@ export function HealthDashboard() {
             onClick={fetchHealthData}
             className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
           >
-            <RefreshCw className="h-4 w-4 mr-2" />
+            <RefreshCw className={`h-4 w-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
             Refresh
           </button>
+
+          {/* Auto-refresh toggle */}
+          <div className="flex items-center space-x-2">
+            <label className="flex items-center">
+              <input
+                type="checkbox"
+                checked={autoRefresh}
+                onChange={(e) => setAutoRefresh(e.target.checked)}
+                className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+              />
+              <span className="ml-2 text-sm text-gray-700">Auto-refresh (30s)</span>
+            </label>
+            {lastUpdated && (
+              <span className="text-xs text-gray-500">
+                Last updated: {lastUpdated.toLocaleTimeString()}
+              </span>
+            )}
+          </div>
           <button className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50">
             <Download className="h-4 w-4 mr-2" />
             Export

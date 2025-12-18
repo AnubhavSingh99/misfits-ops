@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Search, Download, RefreshCw, Settings, Filter } from 'lucide-react';
+import { API_URL, WS_URL } from '../config/api';
 
 interface POC {
   id: string;
@@ -39,12 +40,13 @@ export function UniversalFilter({ onFilterChange, currentView }: UniversalFilter
     stage: 'All',
     search: ''
   });
+  const [autoRefresh, setAutoRefresh] = useState(true);
 
   // Load POCs from database in real-time
   useEffect(() => {
     const fetchPocs = async () => {
       try {
-        const response = await fetch('http://localhost:3001/api/poc/list');
+        const response = await fetch(`${API_URL}/api/poc/list`);
         const pocsData = await response.json();
         setPocs(pocsData);
       } catch (error) {
@@ -54,8 +56,14 @@ export function UniversalFilter({ onFilterChange, currentView }: UniversalFilter
 
     fetchPocs();
 
+    // Set up auto-refresh every 60 seconds for POC data
+    let interval: NodeJS.Timeout;
+    if (autoRefresh) {
+      interval = setInterval(fetchPocs, 60000); // 60 seconds
+    }
+
     // WebSocket for real-time POC updates
-    const ws = new WebSocket('ws://localhost:5001/realtime');
+    const ws = new WebSocket(WS_URL + '/realtime');
     ws.onmessage = (event) => {
       const data = JSON.parse(event.data);
       if (data.type === 'poc_updated' || data.type === 'poc_assigned') {
@@ -63,8 +71,11 @@ export function UniversalFilter({ onFilterChange, currentView }: UniversalFilter
       }
     };
 
-    return () => ws.close();
-  }, []);
+    return () => {
+      if (interval) clearInterval(interval);
+      ws.close();
+    };
+  }, [autoRefresh]);
 
   // Generate dynamic view options based on real POCs
   const generateViewOptions = () => {
@@ -121,7 +132,7 @@ export function UniversalFilter({ onFilterChange, currentView }: UniversalFilter
 
   const fetchAreas = async (city: string) => {
     try {
-      const response = await fetch(`http://localhost:3001/api/areas?city=${city}`);
+      const response = await fetch(`${API_URL}/api/areas?city=${city}`);
       const areasData = await response.json();
       setAreas(areasData);
     } catch (error) {
@@ -132,7 +143,7 @@ export function UniversalFilter({ onFilterChange, currentView }: UniversalFilter
   const handleExport = () => {
     // Export current filtered data
     const params = new URLSearchParams(filters as any);
-    window.open(`http://localhost:3001/api/export?${params}`, '_blank');
+    window.open(`${API_URL}/api/export?${params}`, '_blank');
   };
 
   const handleRefresh = () => {

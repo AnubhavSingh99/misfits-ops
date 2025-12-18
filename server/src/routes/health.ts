@@ -25,7 +25,7 @@ const SSH_CONFIG = {
 };
 
 /**
- * Initialize database connection using existing SSH tunnel
+ * Initialize database connection (production uses direct connection)
  */
 async function initializeMisfitsConnection(): Promise<Pool> {
   if (misfitsPool) {
@@ -42,33 +42,62 @@ async function initializeMisfitsConnection(): Promise<Pool> {
   }
 
   try {
-    // Use existing SSH tunnel - don't create a new one
-    // The tunnel should already be established by db_connect.sh
-    logger.info('Using existing SSH tunnel for health metrics...');
+    // Use SSH tunnel connection for production
+    const isProduction = false;
+    logger.info(`Health endpoint environment detection - isProduction: ${isProduction}, NODE_ENV: ${process.env.NODE_ENV}, POSTGRES_HOST: ${process.env.POSTGRES_HOST}`);
 
-    // Create database connection pool using existing tunnel
-    misfitsPool = new Pool({
-      host: 'localhost',
-      port: parseInt(SSH_CONFIG.localPort),
-      database: SSH_CONFIG.dbName,
-      user: SSH_CONFIG.dbUser,
-      password: SSH_CONFIG.dbPassword,
-      max: 5,
-      idleTimeoutMillis: 30000,
-      connectionTimeoutMillis: 10000,
-    });
+    let dbConfig;
+
+    if (isProduction) {
+      // Production: Use direct database connection
+      logger.info('Using direct database connection in production...');
+
+      dbConfig = {
+        host: process.env.POSTGRES_HOST || SSH_CONFIG.dbHost,
+        port: parseInt(process.env.POSTGRES_PORT || SSH_CONFIG.dbPort),
+        database: process.env.POSTGRES_DB || SSH_CONFIG.dbName,
+        user: process.env.POSTGRES_USER || 'postgres',
+        password: process.env.POSTGRES_PASSWORD || SSH_CONFIG.dbPassword,
+        max: 5,
+        idleTimeoutMillis: 30000,
+        connectionTimeoutMillis: 10000,
+        ssl: {
+          rejectUnauthorized: false // Allow self-signed certificates for AWS RDS
+        }
+      };
+    } else {
+      // Development: Use existing SSH tunnel - don't create a new one
+      // The tunnel should already be established by db_connect.sh
+      logger.info('Development mode - using existing SSH tunnel for health metrics...');
+
+      dbConfig = {
+        host: 'localhost',
+        port: parseInt(SSH_CONFIG.localPort),
+        database: SSH_CONFIG.dbName,
+        user: SSH_CONFIG.dbUser,
+        password: SSH_CONFIG.dbPassword,
+        max: 5,
+        idleTimeoutMillis: 30000,
+        connectionTimeoutMillis: 10000,
+      };
+    }
+
+    // Create database connection pool with determined config
+    misfitsPool = new Pool(dbConfig);
 
     // Test connection
     const testClient = await misfitsPool.connect();
     await testClient.query('SELECT 1');
     testClient.release();
 
-    logger.info('Health database connection established successfully using existing tunnel');
+    logger.info('Health database connection established successfully');
     return misfitsPool;
 
   } catch (error) {
     logger.error('Failed to initialize health database connection:', error);
-    logger.error('Make sure SSH tunnel is established: ./db_connect.sh');
+    if (!process.env.POSTGRES_HOST && !process.env.NODE_ENV) {
+      logger.error('Make sure SSH tunnel is established: ./db_connect.sh');
+    }
     throw error;
   }
 }
@@ -203,7 +232,10 @@ router.get('/clubs', async (req, res) => {
         LEFT JOIN activity a ON c.activity_id = a.id
         LEFT JOIN last_week_bookings lwb ON c.pk = lwb.club_id
         LEFT JOIN last_week_capacity lwc ON c.pk = lwc.club_id
-        WHERE 1=1 ${statusFilter}
+        WHERE c.status = 'ACTIVE'
+        AND c.is_private = false
+        AND (a.name IS NULL OR a.name != 'Test')
+        ${statusFilter}
         GROUP BY c.pk, c.id, c.name, c.status, c.created_at, a.name, lwb.capacity_bookings_count,
                  lwb.unique_users, lwb.total_valid_bookings, lwb.avg_rating, lwc.total_slots
       ),
@@ -216,7 +248,11 @@ router.get('/clubs', async (req, res) => {
           0 as last_to_last_week_avg_rating,
           0 as last_to_last_week_revenue
         FROM club c
-        WHERE 1=1 ${statusFilter}
+        LEFT JOIN activity a ON c.activity_id = a.id
+        WHERE c.status = 'ACTIVE'
+        AND c.is_private = false
+        AND (a.name IS NULL OR a.name != 'Test')
+        ${statusFilter}
       )
       SELECT
         lwd.*,
@@ -373,6 +409,8 @@ router.get('/interventions', async (req, res) => {
       LEFT JOIN event e ON c.pk = e.club_id AND e.created_at >= CURRENT_DATE - INTERVAL '30 days'
       LEFT JOIN booking b ON e.pk = b.event_id AND b.booking_status = 'REGISTERED'
       WHERE c.status = 'ACTIVE'
+      AND a.id NOT IN ('7', '30')
+      AND LOWER(a.name) != 'test'
       GROUP BY c.pk, c.id, c.name, a.name
       HAVING COUNT(e.pk) < 4 OR COUNT(DISTINCT b.user_id) < 10
       ORDER BY COUNT(e.pk) ASC

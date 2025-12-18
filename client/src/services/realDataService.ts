@@ -2,6 +2,7 @@
 // Based on your Club Health Report Generation Script requirements
 
 import { SystemState, HealthMetrics, Meetup } from '../types/core';
+import { API_URL } from '../config/api';
 
 /**
  * Revenue calculation based on actual database queries
@@ -19,7 +20,7 @@ export class RealDataService {
     progress_percentage: number;
   }> {
     try {
-      const response = await fetch('http://localhost:3001/api/database/revenue', {
+      const response = await fetch(`${API_URL}/api/database/revenue`, {
         method: 'GET',
         headers: { 'Content-Type': 'application/json' }
       });
@@ -42,13 +43,7 @@ export class RealDataService {
 
     } catch (error) {
       console.error('Failed to fetch real revenue:', error);
-
-      // Fallback to estimated values based on club count
-      return {
-        current_revenue: 4200000, // ₹42L in paisa
-        target_revenue: 6000000,  // ₹60L in paisa
-        progress_percentage: 70.0
-      };
+      throw new Error('Revenue data unavailable');
     }
   }
 
@@ -63,7 +58,7 @@ export class RealDataService {
     total: number;
   }> {
     try {
-      const response = await fetch('http://localhost:3001/api/database/health', {
+      const response = await fetch(`${API_URL}/api/database/health`, {
         method: 'GET',
         headers: { 'Content-Type': 'application/json' }
       });
@@ -82,14 +77,7 @@ export class RealDataService {
 
     } catch (error) {
       console.error('Failed to fetch health distribution:', error);
-
-      // Fallback based on typical club distributions
-      return {
-        green: 111,
-        yellow: 24,
-        red: 15,
-        total: 150
-      };
+      throw new Error('Health data unavailable');
     }
   }
 
@@ -102,7 +90,7 @@ export class RealDataService {
     progress_percentage: number;
   }> {
     try {
-      const response = await fetch('http://localhost:3001/api/database/meetups', {
+      const response = await fetch(`${API_URL}/api/database/meetups`, {
         method: 'GET',
         headers: { 'Content-Type': 'application/json' }
       });
@@ -125,12 +113,7 @@ export class RealDataService {
 
     } catch (error) {
       console.error('Failed to fetch meetup count:', error);
-
-      return {
-        active_meetups: 862,
-        target_meetups: 1200,
-        progress_percentage: 71.8
-      };
+      throw new Error('Meetup data unavailable');
     }
   }
 
@@ -211,7 +194,7 @@ export class RealDataService {
    */
   static async executeQuery(query: string): Promise<any> {
     try {
-      const response = await fetch('http://localhost:3001/api/database/query', {
+      const response = await fetch(`${API_URL}/api/database/query`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ query })
@@ -286,8 +269,8 @@ export class RealDataService {
   static async getWoWComments(clubName?: string): Promise<any> {
     try {
       const url = clubName
-        ? `http://localhost:3001/api/database/wow-comments?club_name=${encodeURIComponent(clubName)}`
-        : 'http://localhost:3001/api/database/wow-comments';
+        ? `${API_URL}/api/database/wow-comments?club_name=${encodeURIComponent(clubName)}`
+        : `${API_URL}/api/database/wow-comments`;
 
       const response = await fetch(url);
       const result = await response.json();
@@ -299,34 +282,7 @@ export class RealDataService {
       }
     } catch (error) {
       console.error('Failed to fetch WoW comments:', error);
-
-      // Return fallback data structure with week numbers
-      return {
-        'Week 1': {
-          'Mumbai Run #1': { comment: 'Strong momentum, premium positioning working', blocker: '', actionTaken: 'Promoted to WhatsApp groups' },
-          'Mumbai Run #2': { comment: 'Recovery phase after venue issues', blocker: 'New venue higher cost', actionTaken: 'Negotiated rate, approved budget increase' },
-          'Mumbai Run #3': { comment: 'Excellent capacity utilization and member satisfaction', blocker: '', actionTaken: 'Expanded to 2x per week' },
-          'Mumbai Tennis': { comment: 'Consistent performance, good member retention', blocker: '', actionTaken: 'Added advanced level sessions' }
-        },
-        'Week 2': {
-          'Mumbai Run #1': { comment: 'Maintained growth trajectory, member feedback positive', blocker: '', actionTaken: 'Increased marketing spend' },
-          'Mumbai Run #2': { comment: 'Venue transition period, temporary capacity reduction', blocker: 'Venue lease expired', actionTaken: 'Found alternative location' },
-          'Mumbai Run #3': { comment: 'Strong week-over-week growth continuing', blocker: '', actionTaken: 'Added beginner sessions' },
-          'Mumbai Tennis': { comment: 'Weather challenges but good attendance', blocker: 'Monsoon affecting outdoor courts', actionTaken: 'Booked indoor backup venue' }
-        },
-        'Week 3': {
-          'Mumbai Run #1': { comment: 'Scaling strategy showing results, community building strong', blocker: '', actionTaken: 'Launched member referral program' },
-          'Mumbai Run #2': { comment: 'Gradual improvement in member engagement', blocker: '', actionTaken: 'Introduced themed runs' },
-          'Mumbai Run #3': { comment: 'Excellent member retention and word-of-mouth growth', blocker: '', actionTaken: 'Increased frequency to weekly' },
-          'Mumbai Tennis': { comment: 'Good progress in skill development programs', blocker: '', actionTaken: 'Added coaching sessions' }
-        },
-        'Week 4': {
-          'Mumbai Run #1': { comment: 'Launch phase successful, scaling strategy in place', blocker: '', actionTaken: 'Initial member onboarding completed' },
-          'Mumbai Run #2': { comment: 'Initial setup challenges but good member response', blocker: 'Route permits pending', actionTaken: 'Obtained necessary permissions' },
-          'Mumbai Run #3': { comment: 'Strong initial momentum, community forming well', blocker: '', actionTaken: 'Set up WhatsApp group' },
-          'Mumbai Tennis': { comment: 'Early stage development, good interest shown', blocker: '', actionTaken: 'Secured court bookings' }
-        }
-      };
+      throw new Error('WoW comments data unavailable');
     }
   }
 
@@ -341,7 +297,7 @@ export class RealDataService {
     actionTaken: string = ''
   ): Promise<boolean> {
     try {
-      const response = await fetch('http://localhost:3001/api/database/wow-comments', {
+      const response = await fetch(`${API_URL}/api/database/wow-comments`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

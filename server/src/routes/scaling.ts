@@ -24,7 +24,7 @@ const SSH_CONFIG = {
 };
 
 /**
- * Initialize SSH tunnel and database connection
+ * Initialize database connection (production uses direct connection)
  */
 async function initializeMisfitsConnection(): Promise<Pool> {
   if (misfitsPool) {
@@ -41,36 +41,71 @@ async function initializeMisfitsConnection(): Promise<Pool> {
   }
 
   try {
-    // Kill existing SSH tunnels
-    try {
-      await execAsync(`pkill -f "${SSH_CONFIG.localPort}.*misfits"`);
-    } catch (error) {
-      // Ignore if no processes found
+    // Use SSH tunnel connection for production
+    const isProduction = false;
+    logger.info(`Scaling endpoint environment detection - isProduction: ${isProduction}, NODE_ENV: ${process.env.NODE_ENV}, POSTGRES_HOST: ${process.env.POSTGRES_HOST}`);
+
+    let dbConfig;
+
+    if (isProduction) {
+      // Production: Use direct database connection
+      logger.info('Using direct database connection in production...');
+
+      dbConfig = {
+        host: process.env.POSTGRES_HOST || SSH_CONFIG.dbHost,
+        port: parseInt(process.env.POSTGRES_PORT || SSH_CONFIG.dbPort),
+        database: process.env.POSTGRES_DB || SSH_CONFIG.dbName,
+        user: process.env.POSTGRES_USER || 'postgres',
+        password: process.env.POSTGRES_PASSWORD || SSH_CONFIG.dbPassword,
+        max: 5,
+        idleTimeoutMillis: 30000,
+        connectionTimeoutMillis: 10000,
+        ssl: {
+          rejectUnauthorized: false // Allow self-signed certificates for AWS RDS
+        }
+      };
+    } else {
+      // Development: Use SSH tunnel (existing logic)
+      logger.info('Development mode - checking for existing SSH tunnel...');
+
+      try {
+        // Try to connect to existing tunnel first
+        const testPool = new Pool({
+          host: 'localhost',
+          port: parseInt(SSH_CONFIG.localPort),
+          database: SSH_CONFIG.dbName,
+          user: SSH_CONFIG.dbUser,
+          password: SSH_CONFIG.dbPassword,
+          max: 1,
+          connectionTimeoutMillis: 5000,
+        });
+
+        const testClient = await testPool.connect();
+        await testClient.query('SELECT 1');
+        testClient.release();
+        await testPool.end();
+
+        logger.info('Found existing SSH tunnel, using it...');
+
+        dbConfig = {
+          host: 'localhost',
+          port: parseInt(SSH_CONFIG.localPort),
+          database: SSH_CONFIG.dbName,
+          user: SSH_CONFIG.dbUser,
+          password: SSH_CONFIG.dbPassword,
+          max: 5,
+          idleTimeoutMillis: 30000,
+          connectionTimeoutMillis: 10000,
+        };
+
+      } catch (tunnelError) {
+        logger.error('No SSH tunnel found. Please run: ./db_connect.sh');
+        throw new Error('SSH tunnel not available. Please establish connection with: ./db_connect.sh');
+      }
     }
 
-    // Wait a moment for processes to die
-    await new Promise(resolve => setTimeout(resolve, 1000));
-
-    // Establish SSH tunnel
-    const sshCommand = `ssh -i "${SSH_CONFIG.keyFile}" -f -N -L ${SSH_CONFIG.localPort}:${SSH_CONFIG.dbHost}:${SSH_CONFIG.dbPort} ${SSH_CONFIG.sshUser}@${SSH_CONFIG.sshHost}`;
-
-    logger.info('Establishing SSH tunnel for scaling data...');
-    await execAsync(sshCommand);
-
-    // Wait for tunnel to be established
-    await new Promise(resolve => setTimeout(resolve, 2000));
-
-    // Create database connection pool
-    misfitsPool = new Pool({
-      host: 'localhost',
-      port: parseInt(SSH_CONFIG.localPort),
-      database: SSH_CONFIG.dbName,
-      user: SSH_CONFIG.dbUser,
-      password: SSH_CONFIG.dbPassword,
-      max: 5,
-      idleTimeoutMillis: 30000,
-      connectionTimeoutMillis: 10000,
-    });
+    // Create database connection pool with determined config
+    misfitsPool = new Pool(dbConfig);
 
     // Test connection
     const testClient = await misfitsPool.connect();
@@ -324,9 +359,28 @@ router.get('/clubs', async (req, res) => {
         c.id as club_id,
         c.name as club_name,
         a.name as activity,
-        c.city,
-        c.area,
         c.status,
+
+        -- Get most recent city/area from events
+        (
+          SELECT ci.name
+          FROM event e2
+          LEFT JOIN location l2 ON e2.location_id = l2.id
+          LEFT JOIN area ar2 ON l2.area_id = ar2.id
+          LEFT JOIN city ci ON ar2.city_id = ci.id
+          WHERE e2.club_id = c.pk
+          ORDER BY e2.start_time DESC
+          LIMIT 1
+        ) as city_name,
+        (
+          SELECT ar2.name
+          FROM event e2
+          LEFT JOIN location l2 ON e2.location_id = l2.id
+          LEFT JOIN area ar2 ON l2.area_id = ar2.id
+          WHERE e2.club_id = c.pk
+          ORDER BY e2.start_time DESC
+          LIMIT 1
+        ) as area_name,
 
         -- Current meetups: Count of events in last 7 days (last week)
         COUNT(DISTINCT CASE
@@ -360,8 +414,9 @@ router.get('/clubs', async (req, res) => {
       LEFT JOIN activity a ON c.activity_id = a.id
       LEFT JOIN event e ON c.pk = e.club_id
       WHERE c.status = 'ACTIVE'
-        AND c.created_at >= CURRENT_DATE - INTERVAL '365 days' -- Only clubs from last year
-      GROUP BY c.pk, c.id, c.name, a.name, c.city, c.area, c.status, c.created_at
+        AND c.is_private = false
+        AND a.name != 'Test'
+      GROUP BY c.pk, c.id, c.name, a.name, c.status, c.created_at
       HAVING COUNT(DISTINCT e.pk) > 0 OR c.created_at >= CURRENT_DATE - INTERVAL '30 days'
       ORDER BY current_revenue DESC, total_events DESC
     `;
@@ -374,8 +429,8 @@ router.get('/clubs', async (req, res) => {
         id: row.club_id,
         name: row.club_name,
         activity: row.activity || 'Unknown',
-        city: row.city || 'Unknown',
-        area: row.area || 'Unknown',
+        city: row.city_name || 'Unknown',
+        area: row.area_name || 'Unknown',
         current_meetups: parseInt(row.current_meetups || 0),
         total_events: parseInt(row.total_events || 0),
         current_revenue: Math.round(row.current_revenue || 0), // in rupees
@@ -534,7 +589,8 @@ router.get('/activities', async (req, res) => {
       LEFT JOIN club c ON a.id = c.activity_id
       WHERE a.name IS NOT NULL
         AND a.name != ''
-        AND a.name NOT ILIKE '%test%'
+        AND a.name != 'Test'
+        AND c.is_private = false
       GROUP BY a.id, a.name
       ORDER BY active_clubs DESC, club_count DESC
     `;
@@ -628,14 +684,14 @@ router.get('/clubs', async (req, res) => {
 
     const { activity, city, area, status } = req.query;
 
-    let whereConditions = ["c.name NOT ILIKE '%test%'"];
+    let whereConditions = [
+      "c.status = 'ACTIVE'",
+      "c.is_private = false",
+      "a.name != 'Test'"
+    ];
 
     if (activity && activity !== 'all') {
       whereConditions.push(`a.name = '${activity}'`);
-    }
-
-    if (status && status !== 'all') {
-      whereConditions.push(`c.status = '${status.toString().toUpperCase()}'`);
     }
 
     // City/area filtering through most recent event location

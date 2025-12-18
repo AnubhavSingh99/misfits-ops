@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { Plus, Filter, Target, MapPin, Building2, TrendingUp, Users, ArrowUp, ArrowDown, Settings, Eye, User, Calendar, MessageSquare, CheckSquare, EyeOff, Clock, CheckCircle, AlertCircle, Play, ChevronDown, ChevronRight } from 'lucide-react'
+import { API_URL } from '../config/api'
 
 // Interfaces for the scaling structure
 interface WOWHistoryEntry {
@@ -235,7 +236,7 @@ export default function ScalingPlanner() {
       setPocLoading(true)
       try {
         // Replace with actual POC management API call
-        const response = await fetch('http://localhost:3001/api/poc')
+        const response = await fetch(`${API_URL}/api/poc`)
         const data = await response.json()
 
         if (response.ok) {
@@ -259,7 +260,7 @@ export default function ScalingPlanner() {
     const fetchCities = async () => {
       setCitiesLoading(true)
       try {
-        const response = await fetch('http://localhost:3001/api/scaling/cities')
+        const response = await fetch(`${API_URL}/api/scaling/cities`)
         const data = await response.json()
 
         if (data.success) {
@@ -287,7 +288,7 @@ export default function ScalingPlanner() {
           const selectedCityData = databaseCities.find(city => city.name === selectedFormCity)
           if (!selectedCityData) return
 
-          const response = await fetch(`http://localhost:3001/api/scaling/areas/${selectedCityData.id}`)
+          const response = await fetch(`${API_URL}/api/scaling/areas/${selectedCityData.id}`)
           const data = await response.json()
 
           if (data.success) {
@@ -378,7 +379,7 @@ export default function ScalingPlanner() {
       if (!club) return
 
       // Call the WoW API to add the comment
-      await fetch('http://localhost:3001/api/wow/comment', {
+      await fetch(`${API_URL}/api/wow/comment`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -458,244 +459,124 @@ export default function ScalingPlanner() {
     )
   }
 
-  // Mock data for development - replace with API calls
+  // Fetch real data from API
   useEffect(() => {
-    const mockTargets: ActivityAreaTarget[] = [
-      {
-        id: '1',
-        activity: 'Hiking',
-        city: 'Mumbai',
-        area: 'Bandra',
-        targetMeetupsTotal: 25,
-        targetMeetupsExisting: 15,
-        targetMeetupsNew: 10,
-        plannedRevenue: 750000,
-        currentRevenue: 400000,
-        currentMeetups: 12,
-        existingClubs: 2,
-        newClubsNeeded: 1,
-        status: 'on_track',
-        lastUpdated: '2025-12-15',
-        poc: 'Saurabh',
-        weekOverWeekChange: {
-          meetups: +2,
-          revenue: +50000,
-          healthScore: +5
-        },
-        actionsThisWeek: [
-          'Schedule 2 new hiking events',
-          'Follow up with potential new members',
-          'Review venue bookings'
-        ],
-        wowComment: 'Good momentum this week with increased bookings',
-        wowHistory: []
-      },
-      {
-        id: '2',
-        activity: 'Football',
-        city: 'Delhi',
-        area: 'Gurgaon',
-        targetMeetupsTotal: 30,
-        targetMeetupsExisting: 18,
-        targetMeetupsNew: 12,
-        plannedRevenue: 900000,
-        currentRevenue: 250000,
-        currentMeetups: 8,
-        existingClubs: 1,
-        newClubsNeeded: 2,
-        status: 'behind',
-        lastUpdated: '2025-12-14',
-        poc: 'Priya',
-        weekOverWeekChange: {
-          meetups: -1,
-          revenue: -25000,
-          healthScore: -3
-        },
-        actionsThisWeek: [
-          'Recruit new POC for second club',
-          'Address venue availability issues',
-          'Marketing push for member acquisition'
-        ],
-        wowComment: 'Facing challenges with venue booking, working on solutions',
-        wowHistory: []
-      }
-    ]
+    const fetchData = async () => {
+      setLoading(true)
+      try {
+        // Fetch real clubs data from database
+        const clubsResponse = await fetch(`${API_URL}/api/scaling/clubs?status=ACTIVE`)
+        const clubsData = await clubsResponse.json()
 
-    const mockClubsRaw = [
-      {
-        id: '1',
-        name: 'Bandra Hikers',
-        activity: 'Hiking',
-        city: 'Mumbai',
-        area: 'Bandra',
-        revenueType: 'old_stable',
-        scalingStage: 'old_stable_realised',
-        currentMeetups: 8,
-        currentRevenue: 200000,
-        targetMeetups: 12,
-        targetRevenue: 400000,
-        poc: 'Saurabh',
-        areaTargetId: '1',
-        health: 'green',
-        healthScore: 85,
-        capacityUtilization: 78,
-        weekOverWeekChange: {
-          meetups: +1,
-          revenue: +25000,
-          healthScore: +3
-        },
-        actionsThisWeek: [
-          'Plan Christmas special hike',
-          'Update equipment inventory',
-          'Collect member feedback'
-        ],
-        wowComment: 'Excellent response to new routes introduced'
-      },
-      {
-        id: '2',
-        name: 'Mumbai Trekkers',
-        activity: 'Hiking',
-        city: 'Mumbai',
-        area: 'Bandra',
-        revenueType: 'scaling',
-        scalingStage: 'scaling_picked_stage3',
-        currentMeetups: 4,
-        currentRevenue: 200000,
-        targetMeetups: 13,
-        targetRevenue: 350000,
-        poc: 'Priya',
-        areaTargetId: '1',
-        health: 'yellow',
-        healthScore: 65,
-        capacityUtilization: 55,
-        weekOverWeekChange: {
-          meetups: 0,
-          revenue: +15000,
-          healthScore: +2
-        },
-        actionsThisWeek: [
-          'Onboard new POC assistant',
-          'Improve marketing strategy',
-          'Address member retention issues'
-        ],
-        wowComment: 'New leadership structure showing positive results'
-      },
-      {
-        id: '3',
-        name: 'Gurgaon FC',
-        activity: 'Football',
-        city: 'Delhi',
-        area: 'Gurgaon',
-        revenueType: 'scaling',
-        scalingStage: 'scaling_picked_stage2',
-        currentMeetups: 3,
-        currentRevenue: 150000,
-        targetMeetups: 8,
-        targetRevenue: 300000,
-        poc: 'Priya',
-        areaTargetId: '2',
-        health: 'red',
-        healthScore: 45,
-        capacityUtilization: 35,
-        weekOverWeekChange: {
-          meetups: -1,
-          revenue: -10000,
-          healthScore: -5
-        },
-        actionsThisWeek: [
-          'Find alternative venue options',
-          'Recruit additional team members',
-          'Review pricing strategy'
-        ],
-        wowComment: 'Venue issues impacting growth, exploring solutions'
-      },
-      {
-        id: '4',
-        name: 'New Andheri Runners',
-        activity: 'Running',
-        city: 'Mumbai',
-        area: 'Andheri',
-        revenueType: 'scaling',
-        scalingStage: 'scaling_picked_started',
-        currentMeetups: 0,
-        currentRevenue: 0,
-        targetMeetups: 10,
-        targetRevenue: 250000,
-        poc: 'Rahul',
-        areaTargetId: '1',
-        health: 'yellow',
-        healthScore: 50,
-        capacityUtilization: 0,
-        weekOverWeekChange: {
-          meetups: 0,
-          revenue: 0,
-          healthScore: 0
-        },
-        actionsThisWeek: [
-          'Complete venue booking',
-          'Schedule first event',
-          'Finalize equipment procurement'
-        ],
-        wowComment: 'Preparing for launch next week',
-        isNewClub: true,
-        launchStatus: 'planned',
-        plannedLaunchDate: '2025-12-22',
-        launchMilestones: {
-          pocAssigned: true,
-          locationFound: false,
-          firstEventScheduled: false,
-          firstEventConducted: false,
-          membersOnboarded: false
+        if (clubsData.success) {
+          // Transform real club data to match our interface
+          const transformedClubs: ClubData[] = clubsData.clubs.map((club: any) => {
+            return addLaunchTrackingDefaults({
+              id: club.id || club.uuid,
+              name: club.name,
+              activity: club.activity || 'Unknown',
+              city: club.city || 'Unknown',
+              area: club.area || 'Unknown',
+              revenueType: club.recentEvents > 5 ? 'scaling' : 'old_stable',
+              scalingStage: club.recentEvents > 10 ? 'scaling_picked_stage3' : 'scaling_picked_started',
+              currentMeetups: club.recentEvents || 0,
+              currentRevenue: club.current_revenue || 0,
+              targetMeetups: Math.max((club.recentEvents || 0) + 5, 10),
+              targetRevenue: Math.max((club.current_revenue || 0) + 50000, 200000),
+              poc: 'Unassigned', // TODO: Map from POC data when available
+              areaTargetId: '1',
+              health: club.recentEvents > 5 ? 'green' : club.recentEvents > 2 ? 'yellow' : 'red',
+              healthScore: Math.min(club.recentEvents * 10 + 50, 100),
+              capacityUtilization: club.capacity_utilization || 0,
+              weekOverWeekChange: {
+                meetups: 0,
+                revenue: 0,
+                healthScore: 0
+              },
+              actionsThisWeek: [
+                'Review current performance',
+                'Plan scaling activities',
+                'Engage with community'
+              ],
+              wowComment: 'Recently imported from database',
+              isNewClub: club.status === 'new',
+              launchStatus: club.recentEvents > 0 ? 'active' : 'planned'
+            })
+          })
+
+          setClubs(transformedClubs)
+
+          // Create activity targets based on real clubs data
+          const activityGroups = transformedClubs.reduce((groups: any, club) => {
+            const key = `${club.activity}-${club.city}-${club.area}`
+            if (!groups[key]) {
+              groups[key] = {
+                activity: club.activity,
+                city: club.city,
+                area: club.area,
+                clubs: []
+              }
+            }
+            groups[key].clubs.push(club)
+            return groups
+          }, {})
+
+          const generatedTargets: ActivityAreaTarget[] = Object.values(activityGroups).map((group: any, index) => {
+            const clubs = group.clubs
+            const totalCurrentMeetups = clubs.reduce((sum: number, club: ClubData) => sum + club.currentMeetups, 0)
+            const targetMeetups = Math.max(totalCurrentMeetups * 1.5, 20)
+
+            return {
+              id: `target-${index}`,
+              activity: group.activity,
+              city: group.city,
+              area: group.area,
+              targetMeetupsTotal: Math.round(targetMeetups),
+              targetMeetupsExisting: totalCurrentMeetups,
+              targetMeetupsNew: Math.round(targetMeetups - totalCurrentMeetups),
+              plannedRevenue: Math.round(targetMeetups * 25000), // Estimate ₹25K per meetup
+              currentRevenue: clubs.reduce((sum: number, club: ClubData) => sum + club.currentRevenue, 0),
+              currentMeetups: totalCurrentMeetups,
+              existingClubs: clubs.filter((club: ClubData) => !club.isNewClub).length,
+              newClubsNeeded: Math.max(Math.round((targetMeetups - totalCurrentMeetups) / 5), 0),
+              status: totalCurrentMeetups >= targetMeetups * 0.8 ? 'on_track' :
+                      totalCurrentMeetups >= targetMeetups * 0.6 ? 'at_risk' : 'behind',
+              lastUpdated: new Date().toISOString().split('T')[0],
+              poc: 'Unassigned',
+              weekOverWeekChange: {
+                meetups: 0,
+                revenue: 0,
+                healthScore: 0
+              },
+              actionsThisWeek: [
+                `Scale ${group.activity} in ${group.area}`,
+                'Engage with existing clubs',
+                'Plan new club launches'
+              ],
+              wowComment: `Generated from ${clubs.length} existing clubs`,
+              wowHistory: []
+            }
+          })
+
+          setActivityTargets(generatedTargets)
+        } else {
+          console.error('Failed to fetch clubs:', clubsData.error)
+          // Fallback to empty data
+          setClubs([])
+          setActivityTargets([])
         }
-      },
-      {
-        id: '5',
-        name: 'Whitefield Cyclists',
-        activity: 'Cycling',
-        city: 'Bangalore',
-        area: 'Whitefield',
-        revenueType: 'scaling',
-        scalingStage: 'scaling_picked_stage1',
-        currentMeetups: 2,
-        currentRevenue: 50000,
-        targetMeetups: 8,
-        targetRevenue: 200000,
-        poc: 'Sneha',
-        areaTargetId: '3',
-        health: 'green',
-        healthScore: 75,
-        capacityUtilization: 25,
-        weekOverWeekChange: {
-          meetups: +2,
-          revenue: +50000,
-          healthScore: +15
-        },
-        actionsThisWeek: [
-          'Scale up to regular schedule',
-          'Recruit additional members',
-          'Plan weekend long rides'
-        ],
-        wowComment: 'Successfully launched last week - great initial response!',
-        isNewClub: true,
-        launchStatus: 'launched',
-        launchDate: '2025-12-08',
-        plannedLaunchDate: '2025-12-08',
-        launchMilestones: {
-          pocAssigned: true,
-          locationFound: true,
-          firstEventScheduled: true,
-          firstEventConducted: true,
-          membersOnboarded: true
-        }
+      } catch (error) {
+        console.error('Error fetching scaling data:', error)
+        // Fallback to empty data
+        setClubs([])
+        setActivityTargets([])
+      } finally {
+        setLoading(false)
+        setLastUpdated(new Date())
       }
-    ]
+    }
 
-    // Apply launch tracking defaults to all clubs
-    const mockClubs: ClubData[] = mockClubsRaw.map(club => addLaunchTrackingDefaults(club))
-
-    setActivityTargets(mockTargets)
-    setClubs(mockClubs)
-    setLoading(false)
+    fetchData()
   }, [])
 
   const handleCreateTarget = () => {
@@ -787,8 +668,32 @@ export default function ScalingPlanner() {
     return true
   })
 
-  // Get filter options from both activity targets, clubs, and POC data
-  const activities = [...new Set(activityTargets.map(t => t.activity))]
+  // State for real activities from database
+  const [databaseActivities, setDatabaseActivities] = useState<any[]>([])
+
+  // Fetch activities from database
+  useEffect(() => {
+    const fetchActivities = async () => {
+      try {
+        const response = await fetch(`${API_URL}/api/scaling/activities`)
+        const data = await response.json()
+
+        if (data.success) {
+          setDatabaseActivities(data.activities)
+        }
+      } catch (error) {
+        console.error('Error fetching activities:', error)
+      }
+    }
+
+    fetchActivities()
+  }, [])
+
+  // Get filter options from both activity targets, clubs, POC data, and database
+  const activities = [...new Set([
+    ...activityTargets.map(t => t.activity),
+    ...databaseActivities.map(a => a.name)
+  ])]
   const areas = [...new Set(activityTargets.map(t => t.area))]
   const cities = [...new Set(activityTargets.map(t => t.city))]
   const pocs = [...new Set([...activityTargets.map(t => t.poc), ...clubs.map(c => c.poc), ...pocData.map(p => p.name)])]
