@@ -158,6 +158,8 @@ export function POCManagement() {
         // Set real activities data
         setActivities(activitiesData)
         console.log('Activities loaded from database:', activitiesData)
+        console.log('Number of activities loaded:', activitiesData.length)
+        console.log('Activities with active clubs:', activitiesData.filter(a => a.activeClubs > 0).length)
 
         // Set real cities data
         setCities(citiesData)
@@ -171,6 +173,8 @@ export function POCManagement() {
         setDataSource('database')
       } catch (error) {
         console.error('Error fetching POC management data:', error)
+        console.error('API Base URL being used:', import.meta.env.VITE_API_URL || 'http://localhost:3001/api')
+        console.error('Full error details:', error)
         setDataSource('default')
       } finally {
         setActivitiesLoading(false)
@@ -731,21 +735,25 @@ export function POCManagement() {
                     onChange={(e) => setNewActivityHead({...newActivityHead, activities: Array.from(e.target.selectedOptions, option => option.value)})}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 h-24"
                   >
-                    <optgroup label="🚀 Scale Activities (High Growth)">
-                      {scaleActivities.map(activity => (
-                        <option key={activity.name} value={activity.name}>
+                    {activities
+                      .filter(activity => activity.activeClubs > 0)
+                      .map(activity => (
+                        <option key={activity.id} value={activity.name}>
                           {activity.name} ({activity.clubCount} clubs, {activity.activeClubs} active)
                         </option>
                       ))}
-                    </optgroup>
-                    <optgroup label="📝 Long Tail Activities (Specialized)">
-                      {longTailActivities.map(activity => (
-                        <option key={activity.name} value={activity.name}>
-                          {activity.name} ({activity.clubCount} clubs, {activity.activeClubs} active)
-                        </option>
-                      ))}
-                    </optgroup>
                   </select>
+                  {activities.length === 0 && (
+                    <p className="text-sm text-gray-500 mt-1">Loading activities...</p>
+                  )}
+                  {activities.length > 0 && activities.filter(a => a.activeClubs > 0).length === 0 && (
+                    <p className="text-sm text-red-500 mt-1">No activities with active clubs found</p>
+                  )}
+                  {activities.length > 0 && (
+                    <p className="text-sm text-gray-500 mt-1">
+                      {activities.filter(a => a.activeClubs > 0).length} activities available
+                    </p>
+                  )}
                 </div>
               </div>
               <div className="flex gap-2 mt-4">
