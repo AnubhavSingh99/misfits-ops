@@ -822,4 +822,359 @@ router.get('/clubs', async (req, res) => {
   }
 });
 
+// ===== TARGET TRACKING ENDPOINTS =====
+
+// Get comprehensive scaling data (Activity-level view)
+router.get('/data', async (req, res) => {
+  try {
+    logger.info('Fetching comprehensive scaling data...');
+
+    // Get activity-level targets with current metrics
+    const activityTargetsQuery = `
+      SELECT
+        at.activity_name,
+        at.activity_id,
+        at.current_meetups,
+        at.current_revenue,
+        at.target_meetups_existing,
+        at.target_meetups_new,
+        at.target_revenue_existing,
+        at.target_revenue_new,
+        at.total_target_meetups,
+        at.total_target_revenue,
+        at.updated_at
+      FROM activity_targets at
+      ORDER BY at.activity_name
+    `;
+
+    // Get existing club targets summary
+    const existingClubsQuery = `
+      SELECT
+        ct.activity_name,
+        COUNT(*) as clubs_count,
+        SUM(ct.current_meetups) as current_meetups,
+        SUM(ct.current_revenue) as current_revenue,
+        SUM(ct.target_meetups) as target_meetups,
+        SUM(ct.target_revenue) as target_revenue
+      FROM club_targets ct
+      GROUP BY ct.activity_name
+    `;
+
+    // Get new club launch summary
+    const newClubsQuery = `
+      SELECT
+        ncl.activity_name,
+        COUNT(*) as launch_plans_count,
+        SUM(ncl.planned_clubs_count) as total_planned_clubs,
+        SUM(ncl.total_target_meetups) as target_meetups,
+        SUM(ncl.total_target_revenue) as target_revenue
+      FROM new_club_launches ncl
+      WHERE ncl.status = 'planned'
+      GROUP BY ncl.activity_name
+    `;
+
+    const [activityTargets, existingClubsSummary, newClubsSummary] = await Promise.all([
+      queryMisfits(activityTargetsQuery),
+      queryMisfits(existingClubsQuery),
+      queryMisfits(newClubsQuery)
+    ]);
+
+    // Calculate overall summary
+    const summary = {
+      total_current_meetups: activityTargets.rows.reduce((sum: number, row: any) => sum + (row.current_meetups || 0), 0),
+      total_target_meetups: activityTargets.rows.reduce((sum: number, row: any) => sum + (row.total_target_meetups || 0), 0),
+      total_target_revenue: activityTargets.rows.reduce((sum: number, row: any) => sum + (row.total_target_revenue || 0), 0),
+      total_target_attendees: 0, // TODO: Calculate from targets
+      existing_clubs_count: existingClubsSummary.rows.reduce((sum: number, row: any) => sum + (row.clubs_count || 0), 0),
+      new_clubs_count: newClubsSummary.rows.reduce((sum: number, row: any) => sum + (row.total_planned_clubs || 0), 0)
+    };
+
+    res.json({
+      success: true,
+      activity_targets: activityTargets.rows,
+      existing_club_targets: existingClubsSummary.rows,
+      new_club_launches: newClubsSummary.rows,
+      summary,
+      generated_at: new Date().toISOString()
+    });
+
+  } catch (error) {
+    logger.error('Failed to fetch scaling data:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch scaling data from database',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+// Get detailed view for a specific activity (Drill-down view)
+router.get('/activity/:activityName', async (req, res) => {
+  try {
+    const activityName = decodeURIComponent(req.params.activityName);
+    logger.info(`Fetching detailed scaling data for activity: ${activityName}`);
+
+    // Get activity-level info
+    const activityQuery = `
+      SELECT * FROM activity_targets
+      WHERE activity_name = $1
+    `;
+
+    // Get existing clubs under this activity
+    const existingClubsQuery = `
+      SELECT
+        ct.*,
+        c.name as club_name_from_db,
+        c.status as club_status
+      FROM club_targets ct
+      LEFT JOIN club c ON ct.club_id = c.pk
+      WHERE ct.activity_name = $1
+      ORDER BY ct.is_new_club DESC, ct.club_name
+    `;
+
+    // Get new club launch plans for this activity
+    const newClubLaunchesQuery = `
+      SELECT * FROM new_club_launches
+      WHERE activity_name = $1 AND status = 'planned'
+      ORDER BY planned_launch_date
+    `;
+
+    const [activityData, existingClubs, newClubLaunches] = await Promise.all([
+      queryMisfits(activityQuery, [activityName]),
+      queryMisfits(existingClubsQuery, [activityName]),
+      queryMisfits(newClubLaunchesQuery, [activityName])
+    ]);
+
+    if (activityData.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Activity not found',
+        activity_name: activityName
+      });
+    }
+
+    res.json({
+      success: true,
+      activity: activityData.rows[0],
+      existing_clubs: existingClubs.rows,
+      new_club_launches: newClubLaunches.rows,
+      generated_at: new Date().toISOString()
+    });
+
+  } catch (error) {
+    logger.error(`Failed to fetch activity details for ${req.params.activityName}:`, error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch activity details',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+// Update activity-level targets
+router.put('/activity/:activityName/targets', async (req, res) => {
+  try {
+    const activityName = decodeURIComponent(req.params.activityName);
+    const {
+      target_meetups_existing,
+      target_meetups_new,
+      target_revenue_existing,
+      target_revenue_new
+    } = req.body;
+
+    logger.info(`Updating targets for activity: ${activityName}`);
+
+    // First, ensure activity exists
+    const upsertActivityQuery = `
+      INSERT INTO activity_targets (activity_name, target_meetups_existing, target_meetups_new, target_revenue_existing, target_revenue_new)
+      VALUES ($1, $2, $3, $4, $5)
+      ON CONFLICT (activity_name)
+      DO UPDATE SET
+        target_meetups_existing = $2,
+        target_meetups_new = $3,
+        target_revenue_existing = $4,
+        target_revenue_new = $5,
+        updated_at = CURRENT_TIMESTAMP
+      RETURNING *
+    `;
+
+    const result = await queryMisfits(upsertActivityQuery, [
+      activityName,
+      target_meetups_existing || 0,
+      target_meetups_new || 0,
+      target_revenue_existing || 0,
+      target_revenue_new || 0
+    ]);
+
+    res.json({
+      success: true,
+      activity: result.rows[0],
+      message: 'Activity targets updated successfully'
+    });
+
+  } catch (error) {
+    logger.error(`Failed to update activity targets for ${req.params.activityName}:`, error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to update activity targets',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+// Update club-level targets
+router.put('/club/:clubId/targets', async (req, res) => {
+  try {
+    const clubId = parseInt(req.params.clubId);
+    const { target_meetups, target_revenue, activity_name } = req.body;
+
+    logger.info(`Updating targets for club: ${clubId}`);
+
+    const upsertClubQuery = `
+      INSERT INTO club_targets (club_id, activity_name, target_meetups, target_revenue)
+      VALUES ($1, $2, $3, $4)
+      ON CONFLICT (club_id)
+      DO UPDATE SET
+        target_meetups = $3,
+        target_revenue = $4,
+        activity_name = $2,
+        updated_at = CURRENT_TIMESTAMP
+      RETURNING *
+    `;
+
+    const result = await queryMisfits(upsertClubQuery, [
+      clubId,
+      activity_name,
+      target_meetups || 0,
+      target_revenue || 0
+    ]);
+
+    res.json({
+      success: true,
+      club: result.rows[0],
+      message: 'Club targets updated successfully'
+    });
+
+  } catch (error) {
+    logger.error(`Failed to update club targets for ${req.params.clubId}:`, error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to update club targets',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+// Add/Update new club launch plan
+router.post('/new-club-launch', async (req, res) => {
+  try {
+    const {
+      activity_name,
+      planned_clubs_count,
+      target_meetups_per_club,
+      target_revenue_per_club,
+      planned_launch_date,
+      city,
+      area,
+      poc_assigned
+    } = req.body;
+
+    logger.info(`Adding new club launch plan for activity: ${activity_name}`);
+
+    const insertQuery = `
+      INSERT INTO new_club_launches (
+        activity_name, planned_clubs_count, target_meetups_per_club,
+        target_revenue_per_club, planned_launch_date, city, area, poc_assigned
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      RETURNING *
+    `;
+
+    const result = await queryMisfits(insertQuery, [
+      activity_name,
+      planned_clubs_count || 1,
+      target_meetups_per_club || 0,
+      target_revenue_per_club || 0,
+      planned_launch_date,
+      city,
+      area,
+      poc_assigned
+    ]);
+
+    res.json({
+      success: true,
+      launch_plan: result.rows[0],
+      message: 'New club launch plan created successfully'
+    });
+
+  } catch (error) {
+    logger.error('Failed to create new club launch plan:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to create new club launch plan',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+// Transition new club to existing (when a new club is launched)
+router.post('/transition-club', async (req, res) => {
+  try {
+    const {
+      new_club_launch_id,
+      club_id,
+      activity_name,
+      target_meetups,
+      target_revenue
+    } = req.body;
+
+    logger.info(`Transitioning new club launch to existing club: ${club_id}`);
+
+    // Start transaction
+    const updateLaunchStatusQuery = `
+      UPDATE new_club_launches
+      SET status = 'moved_to_existing'
+      WHERE id = $1
+    `;
+
+    const insertClubTargetQuery = `
+      INSERT INTO club_targets (
+        club_id, activity_name, target_meetups, target_revenue, is_new_club, launch_date
+      )
+      VALUES ($1, $2, $3, $4, true, CURRENT_TIMESTAMP)
+      ON CONFLICT (club_id)
+      DO UPDATE SET
+        target_meetups = $3,
+        target_revenue = $4,
+        is_new_club = true,
+        launch_date = CURRENT_TIMESTAMP
+    `;
+
+    const insertTransitionQuery = `
+      INSERT INTO club_transitions (
+        new_club_launch_id, club_id, activity_name, transferred_target_meetups, transferred_target_revenue
+      )
+      VALUES ($1, $2, $3, $4, $5)
+    `;
+
+    await queryMisfits(updateLaunchStatusQuery, [new_club_launch_id]);
+    const clubResult = await queryMisfits(insertClubTargetQuery, [club_id, activity_name, target_meetups, target_revenue]);
+    await queryMisfits(insertTransitionQuery, [new_club_launch_id, club_id, activity_name, target_meetups, target_revenue]);
+
+    res.json({
+      success: true,
+      club: clubResult.rows[0],
+      message: 'Club transitioned from new launch to existing successfully'
+    });
+
+  } catch (error) {
+    logger.error('Failed to transition club:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to transition club',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
 export default router;

@@ -289,7 +289,7 @@ export class TeamPerformanceService {
   }
 }
 
-// Scaling Planner Service (PRD Section 6.2) - Enhanced with 3 upload types
+// Scaling Planner Service (PRD Section 6.2) - Enhanced with target tracking
 export class ScalingPlannerService {
   // Legacy CSV upload (maintaining backward compatibility)
   static async uploadCSV(
@@ -375,6 +375,96 @@ export class ScalingPlannerService {
   ): Promise<{ tasks: any[]; assigned_count: number }> {
     return apiRequest(`/scaling/generate-tasks/${pocId}`, {
       method: 'POST',
+    });
+  }
+
+  // ===== TARGET TRACKING METHODS =====
+
+  // Get comprehensive scaling data (Activity-level view)
+  static async getScalingTargets(): Promise<{
+    activity_targets: any[];
+    existing_club_targets: any[];
+    new_club_launches: any[];
+    summary: {
+      total_current_meetups: number;
+      total_target_meetups: number;
+      total_target_revenue: number;
+      total_target_attendees: number;
+      existing_clubs_count: number;
+      new_clubs_count: number;
+    };
+  }> {
+    return apiRequest('/scaling/data');
+  }
+
+  // Get detailed view for a specific activity (Drill-down view)
+  static async getActivityDetails(activityName: string): Promise<{
+    activity: any;
+    existing_clubs: any[];
+    new_club_launches: any[];
+  }> {
+    return apiRequest(`/scaling/activity/${encodeURIComponent(activityName)}`);
+  }
+
+  // Update activity-level targets
+  static async updateActivityTargets(
+    activityName: string,
+    targets: {
+      target_meetups_existing?: number;
+      target_meetups_new?: number;
+      target_revenue_existing?: number;
+      target_revenue_new?: number;
+    }
+  ): Promise<{ activity: any; message: string }> {
+    return apiRequest(`/scaling/activity/${encodeURIComponent(activityName)}/targets`, {
+      method: 'PUT',
+      body: JSON.stringify(targets),
+    });
+  }
+
+  // Update club-level targets
+  static async updateClubTargets(
+    clubId: number,
+    targets: {
+      target_meetups?: number;
+      target_revenue?: number;
+      activity_name: string;
+    }
+  ): Promise<{ club: any; message: string }> {
+    return apiRequest(`/scaling/club/${clubId}/targets`, {
+      method: 'PUT',
+      body: JSON.stringify(targets),
+    });
+  }
+
+  // Add new club launch plan
+  static async createNewClubLaunch(launchPlan: {
+    activity_name: string;
+    planned_clubs_count?: number;
+    target_meetups_per_club?: number;
+    target_revenue_per_club?: number;
+    planned_launch_date?: string;
+    city?: string;
+    area?: string;
+    poc_assigned?: string;
+  }): Promise<{ launch_plan: any; message: string }> {
+    return apiRequest('/scaling/new-club-launch', {
+      method: 'POST',
+      body: JSON.stringify(launchPlan),
+    });
+  }
+
+  // Transition new club to existing (when launched)
+  static async transitionClub(transitionData: {
+    new_club_launch_id: number;
+    club_id: number;
+    activity_name: string;
+    target_meetups?: number;
+    target_revenue?: number;
+  }): Promise<{ club: any; message: string }> {
+    return apiRequest('/scaling/transition-club', {
+      method: 'POST',
+      body: JSON.stringify(transitionData),
     });
   }
 }
