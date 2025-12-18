@@ -12,7 +12,9 @@ let misfitsPool: Pool | null = null;
 
 // SSH tunnel connection details
 const SSH_CONFIG = {
-  keyFile: '/Users/retalplaza/Downloads/DB claude key/claude-control-key',
+  keyFile: process.env.NODE_ENV === 'production'
+    ? '/home/ec2-user/Downloads/claude-control-key'
+    : '/Users/retalplaza/Downloads/claude-control-key',
   sshHost: '15.207.255.212',
   sshUser: 'claude-control',
   dbHost: 'misfits.cgncbvolnhe7.ap-south-1.rds.amazonaws.com',
