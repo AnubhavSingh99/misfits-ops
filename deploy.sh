@@ -42,6 +42,9 @@ Co-Authored-By: Claude <noreply@anthropic.com>"
     ssh -i $PRODUCTION_KEY $PRODUCTION_SERVER "cd $PRODUCTION_PATH && git fetch && git reset --hard origin/main"
     git push production main
 
+    echo "🔗 Setting up database tunnel on production..."
+    ssh -i $PRODUCTION_KEY $PRODUCTION_SERVER "cd $PRODUCTION_PATH && chmod +x db_connect.sh && ./db_connect.sh start"
+
     echo "🔄 Restarting services..."
     ssh -i $PRODUCTION_KEY $PRODUCTION_SERVER "cd $PRODUCTION_PATH && pm2 restart misfits-app"
 
@@ -85,6 +88,39 @@ function show_logs() {
     ssh -i $PRODUCTION_KEY $PRODUCTION_SERVER "pm2 logs misfits-app --lines 20"
 }
 
+function manage_db() {
+    case "$2" in
+        start)
+            echo "🔗 Starting database tunnel..."
+            ssh -i $PRODUCTION_KEY $PRODUCTION_SERVER "cd $PRODUCTION_PATH && ./db_connect.sh start"
+            ;;
+        stop)
+            echo "🔌 Stopping database tunnel..."
+            ssh -i $PRODUCTION_KEY $PRODUCTION_SERVER "cd $PRODUCTION_PATH && ./db_connect.sh stop"
+            ;;
+        status)
+            echo "📊 Database tunnel status:"
+            ssh -i $PRODUCTION_KEY $PRODUCTION_SERVER "cd $PRODUCTION_PATH && ./db_connect.sh status"
+            ;;
+        test)
+            echo "🧪 Testing database connection:"
+            ssh -i $PRODUCTION_KEY $PRODUCTION_SERVER "cd $PRODUCTION_PATH && ./db_connect.sh test"
+            ;;
+        restart)
+            echo "🔄 Restarting database tunnel..."
+            ssh -i $PRODUCTION_KEY $PRODUCTION_SERVER "cd $PRODUCTION_PATH && ./db_connect.sh restart"
+            ;;
+        *)
+            echo "Database tunnel management:"
+            echo "  ./deploy.sh db start    - Start tunnel"
+            echo "  ./deploy.sh db stop     - Stop tunnel"
+            echo "  ./deploy.sh db status   - Check status"
+            echo "  ./deploy.sh db test     - Test connection"
+            echo "  ./deploy.sh db restart  - Restart tunnel"
+            ;;
+    esac
+}
+
 case "${1:-help}" in
     push)
         deploy_to_production
@@ -100,6 +136,9 @@ case "${1:-help}" in
         ;;
     logs)
         show_logs
+        ;;
+    db)
+        manage_db "$@"
         ;;
     help|--help|-h|*)
         show_help
