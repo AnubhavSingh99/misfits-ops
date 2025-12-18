@@ -586,12 +586,14 @@ router.get('/activities', async (req, res) => {
         SUM(CASE WHEN c.status = 'ACTIVE' THEN 1 ELSE 0 END) as active_clubs,
         SUM(CASE WHEN c.status = 'INACTIVE' THEN 1 ELSE 0 END) as inactive_clubs
       FROM activity a
-      LEFT JOIN club c ON a.id = c.activity_id
+      INNER JOIN club c ON a.id = c.activity_id
       WHERE a.name IS NOT NULL
         AND a.name != ''
         AND a.name != 'Test'
         AND c.is_private = false
+        AND c.status = 'ACTIVE'
       GROUP BY a.id, a.name
+      HAVING COUNT(c.pk) > 0
       ORDER BY active_clubs DESC, club_count DESC
     `;
 
