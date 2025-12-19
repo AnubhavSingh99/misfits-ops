@@ -185,6 +185,16 @@ export function POCManagement() {
         const eligibleActivities = activitiesData.filter(a => a.activeClubs > 0)
         setAvailableActivities(eligibleActivities)
 
+        // Auto-categorize activities based on club count
+        // Scale activities: 10+ clubs, Long tail activities: <10 clubs
+        const autoScale = eligibleActivities.filter(a => a.activeClubs >= 10).map(a => a.name)
+        const autoLongTail = eligibleActivities.filter(a => a.activeClubs < 10).map(a => a.name)
+
+        setCategorizedActivities({
+          scale: autoScale,
+          long_tail: autoLongTail
+        })
+
         // Set real cities data
         setCities(citiesData)
         console.log('Cities loaded from database:', citiesData)
