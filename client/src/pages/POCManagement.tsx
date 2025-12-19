@@ -96,6 +96,8 @@ export function POCManagement() {
   const [dataSource, setDataSource] = useState<'default' | 'database' | 'mock'>('default')
   const [editingActivity, setEditingActivity] = useState<string | null>(null)
   const [showAddActivityForm, setShowAddActivityForm] = useState(false)
+  const [showActivitySelector, setShowActivitySelector] = useState<'scale' | 'long_tail' | null>(null)
+  const [availableActivities, setAvailableActivities] = useState<Activity[]>([])
   const [newActivity, setNewActivity] = useState<{name: string, type: 'scale' | 'long_tail'}>({
     name: '',
     type: 'scale'
@@ -160,6 +162,10 @@ export function POCManagement() {
         console.log('Activities loaded from database:', activitiesData)
         console.log('Number of activities loaded:', activitiesData.length)
         console.log('Activities with active clubs:', activitiesData.filter(a => a.activeClubs > 0).length)
+
+        // Filter activities that have active clubs and can be added to POC management
+        const eligibleActivities = activitiesData.filter(a => a.activeClubs > 0)
+        setAvailableActivities(eligibleActivities)
 
         // Set real cities data
         setCities(citiesData)
@@ -465,6 +471,19 @@ export function POCManagement() {
     })
   }
 
+  const addActivityToCategory = (activityName: string, type: 'scale' | 'long_tail') => {
+    setCategorizedActivities(prev => ({
+      ...prev,
+      [type]: [...prev[type], activityName]
+    }))
+    setShowActivitySelector(null)
+  }
+
+  const getUnassignedActivities = () => {
+    const assignedActivities = [...categorizedActivities.scale, ...categorizedActivities.long_tail]
+    return availableActivities.filter(activity => !assignedActivities.includes(activity.name))
+  }
+
   const addNewActivity = () => {
     if (!newActivity.name) return
 
@@ -592,9 +611,9 @@ export function POCManagement() {
                 <h3 className="text-xl font-bold text-gray-900">Scale Activities ({scaleActivities.length})</h3>
               </div>
               <button
-                onClick={() => setShowAddActivityForm(true)}
+                onClick={() => setShowActivitySelector('scale')}
                 className="p-1 bg-blue-600 text-white rounded hover:bg-blue-700"
-                title="Add New Activity"
+                title="Add Activity to Scale"
               >
                 <Plus className="h-4 w-4" />
               </button>
@@ -641,9 +660,9 @@ export function POCManagement() {
                 <h3 className="text-xl font-bold text-gray-900">Long Tail Activities ({longTailActivities.length})</h3>
               </div>
               <button
-                onClick={() => setShowAddActivityForm(true)}
+                onClick={() => setShowActivitySelector('long_tail')}
                 className="p-1 bg-gray-600 text-white rounded hover:bg-gray-700"
-                title="Add New Activity"
+                title="Add Activity to Long Tail"
               >
                 <Plus className="h-4 w-4" />
               </button>
@@ -680,6 +699,50 @@ export function POCManagement() {
             </div>
           </div>
         </div>
+
+        {/* Activity Selector Modal */}
+        {showActivitySelector && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-lg p-6 max-w-md w-full">
+              <h2 className="text-lg font-semibold mb-4">
+                Add Activity to {showActivitySelector === 'scale' ? 'Scale' : 'Long Tail'}
+              </h2>
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Available Activities (with active public clubs):
+                  </label>
+                  <div className="max-h-60 overflow-y-auto space-y-2">
+                    {getUnassignedActivities().length === 0 ? (
+                      <p className="text-gray-500 text-sm">No unassigned activities available</p>
+                    ) : (
+                      getUnassignedActivities().map(activity => (
+                        <button
+                          key={activity.id}
+                          onClick={() => addActivityToCategory(activity.name, showActivitySelector)}
+                          className="w-full p-3 text-left border border-gray-200 rounded-lg hover:bg-gray-50 hover:border-gray-300 transition-colors"
+                        >
+                          <div className="font-medium text-gray-900">{activity.name}</div>
+                          <div className="text-sm text-gray-600">
+                            {activity.activeClubs} active clubs
+                          </div>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                </div>
+              </div>
+              <div className="flex gap-2 mt-4">
+                <button
+                  onClick={() => setShowActivitySelector(null)}
+                  className="flex-1 px-4 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Activity Heads */}
         <div className="bg-white rounded-2xl p-8 shadow-lg border border-gray-100">
