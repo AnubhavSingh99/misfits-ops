@@ -189,7 +189,7 @@ export function POCManagement() {
   // Load Activity Heads from database
   const loadActivityHeads = async () => {
     try {
-      const response = await fetch('http://localhost:3001/api/database/activity-heads')
+      const response = await fetch('/api/database/activity-heads')
       const result = await response.json()
 
       if (result.success && result.data.heads) {
@@ -326,7 +326,7 @@ export function POCManagement() {
 
     // Save team member to database
     try {
-      const response = await fetch(`http://localhost:3001/api/database/activity-heads/${activityHeadId}/team-members`, {
+      const response = await fetch(`/api/database/activity-heads/${activityHeadId}/team-members`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -372,7 +372,7 @@ export function POCManagement() {
 
     // Remove from database
     try {
-      const response = await fetch(`http://localhost:3001/api/database/activity-heads/${activityHeadId}/team-members/${memberId}`, {
+      const response = await fetch(`/api/database/activity-heads/${activityHeadId}/team-members/${memberId}`, {
         method: 'DELETE',
       })
 
@@ -421,7 +421,7 @@ export function POCManagement() {
 
     try {
       // Delete from database first
-      const response = await fetch(`http://localhost:3001/api/database/activity-heads/${id}`, {
+      const response = await fetch(`/api/database/activity-heads/${id}`, {
         method: 'DELETE',
       })
 
@@ -502,7 +502,7 @@ export function POCManagement() {
 
     // Save to database
     try {
-      const response = await fetch(`http://localhost:3001/api/database/activity-heads/${id}`, {
+      const response = await fetch(`/api/database/activity-heads/${id}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',

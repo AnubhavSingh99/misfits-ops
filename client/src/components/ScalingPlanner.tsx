@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { Plus, Filter, Target, MapPin, Building2, TrendingUp, Users, ArrowUp, ArrowDown, Settings, Eye, User, Calendar, MessageSquare, CheckSquare, EyeOff, Clock, CheckCircle, AlertCircle, Play, ChevronDown, ChevronRight } from 'lucide-react'
-import { API_URL } from '../config/api'
+import { getActivities, getCities } from '../services/api'
 
 // Interfaces for the scaling structure
 interface WOWHistoryEntry {
@@ -159,10 +159,55 @@ export default function ScalingPlanner() {
   const [newTaskText, setNewTaskText] = useState('')
   const [editingClub, setEditingClub] = useState<string | null>(null)
   const [editingTarget, setEditingTarget] = useState<string | null>(null)
+  const [showNewClubForm, setShowNewClubForm] = useState(false)
+  const [newClub, setNewClub] = useState({
+    name: '',
+    activity: '',
+    city: '',
+    area: '',
+    targetMeetups: 0,
+    targetRevenue: 0,
+    targetAttendees: 0,
+    launchDate: ''
+  })
+  const [editingClubTarget, setEditingClubTarget] = useState<{clubId: string, field: 'meetups' | 'revenue'} | null>(null)
+  const [editingValue, setEditingValue] = useState('')
 
   // Metrics expansion states
   const [expandedMetric, setExpandedMetric] = useState<string | null>(null)
   const [editingMetric, setEditingMetric] = useState<string | null>(null)
+
+  // Save club target edits to API
+  const handleSaveClubTarget = async (clubId: string, field: 'meetups' | 'revenue', value: string) => {
+    try {
+      const numValue = parseInt(value) || 0
+      const updateData: any = {
+        activity_name: 'Hiking' // You might need to get this from the current context
+      }
+
+      if (field === 'meetups') {
+        updateData.target_meetups = numValue
+      } else {
+        updateData.target_revenue = numValue * 1000 // Convert from K to actual value
+      }
+
+      const response = await fetch(`/api/scaling/club/${clubId}/targets`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updateData)
+      })
+
+      if (response.ok) {
+        // Update local state or refresh data
+        console.log(`Updated ${field} for club ${clubId} to ${numValue}`)
+      }
+    } catch (error) {
+      console.error(`Failed to update club ${field}:`, error)
+    }
+
+    setEditingClubTarget(null)
+    setEditingValue('')
+  }
 
   // Create new targets for overall metrics adjustments
   const handleAddMetricTarget = (type: string) => {
@@ -260,15 +305,9 @@ export default function ScalingPlanner() {
     const fetchCities = async () => {
       setCitiesLoading(true)
       try {
-        const response = await fetch(`${API_URL}/api/scaling/cities`)
-        const data = await response.json()
-
-        if (data.success) {
-          setDatabaseCities(data.cities)
-          console.log('Fetched cities:', data.cities)
-        } else {
-          console.error('Failed to fetch cities:', data.error)
-        }
+        const cities = await getCities()
+        setDatabaseCities(cities)
+        console.log('Fetched cities:', cities)
       } catch (error) {
         console.error('Error fetching cities:', error)
       } finally {
@@ -675,12 +714,8 @@ export default function ScalingPlanner() {
   useEffect(() => {
     const fetchActivities = async () => {
       try {
-        const response = await fetch(`${API_URL}/api/scaling/activities`)
-        const data = await response.json()
-
-        if (data.success) {
-          setDatabaseActivities(data.activities)
-        }
+        const activities = await getActivities()
+        setDatabaseActivities(activities)
       } catch (error) {
         console.error('Error fetching activities:', error)
       }
@@ -1159,8 +1194,80 @@ export default function ScalingPlanner() {
                                   </div>
 
                                   <div className="text-gray-900">{club.currentMeetups}</div>
-                                  <div className="font-semibold text-green-600">{club.targetMeetups}</div>
-                                  <div className="text-gray-600">₹{(club.targetRevenue/1000).toFixed(0)}K</div>
+                                  <div className="font-semibold text-green-600 flex items-center space-x-2">
+                                    {editingClubTarget?.clubId === club.id && editingClubTarget?.field === 'meetups' ? (
+                                      <div className="flex items-center space-x-1">
+                                        <input
+                                          type="number"
+                                          value={editingValue}
+                                          onChange={(e) => setEditingValue(e.target.value)}
+                                          onBlur={() => handleSaveClubTarget(club.id, 'meetups', editingValue)}
+                                          onKeyPress={(e) => {
+                                            if (e.key === 'Enter') {
+                                              handleSaveClubTarget(club.id, 'meetups', editingValue)
+                                            }
+                                          }}
+                                          className="w-16 px-1 py-0 border border-gray-300 rounded text-sm"
+                                          autoFocus
+                                        />
+                                        <button
+                                          onClick={() => handleSaveClubTarget(club.id, 'meetups', editingValue)}
+                                          className="text-green-600 hover:text-green-800"
+                                        >
+                                          <CheckCircle className="h-3 w-3" />
+                                        </button>
+                                      </div>
+                                    ) : (
+                                      <div className="flex items-center space-x-1">
+                                        <span>{club.targetMeetups}</span>
+                                        <button
+                                          onClick={() => {
+                                            setEditingClubTarget({clubId: club.id, field: 'meetups'})
+                                            setEditingValue(club.targetMeetups.toString())
+                                          }}
+                                          className="text-gray-400 hover:text-green-600 transition-colors"
+                                          title="Edit target meetups"
+                                        >
+                                          <Edit className="h-3 w-3" />
+                                        </button>
+                                      </div>
+                                    )}
+                                  </div>
+                                  <div className="text-gray-600">
+                                    {editingClubTarget?.clubId === club.id && editingClubTarget?.field === 'revenue' ? (
+                                      <div className="flex items-center">
+                                        <span className="mr-1">₹</span>
+                                        <input
+                                          type="number"
+                                          value={editingValue}
+                                          onChange={(e) => setEditingValue(e.target.value)}
+                                          onBlur={() => handleSaveClubTarget(club.id, 'revenue', editingValue)}
+                                          onKeyPress={(e) => {
+                                            if (e.key === 'Enter') {
+                                              handleSaveClubTarget(club.id, 'revenue', editingValue)
+                                            }
+                                          }}
+                                          className="w-12 px-1 py-0 border border-gray-300 rounded text-sm"
+                                          autoFocus
+                                        />
+                                        <span className="ml-1">K</span>
+                                      </div>
+                                    ) : (
+                                      <div className="flex items-center space-x-1">
+                                        <span>₹{(club.targetRevenue/1000).toFixed(0)}K</span>
+                                        <button
+                                          onClick={() => {
+                                            setEditingClubTarget({clubId: club.id, field: 'revenue'})
+                                            setEditingValue((club.targetRevenue/1000).toFixed(0))
+                                          }}
+                                          className="text-gray-400 hover:text-green-600 transition-colors"
+                                          title="Edit target revenue"
+                                        >
+                                          <Edit className="h-3 w-3" />
+                                        </button>
+                                      </div>
+                                    )}
+                                  </div>
                                   <div className="text-gray-600">
                                     {club.isNewClub && club.launchStatus === 'planned' ? 'TBD' : '50-80'}
                                   </div>
@@ -1287,7 +1394,10 @@ export default function ScalingPlanner() {
                             <span className="text-sm text-gray-500">
                               {targetClubs.filter(c => c.isNewClub && c.launchStatus === 'planned').length} clubs to be launched
                             </span>
-                            <button className="flex items-center space-x-2 px-3 py-2 bg-blue-600 text-white rounded-md text-sm hover:bg-blue-700">
+                            <button
+                              onClick={() => setShowNewClubForm(true)}
+                              className="flex items-center space-x-2 px-3 py-2 bg-blue-600 text-white rounded-md text-sm hover:bg-blue-700"
+                            >
                               <Plus className="h-3 w-3" />
                               <span>Add New Club</span>
                             </button>
@@ -1819,6 +1929,137 @@ export default function ScalingPlanner() {
                 </button>
                 <button
                   onClick={() => setShowNewTargetForm(false)}
+                  className="flex-1 bg-gray-300 text-gray-700 py-2 px-4 rounded-md hover:bg-gray-400"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* New Club Launch Form Modal */}
+        {showNewClubForm && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+            <div className="bg-white rounded-lg shadow-xl p-6 max-w-md w-full">
+              <h3 className="text-lg font-medium text-gray-900 mb-4">Add New Club Launch</h3>
+
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Club Name</label>
+                  <input
+                    type="text"
+                    value={newClub.name}
+                    onChange={(e) => setNewClub({...newClub, name: e.target.value})}
+                    className="w-full border border-gray-300 rounded-md px-3 py-2"
+                    placeholder="e.g., Delhi Hikers"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Activity</label>
+                  <input
+                    type="text"
+                    value={newClub.activity}
+                    onChange={(e) => setNewClub({...newClub, activity: e.target.value})}
+                    className="w-full border border-gray-300 rounded-md px-3 py-2"
+                    placeholder="e.g., Hiking"
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">City</label>
+                    <input
+                      type="text"
+                      value={newClub.city}
+                      onChange={(e) => setNewClub({...newClub, city: e.target.value})}
+                      className="w-full border border-gray-300 rounded-md px-3 py-2"
+                      placeholder="e.g., Delhi"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Area</label>
+                    <input
+                      type="text"
+                      value={newClub.area}
+                      onChange={(e) => setNewClub({...newClub, area: e.target.value})}
+                      className="w-full border border-gray-300 rounded-md px-3 py-2"
+                      placeholder="e.g., CP"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Launch Date</label>
+                  <input
+                    type="date"
+                    value={newClub.launchDate}
+                    onChange={(e) => setNewClub({...newClub, launchDate: e.target.value})}
+                    className="w-full border border-gray-300 rounded-md px-3 py-2"
+                  />
+                </div>
+
+                <div className="grid grid-cols-3 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Target Meetups</label>
+                    <input
+                      type="number"
+                      value={newClub.targetMeetups}
+                      onChange={(e) => setNewClub({...newClub, targetMeetups: parseInt(e.target.value) || 0})}
+                      className="w-full border border-gray-300 rounded-md px-3 py-2"
+                      placeholder="10"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Target Revenue (₹)</label>
+                    <input
+                      type="number"
+                      value={newClub.targetRevenue}
+                      onChange={(e) => setNewClub({...newClub, targetRevenue: parseInt(e.target.value) || 0})}
+                      className="w-full border border-gray-300 rounded-md px-3 py-2"
+                      placeholder="50000"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Target Attendees</label>
+                    <input
+                      type="number"
+                      value={newClub.targetAttendees}
+                      onChange={(e) => setNewClub({...newClub, targetAttendees: parseInt(e.target.value) || 0})}
+                      className="w-full border border-gray-300 rounded-md px-3 py-2"
+                      placeholder="50"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex space-x-3 mt-6">
+                <button
+                  onClick={async () => {
+                    try {
+                      const response = await fetch('/api/scaling/new-club-launch', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(newClub)
+                      })
+
+                      if (response.ok) {
+                        // Reset form and close modal
+                        setNewClub({ name: '', activity: '', city: '', area: '', targetMeetups: 0, targetRevenue: 0, targetAttendees: 0, launchDate: '' })
+                        setShowNewClubForm(false)
+                        // Refresh data here if needed
+                      }
+                    } catch (error) {
+                      console.error('Failed to add new club:', error)
+                    }
+                  }}
+                  className="flex-1 bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700"
+                >
+                  Add Club Launch
+                </button>
+                <button
+                  onClick={() => setShowNewClubForm(false)}
                   className="flex-1 bg-gray-300 text-gray-700 py-2 px-4 rounded-md hover:bg-gray-400"
                 >
                   Cancel

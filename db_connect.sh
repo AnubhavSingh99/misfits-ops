@@ -7,7 +7,11 @@ RED='\033[0;31m'
 NC='\033[0m' # No Color
 
 # Configuration
-SSH_KEY="$HOME/Downloads/claude-control-key"
+if [ "$NODE_ENV" = "production" ]; then
+    SSH_KEY="/home/ec2-user/Downloads/claude-control-key"
+else
+    SSH_KEY="$HOME/Downloads/DB claude key/claude-control-key"
+fi
 SSH_USER="claude-control"
 SSH_HOST="15.207.255.212"
 LOCAL_PORT="5433"

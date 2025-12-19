@@ -497,16 +497,18 @@ export async function getActivities(): Promise<Array<{
 export async function getCities(): Promise<Array<{
   id: string;
   name: string;
-  areas: Array<{id: string, name: string}>;
-  clubCount: number;
+  state?: string;
+  areas?: Array<{id: string, name: string}>;
+  clubCount?: number;
 }>> {
   const response = await apiRequest<{
     success: boolean;
     cities: Array<{
       id: string;
       name: string;
-      areas: Array<{id: string, name: string}>;
-      clubCount: number;
+      state?: string;
+      areas?: Array<{id: string, name: string}>;
+      clubCount?: number;
     }>;
   }>('/scaling/cities');
 
