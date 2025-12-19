@@ -38,6 +38,15 @@ interface ActivityHead {
   teamMembers: TeamMember[]
 }
 
+interface POC {
+  id: string
+  name: string
+  email: string
+  phone: string
+  cities: string[]
+  activities: string[]
+}
+
 interface CityHead {
   id: string
   name: string
@@ -122,6 +131,15 @@ export function POCManagement() {
   const [activityHeadsLoading, setActivityHeadsLoading] = useState(true)
 
   const [cityHeads, setCityHeads] = useState<CityHead[]>([])
+  const [pocs, setPocs] = useState<POC[]>([])
+  const [showAddPOC, setShowAddPOC] = useState(false)
+  const [newPOC, setNewPOC] = useState({
+    name: '',
+    email: '',
+    phone: '',
+    cities: [] as string[],
+    activities: [] as string[]
+  })
 
   const [showAddActivityHead, setShowAddActivityHead] = useState(false)
   const [showAddCityHead, setShowAddCityHead] = useState(false)
@@ -484,6 +502,23 @@ export function POCManagement() {
     return availableActivities.filter(activity => !assignedActivities.includes(activity.name))
   }
 
+  // POC management functions
+  const addPOC = () => {
+    if (newPOC.name && newPOC.email) {
+      const poc: POC = {
+        id: Date.now().toString(),
+        ...newPOC
+      }
+      setPocs([...pocs, poc])
+      setNewPOC({ name: '', email: '', phone: '', cities: [], activities: [] })
+      setShowAddPOC(false)
+    }
+  }
+
+  const deletePOC = (id: string) => {
+    setPocs(pocs.filter(poc => poc.id !== id))
+  }
+
   const addNewActivity = () => {
     if (!newActivity.name) return
 
@@ -743,6 +778,183 @@ export function POCManagement() {
             </div>
           </div>
         )}
+
+        {/* POC Management */}
+        <div className="bg-white rounded-2xl p-8 shadow-lg border border-gray-100">
+          <div className="flex items-center justify-between mb-6">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-gradient-to-br from-purple-500 to-pink-500 rounded-lg">
+                <Users className="h-5 w-5 text-white" />
+              </div>
+              <h2 className="text-2xl font-bold text-gray-900">POCs</h2>
+            </div>
+            <button
+              onClick={() => setShowAddPOC(true)}
+              className="flex items-center gap-2 px-4 py-2 bg-purple-500 text-white rounded-lg hover:bg-purple-600 transition-colors"
+            >
+              <Plus className="h-4 w-4" />
+              Add POC
+            </button>
+          </div>
+
+          {/* Add POC Form */}
+          {showAddPOC && (
+            <div className="mb-6 p-4 bg-purple-50 rounded-xl border border-purple-200">
+              <h3 className="font-bold text-purple-900 mb-4">Add New POC</h3>
+              <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>
+                  <input
+                    type="text"
+                    value={newPOC.name}
+                    onChange={(e) => setNewPOC({...newPOC, name: e.target.value})}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
+                    placeholder="Enter name"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+                  <input
+                    type="email"
+                    value={newPOC.email}
+                    onChange={(e) => setNewPOC({...newPOC, email: e.target.value})}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
+                    placeholder="Enter email"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Phone</label>
+                  <input
+                    type="tel"
+                    value={newPOC.phone}
+                    onChange={(e) => setNewPOC({...newPOC, phone: e.target.value})}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
+                    placeholder="Enter phone"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Cities</label>
+                  <select
+                    multiple
+                    value={newPOC.cities}
+                    onChange={(e) => setNewPOC({...newPOC, cities: Array.from(e.target.selectedOptions, option => option.value)})}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 h-20"
+                  >
+                    {cities.map(city => (
+                      <option key={city.id} value={city.name}>
+                        {city.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Activities</label>
+                  <select
+                    multiple
+                    value={newPOC.activities}
+                    onChange={(e) => setNewPOC({...newPOC, activities: Array.from(e.target.selectedOptions, option => option.value)})}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 h-20"
+                  >
+                    <optgroup label="Scale Activities">
+                      {scaleActivities.map(activity => (
+                        <option key={activity.name} value={activity.name}>
+                          {activity.name}
+                        </option>
+                      ))}
+                    </optgroup>
+                    <optgroup label="Long Tail Activities">
+                      {longTailActivities.map(activity => (
+                        <option key={activity.name} value={activity.name}>
+                          {activity.name}
+                        </option>
+                      ))}
+                    </optgroup>
+                  </select>
+                </div>
+              </div>
+              <div className="flex gap-2 mt-4">
+                <button
+                  onClick={addPOC}
+                  className="flex items-center gap-2 px-4 py-2 bg-purple-500 text-white rounded-lg hover:bg-purple-600"
+                >
+                  <Save className="h-4 w-4" />
+                  Save
+                </button>
+                <button
+                  onClick={() => {
+                    setShowAddPOC(false)
+                    setNewPOC({ name: '', email: '', phone: '', cities: [], activities: [] })
+                  }}
+                  className="flex items-center gap-2 px-4 py-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600"
+                >
+                  <X className="h-4 w-4" />
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* POCs Table */}
+          <div className="overflow-x-auto">
+            <table className="min-w-full">
+              <thead className="bg-gray-50 rounded-lg">
+                <tr>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Email</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Phone</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Cities</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Activities</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-200">
+                {pocs.map((poc) => (
+                  <tr key={poc.id} className="hover:bg-gray-50 transition-colors">
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="font-medium text-gray-900">{poc.name}</div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                      {poc.email}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                      {poc.phone}
+                    </td>
+                    <td className="px-6 py-4">
+                      <div className="flex flex-wrap gap-1">
+                        {poc.cities.map(city => (
+                          <span key={city} className="px-2 py-1 bg-blue-100 text-blue-800 text-xs rounded">
+                            {city}
+                          </span>
+                        ))}
+                      </div>
+                    </td>
+                    <td className="px-6 py-4">
+                      <div className="flex flex-wrap gap-1">
+                        {poc.activities.map(activity => getActivityBadge(activity, activities))}
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                      <button
+                        onClick={() => deletePOC(poc.id)}
+                        className="text-red-600 hover:text-red-900 mr-3"
+                        title="Delete POC"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+                {pocs.length === 0 && (
+                  <tr>
+                    <td colSpan={6} className="px-6 py-4 text-center text-gray-500">
+                      No POCs added yet. Click "Add POC" to get started.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
 
         {/* Activity Heads */}
         <div className="bg-white rounded-2xl p-8 shadow-lg border border-gray-100">
@@ -1124,14 +1336,22 @@ export function POCManagement() {
               <h3 className="font-bold text-blue-900 mb-4">Add New City Head</h3>
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>
-                  <input
-                    type="text"
+                  <label className="block text-sm font-medium text-gray-700 mb-1">POC</label>
+                  <select
                     value={newCityHead.name}
                     onChange={(e) => setNewCityHead({...newCityHead, name: e.target.value})}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                    placeholder="Enter name"
-                  />
+                  >
+                    <option value="">Select POC...</option>
+                    {pocs.map(poc => (
+                      <option key={poc.id} value={poc.name}>
+                        {poc.name} ({poc.email})
+                      </option>
+                    ))}
+                  </select>
+                  {pocs.length === 0 && (
+                    <p className="text-sm text-gray-500 mt-1">No POCs available. Add POCs first.</p>
+                  )}
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">City</label>
