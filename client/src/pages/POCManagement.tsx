@@ -190,6 +190,12 @@ export function POCManagement() {
         const autoScale = eligibleActivities.filter(a => a.activeClubs >= 10).map(a => a.name)
         const autoLongTail = eligibleActivities.filter(a => a.activeClubs < 10).map(a => a.name)
 
+        console.log('🔥 AUTO-CATEGORIZING ACTIVITIES:', {
+          totalActivities: eligibleActivities.length,
+          scaleActivities: autoScale,
+          longTailActivities: autoLongTail
+        })
+
         setCategorizedActivities({
           scale: autoScale,
           long_tail: autoLongTail
