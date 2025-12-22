@@ -14,7 +14,7 @@ let misfitsPool: Pool | null = null;
 const SSH_CONFIG = {
   keyFile: process.env.NODE_ENV === 'production'
     ? '/home/ec2-user/Downloads/claude-control-key'
-    : '/Users/retalplaza/Downloads/claude-control-key',
+    : '/Users/retalplaza/Downloads/DB claude key/claude-control-key',
   sshHost: '15.207.255.212',
   sshUser: 'claude-control',
   dbHost: 'misfits.cgncbvolnhe7.ap-south-1.rds.amazonaws.com',
@@ -26,7 +26,7 @@ const SSH_CONFIG = {
 };
 
 /**
- * Initialize SSH tunnel and database connection
+ * Initialize database connection (using existing SSH tunnel)
  */
 async function initializeMisfitsConnection(): Promise<Pool> {
   if (misfitsPool) {
@@ -43,33 +43,20 @@ async function initializeMisfitsConnection(): Promise<Pool> {
   }
 
   try {
-    // Kill existing SSH tunnels
-    try {
-      await execAsync(`pkill -f "${SSH_CONFIG.localPort}.*misfits"`);
-    } catch (error) {
-      // Ignore if no processes found
-    }
-
-    // Establish SSH tunnel
-    logger.info('Establishing SSH tunnel to Misfits database...');
-    const sshCommand = `ssh -i "${SSH_CONFIG.keyFile}" -o StrictHostKeyChecking=no -f -N -L ${SSH_CONFIG.localPort}:${SSH_CONFIG.dbHost}:${SSH_CONFIG.dbPort} ${SSH_CONFIG.sshUser}@${SSH_CONFIG.sshHost}`;
-
-    await execAsync(sshCommand);
-
-    // Wait for tunnel to be ready
-    await new Promise(resolve => setTimeout(resolve, 2000));
-
-    // Create database connection pool
-    misfitsPool = new Pool({
-      host: 'localhost',
-      port: parseInt(SSH_CONFIG.localPort),
-      database: SSH_CONFIG.dbName,
-      user: SSH_CONFIG.dbUser,
-      password: SSH_CONFIG.dbPassword,
+    // Use environment variables or fallback to SSH_CONFIG
+    const dbConfig = {
+      host: process.env.PROD_DB_HOST || 'localhost',
+      port: parseInt(process.env.PROD_DB_PORT || SSH_CONFIG.localPort),
+      database: process.env.PROD_DB_NAME || SSH_CONFIG.dbName,
+      user: process.env.PROD_DB_USER || SSH_CONFIG.dbUser,
+      password: process.env.PROD_DB_PASSWORD || SSH_CONFIG.dbPassword,
       max: 10,
       idleTimeoutMillis: 30000,
       connectionTimeoutMillis: 5000,
-    });
+    };
+
+    // Create database connection pool
+    misfitsPool = new Pool(dbConfig);
 
     // Test connection
     const client = await misfitsPool.connect();
@@ -232,7 +219,7 @@ router.get('/health', async (req, res) => {
         SELECT DISTINCT
           c.pk as club_id,
           c.name as club_name,
-          c.activity,
+          a.name as activity,
           (SELECT city2.name
            FROM event e2
            LEFT JOIN location loc2 ON e2.location_id = loc2.id
@@ -241,6 +228,7 @@ router.get('/health', async (req, res) => {
            WHERE e2.club_id = c.pk AND e2.state = 'CREATED'
            ORDER BY e2.start_time DESC LIMIT 1) as city_name
         FROM club c
+        LEFT JOIN activity a ON c.activity_id = a.id
         JOIN event e ON c.pk = e.club_id
         CROSS JOIN week_boundaries wb
         WHERE c.status = 'ACTIVE'
@@ -365,35 +353,72 @@ router.get('/health', async (req, res) => {
 });
 
 /**
- * GET /api/database/meetups - Get active meetup count
+ * GET /api/database/meetups - Get last week events with paying members
  */
 router.get('/meetups', async (req, res) => {
   try {
     const meetupQuery = `
+      WITH last_week_events AS (
+        SELECT DISTINCT e.id, e.pk, e.club_id, e.start_time
+        FROM event e
+        JOIN club c ON e.club_id = c.pk
+        WHERE c.status = 'ACTIVE'
+          AND e.state = 'CREATED'
+          AND e.start_time >= DATE_TRUNC('week', CURRENT_DATE - INTERVAL '1 week')
+          AND e.start_time < DATE_TRUNC('week', CURRENT_DATE)
+      ),
+      two_weeks_ago_events AS (
+        SELECT DISTINCT e.id, e.pk, e.club_id, e.start_time
+        FROM event e
+        JOIN club c ON e.club_id = c.pk
+        WHERE c.status = 'ACTIVE'
+          AND e.state = 'CREATED'
+          AND e.start_time >= DATE_TRUNC('week', CURRENT_DATE - INTERVAL '2 weeks')
+          AND e.start_time < DATE_TRUNC('week', CURRENT_DATE - INTERVAL '1 week')
+      ),
+      last_week_payments AS (
+        SELECT
+          lwe.id as event_id,
+          lwe.club_id,
+          COUNT(DISTINCT b.user_id) as total_bookings,
+          COUNT(DISTINCT CASE WHEN b.booking_payment_status = 'COMPLETED' THEN b.user_id END) as paid_bookings
+        FROM last_week_events lwe
+        LEFT JOIN booking b ON lwe.pk = b.event_id
+        GROUP BY lwe.id, lwe.club_id
+      ),
+      two_weeks_ago_payments AS (
+        SELECT
+          twe.id as event_id,
+          twe.club_id,
+          COUNT(DISTINCT b.user_id) as total_bookings,
+          COUNT(DISTINCT CASE WHEN b.booking_payment_status = 'COMPLETED' THEN b.user_id END) as paid_bookings
+        FROM two_weeks_ago_events twe
+        LEFT JOIN booking b ON twe.pk = b.event_id
+        GROUP BY twe.id, twe.club_id
+      )
       SELECT
-        COUNT(DISTINCT c.pk) as active_clubs,
-        COUNT(DISTINCT e.id) as total_events,
-        COUNT(DISTINCT DATE_TRUNC('week', e.created_at)) as active_weeks
-      FROM club c
-      JOIN event e ON c.pk = e.club_id
-      WHERE c.status = 'ACTIVE'
-      AND e.created_at >= CURRENT_DATE - INTERVAL '30 days';
+        COUNT(DISTINCT lwp.event_id) as total_last_week_events,
+        COUNT(CASE WHEN lwp.paid_bookings > 0 THEN 1 END) as last_week_events_with_paying_members,
+        COUNT(DISTINCT twap.event_id) as total_two_weeks_ago_events,
+        COUNT(CASE WHEN twap.paid_bookings > 0 THEN 1 END) as two_weeks_ago_events_with_paying_members
+      FROM last_week_payments lwp
+      FULL OUTER JOIN two_weeks_ago_payments twap ON 1=1;
     `;
 
     const result = await queryMisfits(meetupQuery);
     const data = result.rows[0];
 
-    // Estimate active meetups based on events and frequency
-    const activeMeetups = Math.round(data.total_events / 4); // Assuming monthly frequency
-    const targetMeetups = 1200; // As per PRD
-    const progressPercentage = (activeMeetups / targetMeetups) * 100;
+    const lastWeekTotal = parseInt(data.total_last_week_events) || 0;
+    const twoWeeksAgoTotal = parseInt(data.total_two_weeks_ago_events) || 0;
+    const weekOverWeekChange = lastWeekTotal - twoWeeksAgoTotal;
 
     res.json({
       success: true,
       data: {
-        active_meetups: activeMeetups,
-        target_meetups: targetMeetups,
-        progress_percentage: Math.min(progressPercentage, 100),
+        last_week_events_with_paying_members: parseInt(data.last_week_events_with_paying_members) || 0,
+        total_last_week_events: lastWeekTotal,
+        total_two_weeks_ago_events: twoWeeksAgoTotal,
+        week_over_week_change: weekOverWeekChange,
         raw_data: data
       }
     });
@@ -582,7 +607,7 @@ router.get('/new-clubs', async (req, res) => {
     const newClubsQuery = `
       SELECT DISTINCT
         c.name,
-        c.activity,
+        a.name as activity,
         city.name as city,
         area.name as area,
 
@@ -601,15 +626,16 @@ router.get('/new-clubs', async (req, res) => {
 
         -- Determine POC (simplified for now)
         CASE
-          WHEN c.activity LIKE '%Run%' THEN 'Rahul'
-          WHEN c.activity LIKE '%Photo%' THEN 'Priya'
-          WHEN c.activity LIKE '%Tech%' THEN 'Amit'
+          WHEN a.name LIKE '%Run%' THEN 'Rahul'
+          WHEN a.name LIKE '%Photo%' THEN 'Priya'
+          WHEN a.name LIKE '%Tech%' THEN 'Amit'
           ELSE 'Unassigned'
         END as poc_name,
 
         c.created_at
 
       FROM club c
+      LEFT JOIN activity a ON c.activity_id = a.id
       LEFT JOIN event e ON c.pk = e.club_id
         AND e.state = 'CREATED'
         AND e.start_time >= NOW() - INTERVAL '30 days'
@@ -622,7 +648,7 @@ router.get('/new-clubs', async (req, res) => {
         AND c.name NOT LIKE '%test%'
         AND c.created_at >= NOW() - INTERVAL '7 days' -- Only clubs created in last 7 days
 
-      GROUP BY c.pk, c.name, c.activity, city.name, area.name, c.created_at
+      GROUP BY c.pk, c.name, a.name, city.name, area.name, c.created_at
       ORDER BY c.created_at DESC
       LIMIT 50
     `;

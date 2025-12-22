@@ -208,12 +208,20 @@ router.get('/clubs', async (req, res) => {
             ELSE 0
           END as last_week_capacity_percentage,
 
-          -- Repeat rate: percentage of returning attendees
+          -- Repeat rate: percentage of last week's attendees who had previously attended the club before
           CASE
             WHEN COALESCE(lwb.unique_users, 0) > 0
             THEN ROUND(
-              ((COALESCE(lwb.total_valid_bookings, 0) - COALESCE(lwb.unique_users, 0)) * 100.0) /
-              COALESCE(lwb.unique_users, 0)
+              (
+                (SELECT COUNT(DISTINCT b_hist.user_id)
+                 FROM event e_hist
+                 JOIN booking b_hist ON e_hist.pk = b_hist.event_id
+                 WHERE e_hist.club_id = c.pk
+                   AND e_hist.created_at < DATE_TRUNC('week', CURRENT_DATE - INTERVAL '1 week')
+                   AND b_hist.booking_status IN ('REGISTERED', 'WAITLISTED', 'OPEN_FOR_REPLACEMENT', 'ATTENDED', 'NOT_ATTENDED')
+                   AND b_hist.user_id IN (SELECT DISTINCT user_id FROM last_week_events lwe_inner JOIN booking b_inner ON lwe_inner.event_pk = b_inner.event_id WHERE lwe_inner.club_id = c.pk AND b_inner.booking_status IN ('REGISTERED', 'WAITLISTED', 'OPEN_FOR_REPLACEMENT', 'ATTENDED', 'NOT_ATTENDED'))
+                ) * 100.0
+              ) / COALESCE(lwb.unique_users, 1)
             )
             ELSE 0
           END as last_week_repeat_rate_percentage,
@@ -228,7 +236,17 @@ router.get('/clubs', async (req, res) => {
             JOIN booking b ON lwe2.event_pk = b.event_id
             WHERE lwe2.club_id = c.pk
             AND b.booking_payment_status = 'COMPLETED'
-          ), 0) as last_week_revenue
+          ), 0) as last_week_revenue,
+
+          -- Check if club has had events in the last 2 months (for dormant detection)
+          CASE
+            WHEN EXISTS (
+              SELECT 1 FROM event e_hist
+              WHERE e_hist.club_id = c.pk
+              AND e_hist.created_at >= CURRENT_DATE - INTERVAL '2 months'
+            ) THEN true
+            ELSE false
+          END as has_recent_historical_events
 
         FROM club c
         LEFT JOIN activity a ON c.activity_id = a.id
@@ -241,16 +259,78 @@ router.get('/clubs', async (req, res) => {
         GROUP BY c.pk, c.id, c.name, c.status, c.created_at, a.name, lwb.capacity_bookings_count,
                  lwb.unique_users, lwb.total_valid_bookings, lwb.avg_rating, lwc.total_slots
       ),
+      two_weeks_ago_events AS (
+        -- Get events from two weeks ago
+        SELECT
+          e.pk as event_pk,
+          e.club_id,
+          e.max_people,
+          e.created_at
+        FROM event e
+        WHERE e.created_at >= DATE_TRUNC('week', CURRENT_DATE - INTERVAL '2 weeks')
+          AND e.created_at < DATE_TRUNC('week', CURRENT_DATE - INTERVAL '1 week')
+      ),
+      two_weeks_ago_bookings AS (
+        -- Get bookings from two weeks ago events
+        SELECT
+          twa.club_id,
+          COUNT(CASE WHEN b.booking_status IN ('REGISTERED', 'WAITLISTED', 'OPEN_FOR_REPLACEMENT', 'ATTENDED', 'NOT_ATTENDED')
+                     THEN b.id ELSE NULL END) as capacity_bookings_count,
+          COUNT(DISTINCT CASE WHEN b.booking_status IN ('REGISTERED', 'WAITLISTED', 'OPEN_FOR_REPLACEMENT', 'ATTENDED', 'NOT_ATTENDED')
+                              THEN b.user_id ELSE NULL END) as unique_users,
+          COUNT(CASE WHEN b.booking_status IN ('REGISTERED', 'WAITLISTED', 'OPEN_FOR_REPLACEMENT', 'ATTENDED', 'NOT_ATTENDED')
+                     THEN b.id ELSE NULL END) as total_valid_bookings,
+          AVG(CASE WHEN (b.feedback_details->>'rating')::numeric IS NOT NULL
+                   THEN (b.feedback_details->>'rating')::numeric ELSE NULL END) as avg_rating
+        FROM two_weeks_ago_events twa
+        LEFT JOIN booking b ON twa.event_pk = b.event_id
+        GROUP BY twa.club_id
+      ),
+      two_weeks_ago_capacity AS (
+        -- Calculate capacity for two weeks ago
+        SELECT
+          club_id,
+          SUM(max_people) as total_slots
+        FROM two_weeks_ago_events
+        GROUP BY club_id
+      ),
       last_to_last_week_data AS (
-        -- Get week before last week data for comparison
+        -- Get week before last week data for comparison (two weeks ago)
         SELECT
           c.pk as club_pk,
-          0 as last_to_last_week_capacity_percentage,
-          0 as last_to_last_week_repeat_rate_percentage,
-          0 as last_to_last_week_avg_rating,
-          0 as last_to_last_week_revenue
+          CASE
+            WHEN COALESCE(twac.total_slots, 0) > 0
+            THEN ROUND((COALESCE(twab.capacity_bookings_count, 0) * 100.0) / twac.total_slots)
+            ELSE 0
+          END as last_to_last_week_capacity_percentage,
+          CASE
+            WHEN COALESCE(twab.unique_users, 0) > 0
+            THEN ROUND(
+              (
+                (SELECT COUNT(DISTINCT b_hist.user_id)
+                 FROM event e_hist
+                 JOIN booking b_hist ON e_hist.pk = b_hist.event_id
+                 WHERE e_hist.club_id = c.pk
+                   AND e_hist.created_at < DATE_TRUNC('week', CURRENT_DATE - INTERVAL '2 weeks')
+                   AND b_hist.booking_status IN ('REGISTERED', 'WAITLISTED', 'OPEN_FOR_REPLACEMENT', 'ATTENDED', 'NOT_ATTENDED')
+                   AND b_hist.user_id IN (SELECT DISTINCT user_id FROM two_weeks_ago_events twa_inner JOIN booking b_inner ON twa_inner.event_pk = b_inner.event_id WHERE twa_inner.club_id = c.pk AND b_inner.booking_status IN ('REGISTERED', 'WAITLISTED', 'OPEN_FOR_REPLACEMENT', 'ATTENDED', 'NOT_ATTENDED'))
+                ) * 100.0
+              ) / COALESCE(twab.unique_users, 1)
+            )
+            ELSE 0
+          END as last_to_last_week_repeat_rate_percentage,
+          ROUND(COALESCE(twab.avg_rating, 0), 1) as last_to_last_week_avg_rating,
+          COALESCE((
+            SELECT SUM(b.amount)
+            FROM two_weeks_ago_events twa2
+            JOIN booking b ON twa2.event_pk = b.event_id
+            WHERE twa2.club_id = c.pk
+            AND b.booking_payment_status = 'COMPLETED'
+          ), 0) as last_to_last_week_revenue
         FROM club c
         LEFT JOIN activity a ON c.activity_id = a.id
+        LEFT JOIN two_weeks_ago_bookings twab ON c.pk = twab.club_id
+        LEFT JOIN two_weeks_ago_capacity twac ON c.pk = twac.club_id
         WHERE c.status = 'ACTIVE'
         AND c.is_private = false
         AND (a.name IS NULL OR a.name != 'Test')
@@ -270,6 +350,7 @@ router.get('/clubs', async (req, res) => {
         lwd.club_pk, lwd.club_id, lwd.club_name, lwd.club_status, lwd.club_created_date,
         lwd.activity, lwd.city, lwd.area, lwd.last_week_capacity_percentage,
         lwd.last_week_repeat_rate_percentage, lwd.last_week_avg_rating, lwd.last_week_revenue,
+        lwd.has_recent_historical_events,
         llwd.last_to_last_week_capacity_percentage, llwd.last_to_last_week_repeat_rate_percentage,
         llwd.last_to_last_week_avg_rating, llwd.last_to_last_week_revenue
       ORDER BY lwd.club_status, lwd.club_name
@@ -294,7 +375,10 @@ router.get('/clubs', async (req, res) => {
           last_week_capacity_percentage: row.last_to_last_week_capacity_percentage || 0,
           last_week_repeat_rate_percentage: row.last_to_last_week_repeat_rate_percentage || 0,
           last_week_avg_rating: row.last_to_last_week_avg_rating || 0,
-          last_week_revenue: row.last_to_last_week_revenue || 0
+          last_week_revenue: row.last_to_last_week_revenue || 0,
+          has_recent_historical_events: row.has_recent_historical_events || false,
+          // Override for dormancy detection: if capacity is 0 and has historical events, it's dormant
+          is_dormant: (row.last_week_capacity_percentage || 0) === 0 && (row.has_recent_historical_events === true)
         };
 
         const healthResult = calculateClubHealth(clubHealthData);
@@ -338,12 +422,25 @@ router.get('/clubs', async (req, res) => {
       // Calculate system-wide metrics using health engine
       const systemHealth = calculateSystemHealth(clubs);
 
+      // Calculate total events with completed payments (last week)
+      const totalEventsQuery = `
+        SELECT COUNT(DISTINCT e.pk) as total_events_with_payments
+        FROM event e
+        JOIN booking b ON e.pk = b.event_id
+        JOIN club c ON e.club_id = c.pk
+        WHERE b.booking_payment_status = 'COMPLETED'
+        AND e.created_at >= CURRENT_DATE - INTERVAL '7 days'
+        AND c.status = 'ACTIVE'
+        AND c.is_private = false
+        ${statusFilter}
+      `;
+
+      const eventsResult = await queryMisfits(totalEventsQuery);
+      const totalEventsWithPayments = eventsResult.rows[0]?.total_events_with_payments || 0;
+
       // Calculate meetup-based metrics from events
-      const totalMeetups = clubs.reduce((sum, club) => sum + club.total_events, 0);
-      const recentMeetups = clubs.reduce((sum, club) => {
-        // Estimate recent meetups based on health score and activity
-        return sum + Math.round(club.total_events * 0.3); // Approximate recent activity
-      }, 0);
+      const totalMeetups = parseInt(totalEventsWithPayments) || 0;
+      const recentMeetups = totalMeetups;
 
       // Build comprehensive metrics object
       const metrics = {
@@ -353,7 +450,7 @@ router.get('/clubs', async (req, res) => {
         active_meetups: recentMeetups,
         meetup_target: 1200, // Can be made configurable
         meetup_achievement_pct: Math.round((recentMeetups / 1200) * 100),
-        total_events: clubs.reduce((sum, c) => sum + c.total_events, 0),
+        total_events: totalMeetups,
 
         // Additional filter information
         filtered_by: status || 'all',

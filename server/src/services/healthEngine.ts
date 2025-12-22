@@ -84,9 +84,9 @@ function calculateOverallHealthScore(metrics: {
 }): number {
   const weights = metrics.is_new_club
     ? {
-        capacity_utilization: 0.5, // 50% weight for new clubs
+        capacity_utilization: 0.6, // 60% weight for new clubs
         repeat_rate: 0.0, // 0% weight - not a factor for new clubs
-        avg_rating: 0.5, // 50% weight for new clubs
+        avg_rating: 0.4, // 40% weight for new clubs
         revenue_achievement: 0.0 // Not used in overall score
       }
     : {
@@ -221,13 +221,17 @@ export function calculateClubHealth(clubData: {
   // Detect issues (modified for new clubs)
   const autoDetectedIssues = detectIssues({
     ...metricsObj,
-    repeat_rate: isNewClub ? 100 : metricsObj.repeat_rate // Don't flag repeat rate issues for new clubs
+    repeat_rate: isNewClub ? 100 : metricsObj.repeat_rate, // Don't flag repeat rate issues for new clubs
+    revenue_achievement: 100 // Revenue should never be a factor for health (for any club)
   });
 
   // Determine health status for UI
   let healthStatusForUI = 'healthy';
   if (clubData.club_status === 'INACTIVE') {
     healthStatusForUI = 'inactive';
+  } else if (clubData.is_dormant) {
+    // Club has had events in the last 2 months but none last week = dormant
+    healthStatusForUI = 'dormant';
   } else if (overallHealth === 'red' || autoDetectedIssues.length > 0) {
     healthStatusForUI = 'critical';
   } else if (overallHealth === 'yellow') {

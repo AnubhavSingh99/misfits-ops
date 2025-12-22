@@ -4,28 +4,24 @@ import { logger } from '../utils/logger';
 
 const router = express.Router();
 
-// GET /api/poc/list - Get all POCs with real-time data
+// GET /api/poc/list - Get all POCs with assignment data
 router.get('/list', async (req, res) => {
   try {
     const pocs = await query(`
       SELECT
         p.*,
-        COUNT(DISTINCT m.id) as club_count,
-        SUM(m.actual_revenue) as revenue_actual,
-        ROUND(AVG(
+        COUNT(DISTINCT pa.club_id) as club_count,
+        COALESCE(AVG(
           CASE
-            WHEN m.health_status = 'GREEN' THEN 100
-            WHEN m.health_status = 'YELLOW' THEN 60
-            WHEN m.health_status = 'RED' THEN 20
-            ELSE 0
+            WHEN c.health_status = 'green' THEN 100
+            WHEN c.health_status = 'yellow' THEN 60
+            WHEN c.health_status = 'red' THEN 20
+            ELSE 50
           END
-        )) as health_score
+        ), 50) as health_score
       FROM poc_structure p
-      LEFT JOIN meetups m ON (
-        p.poc_type = 'activity_head' AND m.activity_head_id = p.id
-        OR
-        p.poc_type = 'city_head' AND m.city_head_id = p.id
-      )
+      LEFT JOIN poc_assignments pa ON p.id = pa.poc_id AND pa.unassigned_at IS NULL
+      LEFT JOIN clubs c ON pa.club_id = c.id
       WHERE p.is_active = true
       GROUP BY p.id, p.name, p.poc_type, p.activities, p.cities, p.team_name
       ORDER BY p.name
@@ -298,6 +294,64 @@ router.get('/saurabh/music', async (req, res) => {
   } catch (error) {
     logger.error('Failed to fetch Saurabh music data:', error);
     res.status(500).json({ error: 'Failed to fetch music data' });
+  }
+});
+
+// POST /api/poc - Create new POC
+router.post('/', async (req, res) => {
+  try {
+    const { name, poc_type, activities = [], cities = [], team_name, email, phone, user_id } = req.body;
+
+    if (!name || !poc_type) {
+      return res.status(400).json({ error: 'Name and poc_type are required' });
+    }
+
+    if (!['activity_head', 'city_head'].includes(poc_type)) {
+      return res.status(400).json({ error: 'poc_type must be activity_head or city_head' });
+    }
+
+    const result = await query(`
+      INSERT INTO poc_structure (name, poc_type, activities, cities, team_name, email, phone, user_id)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      RETURNING *
+    `, [name, poc_type, activities, cities, team_name, email, phone, user_id]);
+
+    res.status(201).json(result.rows[0]);
+  } catch (error) {
+    logger.error('Failed to create POC:', error);
+    res.status(500).json({ error: 'Failed to create POC' });
+  }
+});
+
+// PUT /api/poc/:id - Update POC
+router.put('/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, poc_type, activities = [], cities = [], team_name, email, phone, is_active } = req.body;
+
+    const result = await query(`
+      UPDATE poc_structure
+      SET name = COALESCE($1, name),
+          poc_type = COALESCE($2, poc_type),
+          activities = COALESCE($3, activities),
+          cities = COALESCE($4, cities),
+          team_name = COALESCE($5, team_name),
+          email = COALESCE($6, email),
+          phone = COALESCE($7, phone),
+          is_active = COALESCE($8, is_active),
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = $9
+      RETURNING *
+    `, [name, poc_type, activities, cities, team_name, email, phone, is_active, id]);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'POC not found' });
+    }
+
+    res.json(result.rows[0]);
+  } catch (error) {
+    logger.error('Failed to update POC:', error);
+    res.status(500).json({ error: 'Failed to update POC' });
   }
 });
 

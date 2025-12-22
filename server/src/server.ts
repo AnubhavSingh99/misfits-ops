@@ -20,6 +20,7 @@ import revenueRoutes from './routes/revenue';
 import databaseRoutes from './routes/database';
 import healthRoutes from './routes/health';
 import scalingRoutes from './routes/scaling';
+import targetsRoutes from './routes/targets';
 
 // Import services
 import { initializeDatabase } from './services/database';
@@ -65,6 +66,7 @@ app.use('/api/revenue', revenueRoutes);
 app.use('/api/database', databaseRoutes);
 app.use('/api/health', healthRoutes);
 app.use('/api/scaling', scalingRoutes);
+app.use('/api/targets', targetsRoutes);
 app.use('/api', revenueRoutes); // Also handle direct /api/revenue-growth
 
 // Serve static files from React app

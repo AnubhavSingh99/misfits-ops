@@ -1,33 +1,41 @@
 import { Pool, PoolClient } from 'pg';
 import { logger } from '../utils/logger';
 
-let pool: Pool;
+let pool: Pool; // Local operations database
+let prodPool: Pool; // Production database (read-only)
 
 export async function initializeDatabase() {
+  // Skip local database initialization if production database is configured
+  if (process.env.PROD_DB_HOST) {
+    logger.info('Production database configured, skipping local database initialization');
+    return;
+  }
+
+  // Initialize local operations database only if production database is not available
   pool = new Pool({
-    host: process.env.DB_HOST || 'localhost',
-    port: parseInt(process.env.DB_PORT || '5432'),
-    database: process.env.DB_NAME || 'misfits_ops',
-    user: process.env.DB_USER || 'postgres',
-    password: process.env.DB_PASSWORD || 'postgres',
+    host: process.env.LOCAL_DB_HOST || 'localhost',
+    port: parseInt(process.env.LOCAL_DB_PORT || '5432'),
+    database: process.env.LOCAL_DB_NAME || 'misfits_ops',
+    user: process.env.LOCAL_DB_USER || 'postgres',
+    password: process.env.LOCAL_DB_PASSWORD || '',
     max: 20,
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: 2000,
   });
 
   try {
-    // Test connection
+    // Test local operations database connection
     const client = await pool.connect();
     await client.query('SELECT NOW()');
     client.release();
 
-    logger.info('Database connection established (read-only mode)');
+    logger.info('Local operations database connection established');
 
-    // Skip migrations - database is read-only
-    logger.info('Skipping migrations - running in read-only mode');
+    // Run migrations for local database
+    await runMigrations();
 
   } catch (error) {
-    logger.error('Database connection failed:', error);
+    logger.error('Local operations database connection failed:', error);
     throw error;
   }
 }
@@ -173,12 +181,181 @@ async function runMigrations() {
     `);
 
     // Create indexes
+    // Create target tracking tables for scaling planner
+    await query(`
+      CREATE TABLE IF NOT EXISTS activity_scaling_targets (
+        id SERIAL PRIMARY KEY,
+        activity_name VARCHAR(255) NOT NULL UNIQUE,
+        activity_id INTEGER,
+
+        -- Target metrics for existing clubs
+        target_meetups_existing INTEGER DEFAULT 0,
+        target_revenue_existing_rupees DECIMAL(12,2) DEFAULT 0,
+
+        -- Target metrics for new clubs
+        target_meetups_new INTEGER DEFAULT 0,
+        target_revenue_new_rupees DECIMAL(12,2) DEFAULT 0,
+
+        -- Auto-calculated totals
+        total_target_meetups INTEGER GENERATED ALWAYS AS (target_meetups_existing + target_meetups_new) STORED,
+        total_target_revenue_rupees DECIMAL(12,2) GENERATED ALWAYS AS (target_revenue_existing_rupees + target_revenue_new_rupees) STORED,
+
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        created_by VARCHAR(255)
+      );
+    `);
+
+    await query(`
+      CREATE TABLE IF NOT EXISTS club_scaling_targets (
+        id SERIAL PRIMARY KEY,
+        club_id UUID NOT NULL UNIQUE,
+        club_name VARCHAR(255) NOT NULL,
+        activity_name VARCHAR(255) NOT NULL,
+
+        -- Individual club targets
+        target_meetups INTEGER DEFAULT 0,
+        target_revenue_rupees DECIMAL(12,2) DEFAULT 0,
+
+        -- New club tracking
+        is_new_club BOOLEAN DEFAULT FALSE,
+        launch_date TIMESTAMP,
+        new_club_tag_expires_at TIMESTAMP,
+
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        created_by VARCHAR(255),
+
+        FOREIGN KEY (activity_name) REFERENCES activity_scaling_targets(activity_name) ON DELETE CASCADE
+      );
+    `);
+
+    await query(`
+      CREATE TABLE IF NOT EXISTS new_club_launches (
+        id SERIAL PRIMARY KEY,
+        activity_name VARCHAR(255) NOT NULL,
+
+        -- Launch planning
+        planned_club_name VARCHAR(255),
+        planned_city VARCHAR(255),
+        planned_area VARCHAR(255),
+        planned_launch_date DATE,
+
+        -- Targets for this new club
+        target_meetups INTEGER DEFAULT 0,
+        target_revenue_rupees DECIMAL(12,2) DEFAULT 0,
+
+        -- Launch status
+        launch_status VARCHAR(50) DEFAULT 'planned',
+        actual_club_id UUID,
+
+        -- Launch milestones
+        milestones JSONB DEFAULT '{
+          "poc_assigned": false,
+          "location_found": false,
+          "first_event_scheduled": false,
+          "first_event_conducted": false,
+          "members_onboarded": false
+        }',
+
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        created_by VARCHAR(255),
+
+        FOREIGN KEY (activity_name) REFERENCES activity_scaling_targets(activity_name) ON DELETE CASCADE
+      );
+    `);
+
+    // Create indexes for existing tables
     await query('CREATE INDEX IF NOT EXISTS idx_clubs_city ON clubs(city);');
     await query('CREATE INDEX IF NOT EXISTS idx_clubs_activity ON clubs(activity);');
     await query('CREATE INDEX IF NOT EXISTS idx_clubs_health_status ON clubs(health_status);');
     await query('CREATE INDEX IF NOT EXISTS idx_tasks_assigned_to ON intelligent_tasks(assigned_to);');
     await query('CREATE INDEX IF NOT EXISTS idx_tasks_club_id ON intelligent_tasks(club_id);');
     await query('CREATE INDEX IF NOT EXISTS idx_notifications_recipient ON smart_notifications(recipient);');
+
+    // Create POC structure table
+    await query(`
+      CREATE TABLE IF NOT EXISTS poc_structure (
+        id SERIAL PRIMARY KEY,
+        name VARCHAR(255) NOT NULL,
+        poc_type VARCHAR(50) NOT NULL CHECK (poc_type IN ('activity_head', 'city_head')),
+        activities TEXT[] DEFAULT '{}',
+        cities TEXT[] DEFAULT '{}',
+        team_name VARCHAR(255),
+        email VARCHAR(255),
+        phone VARCHAR(20),
+        user_id UUID REFERENCES users(id),
+        is_active BOOLEAN DEFAULT true,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    // Create POC assignments table
+    await query(`
+      CREATE TABLE IF NOT EXISTS poc_assignments (
+        id SERIAL PRIMARY KEY,
+        club_id UUID REFERENCES clubs(id),
+        poc_id INTEGER REFERENCES poc_structure(id),
+        assignment_type VARCHAR(50) NOT NULL CHECK (assignment_type IN ('activity_head', 'city_head')),
+        assigned_by VARCHAR(255),
+        reason TEXT,
+        assigned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        unassigned_at TIMESTAMP,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    // Create operations tasks table
+    await query(`
+      CREATE TABLE IF NOT EXISTS operations_tasks (
+        id SERIAL PRIMARY KEY,
+        title VARCHAR(500) NOT NULL,
+        description TEXT,
+        assigned_to_poc_id INTEGER REFERENCES poc_structure(id),
+        assigned_to_user_id UUID REFERENCES users(id),
+        priority VARCHAR(20) DEFAULT 'medium' CHECK (priority IN ('low', 'medium', 'high', 'urgent')),
+        status VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('pending', 'in_progress', 'completed', 'cancelled')),
+        due_date TIMESTAMP,
+        club_id UUID REFERENCES clubs(id),
+        activity VARCHAR(100),
+        city VARCHAR(100),
+        created_by VARCHAR(255),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        completed_at TIMESTAMP
+      );
+    `);
+
+    // Create task comments table
+    await query(`
+      CREATE TABLE IF NOT EXISTS task_comments (
+        id SERIAL PRIMARY KEY,
+        task_id INTEGER REFERENCES operations_tasks(id) ON DELETE CASCADE,
+        author_name VARCHAR(255) NOT NULL,
+        comment_text TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    // Create indexes for target tracking tables
+    await query('CREATE INDEX IF NOT EXISTS idx_activity_targets_name ON activity_scaling_targets(activity_name);');
+    await query('CREATE INDEX IF NOT EXISTS idx_club_targets_club_id ON club_scaling_targets(club_id);');
+    await query('CREATE INDEX IF NOT EXISTS idx_club_targets_activity ON club_scaling_targets(activity_name);');
+    await query('CREATE INDEX IF NOT EXISTS idx_club_targets_new_club ON club_scaling_targets(is_new_club);');
+    await query('CREATE INDEX IF NOT EXISTS idx_new_launches_activity ON new_club_launches(activity_name);');
+    await query('CREATE INDEX IF NOT EXISTS idx_new_launches_status ON new_club_launches(launch_status);');
+
+    // Create indexes for POC and task tables
+    await query('CREATE INDEX IF NOT EXISTS idx_poc_structure_type ON poc_structure(poc_type);');
+    await query('CREATE INDEX IF NOT EXISTS idx_poc_structure_active ON poc_structure(is_active);');
+    await query('CREATE INDEX IF NOT EXISTS idx_poc_assignments_club ON poc_assignments(club_id);');
+    await query('CREATE INDEX IF NOT EXISTS idx_poc_assignments_poc ON poc_assignments(poc_id);');
+    await query('CREATE INDEX IF NOT EXISTS idx_tasks_assigned_poc ON operations_tasks(assigned_to_poc_id);');
+    await query('CREATE INDEX IF NOT EXISTS idx_tasks_status ON operations_tasks(status);');
+    await query('CREATE INDEX IF NOT EXISTS idx_tasks_priority ON operations_tasks(priority);');
+    await query('CREATE INDEX IF NOT EXISTS idx_task_comments_task ON task_comments(task_id);');
 
     logger.info('Database migrations completed');
   } catch (error) {
