@@ -41,17 +41,16 @@ interface ActivityHead {
 interface POC {
   id: string
   name: string
-  email: string
-  phone: string
-  cities: string[]
+  teamName: string
+  teamMembers: TeamMember[]
   activities: string[]
 }
 
 interface CityHead {
   id: string
-  name: string
+  pocId: string
+  pocName: string
   city: string
-  allActivities: boolean
   clubs: number
   revenue: number
   health: number
@@ -135,9 +134,8 @@ export function POCManagement() {
   const [showAddPOC, setShowAddPOC] = useState(false)
   const [newPOC, setNewPOC] = useState({
     name: '',
-    email: '',
-    phone: '',
-    cities: [] as string[],
+    teamName: '',
+    teamMembers: [] as TeamMember[],
     activities: [] as string[]
   })
 
@@ -148,7 +146,8 @@ export function POCManagement() {
   const [showAddMember, setShowAddMember] = useState<string | null>(null)
 
   const [newCityHead, setNewCityHead] = useState({
-    name: '',
+    pocId: '',
+    pocName: '',
     city: '',
     isDualRole: false,
     dualRoleDescription: ''
@@ -160,6 +159,10 @@ export function POCManagement() {
     email: '',
     phone: ''
   })
+
+  // POC Activity Mapping state and functions
+  const [showPOCActivityMapping, setShowPOCActivityMapping] = useState(false)
+  const [selectedPOCForActivities, setSelectedPOCForActivities] = useState<string | null>(null)
 
   // Fetch activities from API
   useEffect(() => {
@@ -211,9 +214,12 @@ export function POCManagement() {
         }
 
         setDataSource('database')
+
+        // Load POCs from the database
+        await loadPOCs()
       } catch (error) {
         console.error('Error fetching POC management data:', error)
-        console.error('API Base URL being used:', import.meta.env.VITE_API_URL || 'http://localhost:3001/api')
+        console.error('API Base URL being used:', import.meta.env.VITE_API_URL || 'http://localhost:5001/api')
         console.error('Full error details:', error)
         setDataSource('default')
       } finally {
@@ -226,72 +232,79 @@ export function POCManagement() {
     fetchData()
   }, [])
 
-  // Load Activity Heads from database
-  const loadActivityHeads = async () => {
+  // Load POCs from database
+  const loadPOCs = async () => {
     try {
-      const response = await fetch('/api/database/activity-heads')
-      const result = await response.json()
+      const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5001'}/api/poc/list`)
+      const data = await response.json()
 
-      if (result.success && result.data.heads) {
-        // Update local state with saved Activity Heads from database
-        const savedHeads = result.data.heads
-        const processedHeads: ActivityHead[] = savedHeads.map((head: any) => {
-          const totalClubs = head.activities.reduce((sum: number, activity: string) => {
-            const activityData = activities.find(a => a.name === activity)
-            return sum + (activityData?.clubCount || 0)
-          }, 0)
+      if (data && Array.isArray(data)) {
+        // Convert database POC structure to frontend format
+        const pocList = data.map((poc: any) => ({
+          id: poc.id.toString(),
+          name: poc.name,
+          teamName: poc.team_name || 'Operations Team',
+          teamMembers: [], // TODO: Add team members handling
+          activities: poc.activities || []
+        }))
 
-          const totalRevenue = head.activities.reduce((sum: number, activity: string) => {
-            const activityData = activities.find(a => a.name === activity)
-            return sum + (activityData?.activeClubs * 10000 || 0) // Estimate revenue based on active clubs
-          }, 0)
+        setPocs(pocList)
+        console.log('Loaded POCs from database:', pocList.length, 'records')
 
-          return {
-            id: head.id,
-            name: head.name,
-            activities: head.activities,
-            team: head.team || 'Phoenix',
-            clubs: totalClubs,
-            revenue: totalRevenue,
-            health: Math.floor(Math.random() * 30) + 70, // 70-100%
+        // Convert to Activity Heads format for backward compatibility
+        const activityHeadsList = data
+          .filter((poc: any) => poc.poc_type === 'activity_head')
+          .map((poc: any) => ({
+            id: poc.id.toString(),
+            name: poc.name,
+            activities: poc.activities || [],
+            team: poc.team_name || 'Phoenix',
+            clubs: 0,
+            revenue: 0,
+            health: Math.floor(Math.random() * 30) + 70,
             healthStatus: 'green' as 'green' | 'yellow' | 'red',
             teamMembers: []
-          }
-        })
+          }))
 
-        setActivityHeads(processedHeads)
-        console.log('Loaded Activity Heads from database:', savedHeads.length, 'records')
+        setActivityHeads(activityHeadsList)
+
+        // Convert to City Heads format
+        const cityHeadsList = data
+          .filter((poc: any) => poc.poc_type === 'city_head')
+          .map((poc: any) => ({
+            id: poc.id.toString(),
+            pocId: poc.id.toString(),
+            pocName: poc.name,
+            city: poc.cities?.[0] || 'Unknown',
+            clubs: Math.floor(Math.random() * 30) + 30,
+            revenue: Math.floor(Math.random() * 1000000) + 500000,
+            health: Math.floor(Math.random() * 30) + 70,
+            healthStatus: 'green' as 'green' | 'yellow' | 'red'
+          }))
+
+        setCityHeads(cityHeadsList)
       }
     } catch (error) {
-      console.error('Failed to load Activity Heads from database:', error)
+      console.error('Failed to load POCs from database:', error)
       // Continue with default/empty state if database is unavailable
     }
   }
 
   const addActivityHead = async () => {
     if (newActivityHead.name && newActivityHead.activities.length > 0) {
-      const totalClubs = newActivityHead.activities.reduce((sum, activity) => {
-        const activityData = activities.find(a => a.name === activity)
-        return sum + (activityData?.clubs || 0)
-      }, 0)
-
-      const totalRevenue = newActivityHead.activities.reduce((sum, activity) => {
-        const activityData = activities.find(a => a.name === activity)
-        return sum + (activityData?.revenue || 0)
-      }, 0)
-
       try {
-        // Save to database first
-        const response = await fetch('/api/database/activity-heads', {
+        // Save to database using the POC API
+        const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5001'}/api/poc`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
             name: newActivityHead.name,
+            poc_type: 'activity_head',
             activities: newActivityHead.activities,
-            team: newActivityHead.team,
-            updated_by: 'operations_team'
+            team_name: newActivityHead.team,
+            cities: []
           })
         })
 
@@ -300,39 +313,37 @@ export function POCManagement() {
         }
 
         const result = await response.json()
-        if (!result.success) {
-          throw new Error(result.error || 'Failed to save activity head')
-        }
 
         const newHead: ActivityHead = {
-          id: result.data.id || Date.now().toString(),
-          ...newActivityHead,
-          clubs: totalClubs,
-          revenue: totalRevenue,
+          id: result.id || Date.now().toString(),
+          name: newActivityHead.name,
+          activities: newActivityHead.activities,
+          team: newActivityHead.team,
+          clubs: 0, // Will be calculated based on activities
+          revenue: 0, // Will be calculated based on activities
           health: Math.floor(Math.random() * 30) + 70, // 70-100%
           healthStatus: 'green',
           teamMembers: []
         }
 
-        // Update local state only after successful database save
+        // Update local state
         setActivityHeads([...activityHeads, newHead])
         setNewActivityHead({ name: '', activities: [], team: 'Phoenix' })
-        console.log('Activity head saved successfully:', result.message)
+
+        // Also add to POC list for consistency
+        const newPOC: POC = {
+          id: result.id || Date.now().toString(),
+          name: newActivityHead.name,
+          teamName: newActivityHead.team,
+          teamMembers: [],
+          activities: newActivityHead.activities
+        }
+        setPocs([...pocs, newPOC])
+
+        console.log('Activity head saved successfully')
       } catch (error) {
         console.error('Failed to save activity head:', error)
-        // Still update local state for offline functionality
-        const newHead: ActivityHead = {
-          id: Date.now().toString(),
-          ...newActivityHead,
-          clubs: totalClubs,
-          revenue: totalRevenue,
-          health: Math.floor(Math.random() * 30) + 70, // 70-100%
-          healthStatus: 'green',
-          teamMembers: []
-        }
-
-        setActivityHeads([...activityHeads, newHead])
-        setNewActivityHead({ name: '', activities: [], team: 'Phoenix' })
+        alert('Failed to save activity head. Please try again.')
       }
       setShowAddActivityHead(false)
     }
@@ -433,23 +444,26 @@ export function POCManagement() {
   }
 
   const addCityHead = () => {
-    if (newCityHead.name && newCityHead.city) {
+    if (newCityHead.pocId && newCityHead.pocName && newCityHead.city) {
       // Calculate total clubs and revenue for the city (mock data)
       const totalClubs = Math.floor(Math.random() * 30) + 30 // 30-60 clubs
       const totalRevenue = totalClubs * 10000 // ₹10k per club average
 
       const newHead: CityHead = {
         id: Date.now().toString(),
-        ...newCityHead,
-        allActivities: true,
+        pocId: newCityHead.pocId,
+        pocName: newCityHead.pocName,
+        city: newCityHead.city,
         clubs: totalClubs,
         revenue: totalRevenue,
         health: Math.floor(Math.random() * 30) + 70,
-        healthStatus: 'green'
+        healthStatus: 'green',
+        isDualRole: newCityHead.isDualRole,
+        dualRoleDescription: newCityHead.dualRoleDescription
       }
 
       setCityHeads([...cityHeads, newHead])
-      setNewCityHead({ name: '', city: cities[0]?.name || '', isDualRole: false, dualRoleDescription: '' })
+      setNewCityHead({ pocId: '', pocName: '', city: cities[0]?.name || '', isDualRole: false, dualRoleDescription: '' })
       setShowAddCityHead(false)
     }
   }
@@ -519,20 +533,98 @@ export function POCManagement() {
   }
 
   // POC management functions
-  const addPOC = () => {
-    if (newPOC.name && newPOC.email) {
-      const poc: POC = {
-        id: Date.now().toString(),
-        ...newPOC
+  const addPOC = async () => {
+    if (newPOC.name && newPOC.teamName) {
+      try {
+        // Save to database using the POC API
+        const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5001'}/api/poc`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            name: newPOC.name,
+            poc_type: 'activity_head', // Default to activity head, can be changed
+            activities: newPOC.activities,
+            cities: [],
+            team_name: newPOC.teamName
+          })
+        })
+
+        if (!response.ok) {
+          throw new Error('Failed to save POC to database')
+        }
+
+        const result = await response.json()
+
+        const poc: POC = {
+          id: result.id || Date.now().toString(),
+          name: newPOC.name,
+          teamName: newPOC.teamName,
+          teamMembers: newPOC.teamMembers,
+          activities: newPOC.activities
+        }
+
+        setPocs([...pocs, poc])
+        setNewPOC({ name: '', teamName: '', teamMembers: [], activities: [] })
+        setShowAddPOC(false)
+
+        console.log('POC saved successfully')
+      } catch (error) {
+        console.error('Failed to save POC:', error)
+        alert('Failed to save POC. Please try again.')
       }
-      setPocs([...pocs, poc])
-      setNewPOC({ name: '', email: '', phone: '', cities: [], activities: [] })
-      setShowAddPOC(false)
     }
   }
 
   const deletePOC = (id: string) => {
+    if (!confirm('Are you sure you want to delete this POC? This action cannot be undone.')) {
+      return
+    }
     setPocs(pocs.filter(poc => poc.id !== id))
+  }
+
+  const addPOCTeamMember = (pocId: string) => {
+    if (!newMember.name || !newMember.role) {
+      alert('Please fill in at least the name and role fields.')
+      return
+    }
+
+    const newTeamMember: TeamMember = {
+      id: Date.now().toString(),
+      ...newMember
+    }
+
+    const updatedPocs = pocs.map(poc => {
+      if (poc.id === pocId) {
+        return {
+          ...poc,
+          teamMembers: [...poc.teamMembers, newTeamMember]
+        }
+      }
+      return poc
+    })
+
+    setPocs(updatedPocs)
+    setNewMember({ name: '', role: '', email: '', phone: '' })
+    setShowAddMember(null)
+  }
+
+  const removePOCTeamMember = (pocId: string, memberId: string) => {
+    if (!confirm('Are you sure you want to remove this team member?')) {
+      return
+    }
+
+    const updatedPocs = pocs.map(poc => {
+      if (poc.id === pocId) {
+        return {
+          ...poc,
+          teamMembers: poc.teamMembers.filter(member => member.id !== memberId)
+        }
+      }
+      return poc
+    })
+    setPocs(updatedPocs)
   }
 
   const addNewActivity = () => {
@@ -617,6 +709,39 @@ export function POCManagement() {
     setActivityHeads([...activityHeads, newHead])
     setNewActivityHead({ name: '', activities: [], team: 'Phoenix' })
     setShowAddActivityHeadForm(false)
+  }
+
+  // POC Activity Mapping helper functions
+  const getAvailableActivitiesForPOC = (pocId: string): string[] => {
+    const assignedActivities = pocs.find(p => p.id === pocId)?.activities || []
+    return [...categorizedActivities.scale, ...categorizedActivities.long_tail]
+      .filter(activity => !assignedActivities.includes(activity))
+  }
+
+  const addActivityToPOC = (pocId: string, activityName: string) => {
+    const updatedPocs = pocs.map(poc => {
+      if (poc.id === pocId && !poc.activities.includes(activityName)) {
+        return {
+          ...poc,
+          activities: [...poc.activities, activityName]
+        }
+      }
+      return poc
+    })
+    setPocs(updatedPocs)
+  }
+
+  const removeActivityFromPOC = (pocId: string, activityName: string) => {
+    const updatedPocs = pocs.map(poc => {
+      if (poc.id === pocId) {
+        return {
+          ...poc,
+          activities: poc.activities.filter(a => a !== activityName)
+        }
+      }
+      return poc
+    })
+    setPocs(updatedPocs)
   }
 
   // Get categorized activities with their full data
@@ -817,89 +942,152 @@ export function POCManagement() {
           {showAddPOC && (
             <div className="mb-6 p-4 bg-purple-50 rounded-xl border border-purple-200">
               <h3 className="font-bold text-purple-900 mb-4">Add New POC</h3>
-              <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">POC Name</label>
                   <input
                     type="text"
                     value={newPOC.name}
                     onChange={(e) => setNewPOC({...newPOC, name: e.target.value})}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
-                    placeholder="Enter name"
+                    placeholder="Enter POC name"
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Team Name</label>
                   <input
-                    type="email"
-                    value={newPOC.email}
-                    onChange={(e) => setNewPOC({...newPOC, email: e.target.value})}
+                    type="text"
+                    value={newPOC.teamName}
+                    onChange={(e) => setNewPOC({...newPOC, teamName: e.target.value})}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
-                    placeholder="Enter email"
+                    placeholder="e.g., Delhi Operations Team"
                   />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Phone</label>
-                  <input
-                    type="tel"
-                    value={newPOC.phone}
-                    onChange={(e) => setNewPOC({...newPOC, phone: e.target.value})}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
-                    placeholder="Enter phone"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Cities</label>
-                  <select
-                    multiple
-                    value={newPOC.cities}
-                    onChange={(e) => setNewPOC({...newPOC, cities: Array.from(e.target.selectedOptions, option => option.value)})}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 h-20"
-                  >
-                    {cities.map(city => (
-                      <option key={city.id} value={city.name}>
-                        {city.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Activities</label>
-                  <select
-                    multiple
-                    value={newPOC.activities}
-                    onChange={(e) => setNewPOC({...newPOC, activities: Array.from(e.target.selectedOptions, option => option.value)})}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 h-20"
-                  >
-                    <optgroup label="Scale Activities">
-                      {scaleActivities.map(activity => (
-                        <option key={activity.name} value={activity.name}>
-                          {activity.name}
-                        </option>
-                      ))}
-                    </optgroup>
-                    <optgroup label="Long Tail Activities">
-                      {longTailActivities.map(activity => (
-                        <option key={activity.name} value={activity.name}>
-                          {activity.name}
-                        </option>
-                      ))}
-                    </optgroup>
-                  </select>
                 </div>
               </div>
-              <div className="flex gap-2 mt-4">
+
+              {/* Team Members Section */}
+              <div className="mb-6">
+                <div className="flex items-center justify-between mb-3">
+                  <h4 className="text-sm font-medium text-gray-900">Team Members ({newPOC.teamMembers.length})</h4>
+                  <button
+                    type="button"
+                    onClick={() => setShowAddMember('new-poc')}
+                    className="flex items-center gap-1 px-3 py-1 bg-purple-500 text-white rounded-md hover:bg-purple-600 text-sm"
+                  >
+                    <UserPlus className="h-4 w-4" />
+                    Add Member
+                  </button>
+                </div>
+
+                {/* Add Member Form for New POC */}
+                {showAddMember === 'new-poc' && (
+                  <div className="mb-4 p-3 bg-white rounded-lg border border-purple-200">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-medium text-gray-700 mb-1">Name</label>
+                        <input
+                          type="text"
+                          value={newMember.name}
+                          onChange={(e) => setNewMember({...newMember, name: e.target.value})}
+                          className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-purple-500"
+                          placeholder="Full name"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-gray-700 mb-1">Role</label>
+                        <input
+                          type="text"
+                          value={newMember.role}
+                          onChange={(e) => setNewMember({...newMember, role: e.target.value})}
+                          className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-purple-500"
+                          placeholder="Coordinator, Lead, etc."
+                        />
+                      </div>
+                    </div>
+                    <div className="flex gap-2 mt-3">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!newMember.name || !newMember.role) {
+                            alert('Please fill in at least the name and role fields.')
+                            return
+                          }
+
+                          const newTeamMember: TeamMember = {
+                            id: Date.now().toString(),
+                            name: newMember.name,
+                            role: newMember.role,
+                            email: '',
+                            phone: ''
+                          }
+
+                          setNewPOC({
+                            ...newPOC,
+                            teamMembers: [...newPOC.teamMembers, newTeamMember]
+                          })
+                          setNewMember({ name: '', role: '', email: '', phone: '' })
+                          setShowAddMember(null)
+                        }}
+                        className="px-3 py-1 bg-purple-500 text-white rounded text-xs hover:bg-purple-600"
+                      >
+                        Add
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setShowAddMember(null)}
+                        className="px-3 py-1 bg-gray-500 text-white rounded text-xs hover:bg-gray-600"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Display Added Team Members */}
+                {newPOC.teamMembers.length > 0 ? (
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                    {newPOC.teamMembers.map((member) => (
+                      <div key={member.id} className="bg-purple-50 rounded-lg border border-purple-200 p-3">
+                        <div className="flex items-start justify-between">
+                          <div>
+                            <div className="text-sm font-medium text-gray-900">{member.name}</div>
+                            <div className="text-xs text-purple-600">{member.role}</div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setNewPOC({
+                                ...newPOC,
+                                teamMembers: newPOC.teamMembers.filter(m => m.id !== member.id)
+                              })
+                            }}
+                            className="text-red-400 hover:text-red-600"
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-sm text-gray-500 italic p-4 bg-gray-50 rounded-lg border border-gray-200">
+                    No team members added yet. Click "Add Member" above to add team members to this POC.
+                  </div>
+                )}
+              </div>
+
+              <div className="flex gap-2">
                 <button
                   onClick={addPOC}
                   className="flex items-center gap-2 px-4 py-2 bg-purple-500 text-white rounded-lg hover:bg-purple-600"
                 >
                   <Save className="h-4 w-4" />
-                  Save
+                  Save POC
                 </button>
                 <button
                   onClick={() => {
                     setShowAddPOC(false)
-                    setNewPOC({ name: '', email: '', phone: '', cities: [], activities: [] })
+                    setNewPOC({ name: '', teamName: '', teamMembers: [], activities: [] })
                   }}
                   className="flex items-center gap-2 px-4 py-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600"
                 >
@@ -915,54 +1103,176 @@ export function POCManagement() {
             <table className="min-w-full">
               <thead className="bg-gray-50 rounded-lg">
                 <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Email</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Phone</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Cities</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">POC Name</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Team Name</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Team Members</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Activities</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
                 {pocs.map((poc) => (
-                  <tr key={poc.id} className="hover:bg-gray-50 transition-colors">
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="font-medium text-gray-900">{poc.name}</div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {poc.email}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {poc.phone}
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="flex flex-wrap gap-1">
-                        {poc.cities.map(city => (
-                          <span key={city} className="px-2 py-1 bg-blue-100 text-blue-800 text-xs rounded">
-                            {city}
-                          </span>
-                        ))}
-                      </div>
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="flex flex-wrap gap-1">
-                        {poc.activities.map(activity => getActivityBadge(activity, activities))}
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                      <button
-                        onClick={() => deletePOC(poc.id)}
-                        className="text-red-600 hover:text-red-900 mr-3"
-                        title="Delete POC"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </button>
-                    </td>
-                  </tr>
+                  <React.Fragment key={poc.id}>
+                    <tr className="hover:bg-gray-50 transition-colors">
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="font-medium text-gray-900">{poc.name}</div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="text-sm text-gray-900">{poc.teamName}</div>
+                      </td>
+                      <td className="px-6 py-4">
+                        <div className="text-sm text-gray-900">
+                          {poc.teamMembers.length} member{poc.teamMembers.length !== 1 ? 's' : ''}
+                        </div>
+                      </td>
+                      <td className="px-6 py-4">
+                        <div className="flex flex-wrap gap-1">
+                          {poc.activities.length > 0 ? (
+                            poc.activities.map(activity => getActivityBadge(activity, activities))
+                          ) : (
+                            <span className="text-sm text-gray-500 italic">No activities assigned</span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => setShowTeamMembers(showTeamMembers === poc.id ? null : poc.id)}
+                            className="text-blue-600 hover:text-blue-900"
+                            title="Manage Team Members"
+                          >
+                            <Users className="h-4 w-4" />
+                          </button>
+                          <button
+                            onClick={() => setShowAddMember(poc.id)}
+                            className="text-green-600 hover:text-green-900"
+                            title="Add Team Member"
+                          >
+                            <UserPlus className="h-4 w-4" />
+                          </button>
+                          <button
+                            onClick={() => deletePOC(poc.id)}
+                            className="text-red-600 hover:text-red-900"
+                            title="Delete POC"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+
+                    {/* POC Team Members Section */}
+                    {showTeamMembers === poc.id && (
+                      <tr>
+                        <td colSpan={5} className="px-6 py-4 bg-purple-50">
+                        <div className="space-y-3">
+                          <div className="flex items-center justify-between">
+                            <h4 className="text-sm font-medium text-gray-900">Team Members for {poc.name}</h4>
+                            <button
+                              onClick={() => setShowAddMember(poc.id)}
+                              className="flex items-center gap-1 px-3 py-1 bg-purple-500 text-white rounded-md hover:bg-purple-600 text-xs"
+                            >
+                              <UserPlus className="h-3 w-3" />
+                              Add Member
+                            </button>
+                          </div>
+
+                          {/* Add Member Form */}
+                          {showAddMember === poc.id && (
+                            <div className="p-3 bg-white rounded-lg border border-purple-200">
+                              <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                                <div>
+                                  <label className="block text-xs font-medium text-gray-700 mb-1">Name</label>
+                                  <input
+                                    type="text"
+                                    value={newMember.name}
+                                    onChange={(e) => setNewMember({...newMember, name: e.target.value})}
+                                    className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-purple-500"
+                                    placeholder="Full name"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="block text-xs font-medium text-gray-700 mb-1">Role</label>
+                                  <input
+                                    type="text"
+                                    value={newMember.role}
+                                    onChange={(e) => setNewMember({...newMember, role: e.target.value})}
+                                    className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-purple-500"
+                                    placeholder="Coordinator, Lead, etc."
+                                  />
+                                </div>
+                                <div>
+                                  <label className="block text-xs font-medium text-gray-700 mb-1">Email</label>
+                                  <input
+                                    type="email"
+                                    value={newMember.email}
+                                    onChange={(e) => setNewMember({...newMember, email: e.target.value})}
+                                    className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-purple-500"
+                                    placeholder="email@misfits.com"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="block text-xs font-medium text-gray-700 mb-1">Phone</label>
+                                  <input
+                                    type="tel"
+                                    value={newMember.phone}
+                                    onChange={(e) => setNewMember({...newMember, phone: e.target.value})}
+                                    className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-purple-500"
+                                    placeholder="+91 9876543210"
+                                  />
+                                </div>
+                              </div>
+                              <div className="flex gap-2 mt-3">
+                                <button
+                                  onClick={() => addPOCTeamMember(poc.id)}
+                                  className="px-3 py-1 bg-purple-500 text-white rounded text-xs hover:bg-purple-600"
+                                >
+                                  Add
+                                </button>
+                                <button
+                                  onClick={() => setShowAddMember(null)}
+                                  className="px-3 py-1 bg-gray-500 text-white rounded text-xs hover:bg-gray-600"
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* POC Team Members List */}
+                          {poc.teamMembers && poc.teamMembers.length > 0 ? (
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                              {poc.teamMembers.map((member) => (
+                                <div key={member.id} className="bg-white rounded-lg border border-purple-200 p-3">
+                                  <div className="flex items-start justify-between">
+                                    <div>
+                                      <div className="text-sm font-medium text-gray-900">{member.name}</div>
+                                      <div className="text-xs text-purple-600">{member.role}</div>
+                                      <div className="text-xs text-gray-500">{member.email}</div>
+                                      <div className="text-xs text-gray-500">{member.phone}</div>
+                                    </div>
+                                    <button
+                                      onClick={() => removePOCTeamMember(poc.id, member.id)}
+                                      className="text-red-400 hover:text-red-600"
+                                    >
+                                      <X className="h-3 w-3" />
+                                    </button>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="text-sm text-gray-500 italic">No team members added yet for this POC</div>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                  </React.Fragment>
                 ))}
                 {pocs.length === 0 && (
                   <tr>
-                    <td colSpan={6} className="px-6 py-4 text-center text-gray-500">
+                    <td colSpan={5} className="px-6 py-4 text-center text-gray-500">
                       No POCs added yet. Click "Add POC" to get started.
                     </td>
                   </tr>
@@ -970,6 +1280,109 @@ export function POCManagement() {
               </tbody>
             </table>
           </div>
+
+          {/* POC Activity Mapping Modal */}
+          {showPOCActivityMapping && (
+            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+              <div className="bg-white rounded-lg p-6 max-w-2xl w-full max-h-[80vh] overflow-y-auto">
+                <h2 className="text-lg font-semibold mb-4">Map Activities to POCs</h2>
+
+                <div className="space-y-4">
+                  {pocs.map((poc) => (
+                    <div key={poc.id} className="border border-gray-200 rounded-lg p-4">
+                      <div className="flex items-center justify-between mb-3">
+                        <div>
+                          <h3 className="font-medium text-gray-900">{poc.name}</h3>
+                          <p className="text-sm text-gray-600">{poc.teamName}</p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => setSelectedPOCForActivities(selectedPOCForActivities === poc.id ? null : poc.id)}
+                            className="px-3 py-1 bg-indigo-500 text-white rounded text-sm hover:bg-indigo-600"
+                          >
+                            {selectedPOCForActivities === poc.id ? 'Cancel' : 'Assign Activities'}
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Current Activities */}
+                      <div className="mb-3">
+                        <h4 className="text-sm font-medium text-gray-700 mb-2">Current Activities ({poc.activities.length}):</h4>
+                        <div className="flex flex-wrap gap-1">
+                          {poc.activities.length > 0 ? (
+                            poc.activities.map(activity => (
+                              <span key={activity} className="inline-flex items-center gap-1 px-2 py-1 bg-purple-100 text-purple-800 text-xs rounded">
+                                {activity}
+                                <button
+                                  onClick={() => removeActivityFromPOC(poc.id, activity)}
+                                  className="hover:text-purple-900"
+                                >
+                                  <X className="h-3 w-3" />
+                                </button>
+                              </span>
+                            ))
+                          ) : (
+                            <span className="text-sm text-gray-500 italic">No activities assigned</span>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Available Activities to Assign */}
+                      {selectedPOCForActivities === poc.id && (
+                        <div className="border-t border-gray-200 pt-3">
+                          <h4 className="text-sm font-medium text-gray-700 mb-2">Available Activities:</h4>
+                          <div className="grid grid-cols-2 gap-2 max-h-40 overflow-y-auto">
+                            {getAvailableActivitiesForPOC(poc.id).length > 0 ? (
+                              getAvailableActivitiesForPOC(poc.id).map(activity => {
+                                const activityData = activities.find(a => a.name === activity)
+                                const isScale = categorizedActivities.scale.includes(activity)
+                                return (
+                                  <button
+                                    key={activity}
+                                    onClick={() => addActivityToPOC(poc.id, activity)}
+                                    className={`text-left p-2 rounded border hover:bg-gray-50 ${isScale ? 'border-blue-200 bg-blue-50' : 'border-gray-200'}`}
+                                  >
+                                    <div className="text-sm font-medium">
+                                      {isScale ? '🚀' : '📝'} {activity}
+                                    </div>
+                                    <div className="text-xs text-gray-500">
+                                      {activityData?.activeClubs || 0} clubs
+                                    </div>
+                                  </button>
+                                )
+                              })
+                            ) : (
+                              <div className="col-span-2 text-sm text-gray-500 italic p-2">
+                                All available activities are already assigned to this POC
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+
+                  {pocs.length === 0 && (
+                    <div className="text-center text-gray-500 py-8">
+                      No POCs available. Please add POCs first before mapping activities.
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex gap-2 mt-6">
+                  <button
+                    onClick={() => {
+                      setShowPOCActivityMapping(false)
+                      setSelectedPOCForActivities(null)
+                    }}
+                    className="flex-1 px-4 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400"
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Activity Heads */}
@@ -1019,21 +1432,54 @@ export function POCManagement() {
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Activities</label>
-                  <p className="text-xs text-gray-500 mb-2">Hold Ctrl/Cmd to select multiple activities</p>
+                  <p className="text-xs text-gray-500 mb-2">Select activities one by one using the dropdown below</p>
                   <select
-                    multiple
-                    value={newActivityHead.activities}
-                    onChange={(e) => setNewActivityHead({...newActivityHead, activities: Array.from(e.target.selectedOptions, option => option.value)})}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 h-24"
+                    value=""
+                    onChange={(e) => {
+                      const selectedActivity = e.target.value;
+                      if (selectedActivity && !newActivityHead.activities.includes(selectedActivity)) {
+                        setNewActivityHead({
+                          ...newActivityHead,
+                          activities: [...newActivityHead.activities, selectedActivity]
+                        });
+                      }
+                    }}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500"
                   >
+                    <option value="">Select an activity to add...</option>
                     {activities
-                      .filter(activity => activity.activeClubs > 0)
+                      .filter(activity => activity.activeClubs > 0 && !newActivityHead.activities.includes(activity.name))
                       .map(activity => (
                         <option key={activity.id} value={activity.name}>
                           {activity.name} ({activity.clubCount} clubs, {activity.activeClubs} active)
                         </option>
                       ))}
                   </select>
+
+                  {/* Selected Activities Display */}
+                  {newActivityHead.activities.length > 0 && (
+                    <div className="mt-2 p-2 bg-gray-50 rounded-lg">
+                      <p className="text-xs text-gray-700 mb-2">Selected Activities ({newActivityHead.activities.length}):</p>
+                      <div className="flex flex-wrap gap-1">
+                        {newActivityHead.activities.map((activity) => (
+                          <span key={activity} className="inline-flex items-center gap-1 px-2 py-1 bg-emerald-100 text-emerald-800 text-xs rounded">
+                            {activity}
+                            <button
+                              onClick={() => setNewActivityHead({
+                                ...newActivityHead,
+                                activities: newActivityHead.activities.filter(a => a !== activity)
+                              })}
+                              className="hover:text-emerald-900"
+                              type="button"
+                            >
+                              ×
+                            </button>
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                   {activities.length === 0 && (
                     <p className="text-sm text-gray-500 mt-1">Loading activities...</p>
                   )}
@@ -1354,14 +1800,21 @@ export function POCManagement() {
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">POC</label>
                   <select
-                    value={newCityHead.name}
-                    onChange={(e) => setNewCityHead({...newCityHead, name: e.target.value})}
+                    value={newCityHead.pocId}
+                    onChange={(e) => {
+                      const selectedPOC = pocs.find(poc => poc.id === e.target.value)
+                      setNewCityHead({
+                        ...newCityHead,
+                        pocId: e.target.value,
+                        pocName: selectedPOC?.name || ''
+                      })
+                    }}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
                   >
                     <option value="">Select POC...</option>
                     {pocs.map(poc => (
-                      <option key={poc.id} value={poc.name}>
-                        {poc.name} ({poc.email})
+                      <option key={poc.id} value={poc.id}>
+                        {poc.name} ({poc.teamName})
                       </option>
                     ))}
                   </select>
@@ -1432,7 +1885,7 @@ export function POCManagement() {
             <table className="min-w-full">
               <thead className="bg-gray-50 rounded-lg">
                 <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">POC Name</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">City</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">All Activities</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Clubs</th>
@@ -1446,7 +1899,7 @@ export function POCManagement() {
                   <tr key={head.id} className="hover:bg-gray-50 transition-colors">
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="font-medium text-gray-900">
-                        {head.name}
+                        {head.pocName}
                         {head.isDualRole && <span className="text-xs text-purple-600 ml-1">*</span>}
                       </div>
                       {head.isDualRole && (

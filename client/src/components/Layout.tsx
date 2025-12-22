@@ -27,7 +27,7 @@ const navigation = [
   { name: 'Scaling Planner', href: '/scaling-planner', icon: TrendingUp },
   { name: 'POC Management', href: '/poc-management', icon: Users },
   { name: 'Health Dashboard', href: '/health-dashboard', icon: Activity },
-  { name: 'Workspace', href: '/workspace', icon: BookOpen },
+  { name: 'Task Tracker', href: '/workspace', icon: CheckSquare },
 ]
 
 export function Layout({ children }: LayoutProps) {

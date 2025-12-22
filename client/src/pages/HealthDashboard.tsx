@@ -15,7 +15,9 @@ import {
   Download,
   Eye,
   MapPin,
-  BarChart3
+  BarChart3,
+  Info,
+  X
 } from 'lucide-react';
 import ScalingPlanner from '../components/ScalingPlanner';
 import { API_URL } from '../config/api';
@@ -61,6 +63,7 @@ interface HealthMetrics {
   healthy_clubs: number;
   at_risk_clubs: number;
   critical_clubs: number;
+  dormant_clubs?: number;
   avg_health_score: number;
   total_revenue: number;
   total_events: number;
@@ -71,6 +74,11 @@ interface HealthMetrics {
   active_meetups: number;
   meetup_target: number;
   meetup_achievement_pct: number;
+
+  // Week-over-week data
+  total_last_week_events?: number;
+  total_two_weeks_ago_events?: number;
+  week_over_week_change?: number;
 }
 
 // No mock data - using only real database data
@@ -88,6 +96,7 @@ export function HealthDashboard() {
   const [showTrends, setShowTrends] = useState(false);
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [showHealthInfo, setShowHealthInfo] = useState(false);
 
   useEffect(() => {
     fetchHealthData();
@@ -255,7 +264,16 @@ export function HealthDashboard() {
       {/* Header */}
       <div className="flex justify-between items-center">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900">Health Dashboard</h1>
+          <div className="flex items-center space-x-3">
+            <h1 className="text-3xl font-bold text-gray-900">Health Dashboard</h1>
+            <button
+              onClick={() => setShowHealthInfo(true)}
+              className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-colors"
+              title="How is health score calculated?"
+            >
+              <Info className="h-5 w-5" />
+            </button>
+          </div>
           <p className="text-gray-600 mt-1">Monitor club health across 4 key metrics</p>
         </div>
         <div className="flex space-x-3">
@@ -351,7 +369,7 @@ export function HealthDashboard() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-gray-600">Dormant</p>
-                <p className="text-2xl font-bold text-orange-600">{metrics.dormant_clubs}</p>
+                <p className="text-2xl font-bold text-orange-600">{metrics.dormant_clubs || 0}</p>
               </div>
               <Activity className="h-8 w-8 text-orange-600" />
             </div>
@@ -362,32 +380,22 @@ export function HealthDashboard() {
           <div className="bg-white p-6 rounded-lg shadow-sm border">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-medium text-gray-600">Active Meetups</p>
-                <p className="text-2xl font-bold text-blue-600">{metrics.active_meetups}</p>
+                <p className="text-sm font-medium text-gray-600">Last Week Events</p>
+                <p className="text-2xl font-bold text-blue-600">{metrics.total_last_week_events || 0}</p>
               </div>
               <Calendar className="h-8 w-8 text-blue-600" />
             </div>
-            <div className="mt-2">
-              <p className="text-xs text-gray-500">Target: {metrics.meetup_target}</p>
-              <div className="w-full bg-gray-200 rounded-full h-2 mt-1">
-                <div
-                  className="bg-blue-600 h-2 rounded-full"
-                  style={{ width: `${Math.min(100, metrics.meetup_achievement_pct)}%` }}
-                ></div>
-              </div>
-              <p className="text-xs text-gray-500 mt-1">{metrics.meetup_achievement_pct}% achieved</p>
+            <div className="mt-2 flex items-center space-x-2">
+              {(metrics.week_over_week_change || 0) >= 0 ? (
+                <TrendingUp className="h-3 w-3 text-green-500" />
+              ) : (
+                <TrendingDown className="h-3 w-3 text-red-500" />
+              )}
+              <span className={`text-xs ${(metrics.week_over_week_change || 0) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                {(metrics.week_over_week_change || 0) > 0 ? '+' : ''}{metrics.week_over_week_change || 0} vs 2 weeks ago ({metrics.total_two_weeks_ago_events || 0})
+              </span>
             </div>
-          </div>
-
-          <div className="bg-white p-6 rounded-lg shadow-sm border">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-600">Total Events</p>
-                <p className="text-2xl font-bold text-purple-600">{metrics.total_meetups}</p>
-              </div>
-              <Activity className="h-8 w-8 text-purple-600" />
-            </div>
-            <p className="text-xs text-gray-500 mt-2">All-time meetups</p>
+            <p className="text-xs text-gray-500 mt-1">Total events (incl. cancelled)</p>
           </div>
         </div>
       )}
@@ -525,6 +533,21 @@ export function HealthDashboard() {
                       <span className="ml-1 capitalize">{club.health_status.replace('_', ' ')}</span>
                     </span>
                     <div className="text-xs text-gray-500 mt-1">Score: {club.health_score}</div>
+                    {club.two_weeks_ago_metrics && (
+                      <div className="text-xs text-gray-400 mt-1">
+                        {/* Calculate previous health score using same engine logic */}
+                        Previous: {(() => {
+                          const hasData = club.two_weeks_ago_metrics.capacity > 0 || club.two_weeks_ago_metrics.repeat_rate > 0 || club.two_weeks_ago_metrics.rating > 0;
+                          if (!hasData) return 'N/A';
+
+                          if (club.is_new_club) {
+                            return Math.round((club.two_weeks_ago_metrics.capacity / 100) * 60 + (club.two_weeks_ago_metrics.rating / 5) * 40);
+                          } else {
+                            return Math.round((club.two_weeks_ago_metrics.capacity / 100) * 30 + (club.two_weeks_ago_metrics.repeat_rate / 100) * 40 + (club.two_weeks_ago_metrics.rating / 5) * 30);
+                          }
+                        })()}
+                      </div>
+                    )}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
                     <div className="flex items-center space-x-2">
@@ -623,8 +646,6 @@ export function HealthDashboard() {
         </div>
       </div>
 
-      {/* Scaling Planner */}
-      <ScalingPlanner />
 
       {/* Quick Actions */}
       <div className="bg-white p-6 rounded-lg shadow-sm border">
@@ -655,6 +676,117 @@ export function HealthDashboard() {
           </div>
         </div>
       </div>
+
+      {/* Health Score Info Modal */}
+      {showHealthInfo && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center p-6 border-b">
+              <h2 className="text-xl font-bold text-gray-900">Health Score Calculation</h2>
+              <button
+                onClick={() => setShowHealthInfo(false)}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <X className="h-6 w-6" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-6">
+              <div>
+                <h3 className="text-lg font-semibold text-gray-800 mb-3">How Health Score is Calculated</h3>
+                <p className="text-gray-600 mb-4">
+                  Health scores are calculated differently for new clubs (≤2 months) and established clubs:
+                </p>
+              </div>
+
+              <div className="grid md:grid-cols-2 gap-6">
+                <div className="bg-blue-50 p-4 rounded-lg">
+                  <h4 className="font-semibold text-blue-900 mb-3">New Clubs (≤2 months)</h4>
+                  <div className="space-y-2 text-sm">
+                    <div className="flex justify-between">
+                      <span>Capacity Utilization:</span>
+                      <span className="font-medium">60%</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Average Rating:</span>
+                      <span className="font-medium">40%</span>
+                    </div>
+                    <div className="flex justify-between text-gray-500">
+                      <span>Repeat Rate:</span>
+                      <span>0% (excluded)</span>
+                    </div>
+                    <div className="flex justify-between text-gray-500">
+                      <span>Revenue:</span>
+                      <span>0% (excluded)</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-green-50 p-4 rounded-lg">
+                  <h4 className="font-semibold text-green-900 mb-3">Established Clubs ({'>'}2 months)</h4>
+                  <div className="space-y-2 text-sm">
+                    <div className="flex justify-between">
+                      <span>Capacity Utilization:</span>
+                      <span className="font-medium">30%</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Repeat Rate:</span>
+                      <span className="font-medium">40%</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Average Rating:</span>
+                      <span className="font-medium">30%</span>
+                    </div>
+                    <div className="flex justify-between text-gray-500">
+                      <span>Revenue:</span>
+                      <span>0% (excluded)</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <h3 className="text-lg font-semibold text-gray-800 mb-3">Health Status Thresholds</h3>
+                <div className="space-y-3">
+                  <div className="flex items-center space-x-3">
+                    <div className="w-4 h-4 bg-green-500 rounded"></div>
+                    <span className="font-medium text-green-700">Healthy:</span>
+                    <span className="text-gray-600">Score 115+ with no critical issues</span>
+                  </div>
+                  <div className="flex items-center space-x-3">
+                    <div className="w-4 h-4 bg-yellow-500 rounded"></div>
+                    <span className="font-medium text-yellow-700">At Risk:</span>
+                    <span className="text-gray-600">Score 100-114 or one metric below threshold</span>
+                  </div>
+                  <div className="flex items-center space-x-3">
+                    <div className="w-4 h-4 bg-red-500 rounded"></div>
+                    <span className="font-medium text-red-700">Critical:</span>
+                    <span className="text-gray-600">Score below 100 or multiple critical issues</span>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <h3 className="text-lg font-semibold text-gray-800 mb-3">Metric Definitions</h3>
+                <div className="space-y-3 text-sm">
+                  <div>
+                    <span className="font-medium">Capacity Utilization:</span>
+                    <span className="text-gray-600 ml-2">Percentage of event slots filled by registered attendees</span>
+                  </div>
+                  <div>
+                    <span className="font-medium">Repeat Rate:</span>
+                    <span className="text-gray-600 ml-2">Percentage of last week's attendees who had previously attended the club's events before</span>
+                  </div>
+                  <div>
+                    <span className="font-medium">Average Rating:</span>
+                    <span className="text-gray-600 ml-2">Member satisfaction rating from event feedback (1-5 scale)</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
