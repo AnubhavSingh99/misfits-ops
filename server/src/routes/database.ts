@@ -1,89 +1,14 @@
 import express from 'express';
-import { Pool } from 'pg';
-import { exec } from 'child_process';
-import { promisify } from 'util';
 import { logger } from '../utils/logger';
+import { queryProductionWithTunnel } from '../services/sshTunnel';
 
 const router = express.Router();
-const execAsync = promisify(exec);
-
-// Production Misfits database connection pool
-let misfitsPool: Pool | null = null;
-
-// SSH tunnel connection details
-const SSH_CONFIG = {
-  keyFile: process.env.NODE_ENV === 'production'
-    ? '/home/ec2-user/Downloads/claude-control-key'
-    : '/Users/retalplaza/Downloads/DB claude key/claude-control-key',
-  sshHost: '15.207.255.212',
-  sshUser: 'claude-control',
-  dbHost: 'misfits.cgncbvolnhe7.ap-south-1.rds.amazonaws.com',
-  dbPort: '5432',
-  localPort: '5433',
-  dbName: 'misfits',
-  dbUser: 'dev',
-  dbPassword: 'postgres'
-};
 
 /**
- * Initialize database connection (using existing SSH tunnel)
- */
-async function initializeMisfitsConnection(): Promise<Pool> {
-  if (misfitsPool) {
-    try {
-      // Test existing connection
-      const client = await misfitsPool.connect();
-      await client.query('SELECT 1');
-      client.release();
-      return misfitsPool;
-    } catch (error) {
-      logger.info('Existing connection failed, recreating...');
-      misfitsPool = null;
-    }
-  }
-
-  try {
-    // Use environment variables or fallback to SSH_CONFIG
-    const dbConfig = {
-      host: process.env.PROD_DB_HOST || 'localhost',
-      port: parseInt(process.env.PROD_DB_PORT || SSH_CONFIG.localPort),
-      database: process.env.PROD_DB_NAME || SSH_CONFIG.dbName,
-      user: process.env.PROD_DB_USER || SSH_CONFIG.dbUser,
-      password: process.env.PROD_DB_PASSWORD || SSH_CONFIG.dbPassword,
-      max: 10,
-      idleTimeoutMillis: 30000,
-      connectionTimeoutMillis: 5000,
-    };
-
-    // Create database connection pool
-    misfitsPool = new Pool(dbConfig);
-
-    // Test connection
-    const client = await misfitsPool.connect();
-    await client.query('SELECT NOW()');
-    client.release();
-
-    logger.info('Misfits database connection established successfully');
-    return misfitsPool;
-
-  } catch (error) {
-    logger.error('Failed to establish Misfits database connection:', error);
-    throw error;
-  }
-}
-
-/**
- * Execute query on Misfits database
+ * Execute query on Misfits database using centralized SSH tunnel service
  */
 async function queryMisfits(text: string, params?: any[]) {
-  const pool = await initializeMisfitsConnection();
-  const client = await pool.connect();
-  try {
-    const result = await client.query(text, params);
-    return result;
-  } finally {
-    client.release();
-  }
+  return await queryProductionWithTunnel(text, params);
 }
 
 /**
@@ -259,8 +184,8 @@ router.get('/health', async (req, res) => {
             END), 0
           ) as actual_revenue,
 
-          -- Rating Health (from reviews if available)
-          COALESCE(AVG(rev.rating), 0) as avg_rating,
+          -- Rating Health (fallback to 0 as reviews table doesn't exist)
+          0 as avg_rating,
 
           -- Activity metrics for repeat rate calculation (simplified)
           COUNT(DISTINCT e.pk) as total_meetups
@@ -268,11 +193,6 @@ router.get('/health', async (req, res) => {
         FROM active_clubs ac
         LEFT JOIN event e ON ac.club_id = e.club_id
         LEFT JOIN booking b ON e.pk = b.event_id
-        LEFT JOIN (
-          SELECT event_id, AVG(rating) as rating
-          FROM reviews
-          GROUP BY event_id
-        ) rev ON e.pk = rev.event_id
         CROSS JOIN week_boundaries wb
         WHERE e.state = 'CREATED'
           AND e.start_time >= wb.last_week_start_utc
@@ -412,9 +332,21 @@ router.get('/meetups', async (req, res) => {
     const twoWeeksAgoTotal = parseInt(data.total_two_weeks_ago_events) || 0;
     const weekOverWeekChange = lastWeekTotal - twoWeeksAgoTotal;
 
+    // Calculate target meetups (simple calculation - could be made more sophisticated)
+    const targetIncrease = parseInt(process.env.TARGET_MEETUP_INCREASE || '50');
+    const minTargetMeetups = parseInt(process.env.MIN_TARGET_MEETUPS || '300');
+    const targetMeetups = Math.max(lastWeekTotal + targetIncrease, minTargetMeetups);
+    const progressPercentage = targetMeetups > 0 ? (lastWeekTotal / targetMeetups) * 100 : 0;
+
     res.json({
       success: true,
       data: {
+        // Frontend expected fields
+        active_meetups: lastWeekTotal,
+        target_meetups: targetMeetups,
+        progress_percentage: Math.round(progressPercentage * 10) / 10, // Round to 1 decimal
+
+        // Original fields for backward compatibility
         last_week_events_with_paying_members: parseInt(data.last_week_events_with_paying_members) || 0,
         total_last_week_events: lastWeekTotal,
         total_two_weeks_ago_events: twoWeeksAgoTotal,
@@ -438,23 +370,13 @@ router.get('/meetups', async (req, res) => {
  */
 router.get('/connection-status', async (req, res) => {
   try {
-    if (misfitsPool) {
-      const client = await misfitsPool.connect();
-      await client.query('SELECT NOW() as server_time');
-      client.release();
+    await queryMisfits('SELECT NOW() as server_time');
 
-      res.json({
-        success: true,
-        status: 'connected',
-        message: 'Database connection is active'
-      });
-    } else {
-      res.json({
-        success: false,
-        status: 'disconnected',
-        message: 'No active database connection'
-      });
-    }
+    res.json({
+      success: true,
+      status: 'connected',
+      message: 'Database connection is active via SSH tunnel'
+    });
   } catch (error) {
     logger.error('Connection status check failed:', error);
     res.status(500).json({
@@ -601,8 +523,6 @@ router.get('/new-clubs', async (req, res) => {
   try {
     logger.info('Fetching new clubs from database for automatic detection');
 
-    const pool = await initializeMisfitsConnection();
-
     // Query to get all active clubs with their basic info and metrics
     const newClubsQuery = `
       SELECT DISTINCT
@@ -653,7 +573,7 @@ router.get('/new-clubs', async (req, res) => {
       LIMIT 50
     `;
 
-    const result = await pool.query(newClubsQuery);
+    const result = await queryMisfits(newClubsQuery);
 
     logger.info(`Found ${result.rows.length} new clubs from database`);
 
@@ -684,8 +604,6 @@ router.get('/areas', async (req, res) => {
     const { city } = req.query;
     logger.info(`Fetching areas for city: ${city}`);
 
-    const pool = await initializeMisfitsConnection();
-
     let areasQuery = `
       SELECT DISTINCT area.name as area_name, city.name as city_name
       FROM area
@@ -700,7 +618,7 @@ router.get('/areas', async (req, res) => {
 
     areasQuery += ` ORDER BY city.name, area.name`;
 
-    const result = await pool.query(areasQuery, queryParams);
+    const result = await queryMisfits(areasQuery, queryParams);
 
     // Group areas by city
     const areasByCity = result.rows.reduce((acc, row) => {

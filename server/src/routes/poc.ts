@@ -4,69 +4,6 @@ import { logger } from '../utils/logger';
 
 const router = express.Router();
 
-// Mock POC data for fallback
-const MOCK_POCS = [
-  {
-    id: 1,
-    name: 'Raj Patel',
-    poc_type: 'activity_head',
-    activities: ['Badminton', 'Tennis'],
-    cities: ['Mumbai'],
-    team_name: 'Sports Operations',
-    email: 'raj.patel@misfits.com',
-    phone: '+91 9876543210',
-    club_count: 8,
-    health_score: 85,
-    is_active: true,
-    created_at: '2024-01-15T09:30:00Z',
-    updated_at: '2024-12-23T10:00:00Z'
-  },
-  {
-    id: 2,
-    name: 'Priya Sharma',
-    poc_type: 'city_head',
-    activities: [],
-    cities: ['Delhi', 'Gurugram'],
-    team_name: 'North Operations',
-    email: 'priya.sharma@misfits.com',
-    phone: '+91 9876543211',
-    club_count: 12,
-    health_score: 92,
-    is_active: true,
-    created_at: '2024-01-20T14:15:00Z',
-    updated_at: '2024-12-23T09:45:00Z'
-  },
-  {
-    id: 3,
-    name: 'Arjun Kumar',
-    poc_type: 'activity_head',
-    activities: ['Football', 'Cricket'],
-    cities: ['Bangalore'],
-    team_name: 'Sports Operations',
-    email: 'arjun.kumar@misfits.com',
-    phone: '+91 9876543212',
-    club_count: 6,
-    health_score: 78,
-    is_active: true,
-    created_at: '2024-02-01T11:20:00Z',
-    updated_at: '2024-12-23T08:30:00Z'
-  },
-  {
-    id: 4,
-    name: 'Saurabh',
-    poc_type: 'activity_head',
-    activities: ['Music'],
-    cities: ['Mumbai'],
-    team_name: 'Creative Operations',
-    email: 'saurabh@misfits.com',
-    phone: '+91 9876543213',
-    club_count: 4,
-    health_score: 88,
-    is_active: true,
-    created_at: '2024-02-10T16:45:00Z',
-    updated_at: '2024-12-23T12:15:00Z'
-  }
-];
 
 // GET /api/poc/list - Get all POCs with assignment data
 router.get('/list', async (req, res) => {
@@ -93,8 +30,12 @@ router.get('/list', async (req, res) => {
 
     res.json(pocs.rows);
   } catch (error) {
-    logger.error('Failed to fetch POCs from database, falling back to mock data:', error);
-    res.json(MOCK_POCS);
+    logger.error('Failed to fetch POCs from database:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch POCs',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    });
   }
 });
 

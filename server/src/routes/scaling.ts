@@ -1,142 +1,8 @@
 import { Router } from 'express';
-import { Pool } from 'pg';
-import { exec } from 'child_process';
-import { promisify } from 'util';
 import { logger } from '../utils/logger';
+import { queryProductionWithTunnel } from '../services/sshTunnel';
 
 const router = Router();
-const execAsync = promisify(exec);
-
-// Production Misfits database connection pool
-let misfitsPool: Pool | null = null;
-
-// SSH tunnel connection details (same as health.ts)
-const SSH_CONFIG = {
-  keyFile: process.env.NODE_ENV === 'production'
-    ? '/home/ec2-user/Downloads/claude-control-key'
-    : '/Users/retalplaza/Downloads/DB claude key/claude-control-key',
-  sshHost: '15.207.255.212',
-  sshUser: 'claude-control',
-  dbHost: 'misfits.cgncbvolnhe7.ap-south-1.rds.amazonaws.com',
-  dbPort: '5432',
-  localPort: '5433',
-  dbName: 'misfits',
-  dbUser: 'dev',
-  dbPassword: 'postgres'
-};
-
-/**
- * Initialize database connection (production uses direct connection)
- */
-async function initializeMisfitsConnection(): Promise<Pool> {
-  if (misfitsPool) {
-    try {
-      // Test existing connection
-      const client = await misfitsPool.connect();
-      await client.query('SELECT 1');
-      client.release();
-      return misfitsPool;
-    } catch (error) {
-      logger.info('Existing connection failed, recreating...');
-      misfitsPool = null;
-    }
-  }
-
-  try {
-    // Use SSH tunnel connection for production
-    const isProduction = false;
-    logger.info(`Scaling endpoint environment detection - isProduction: ${isProduction}, NODE_ENV: ${process.env.NODE_ENV}, POSTGRES_HOST: ${process.env.POSTGRES_HOST}`);
-
-    let dbConfig;
-
-    if (isProduction) {
-      // Production: Use direct database connection
-      logger.info('Using direct database connection in production...');
-
-      dbConfig = {
-        host: process.env.POSTGRES_HOST || SSH_CONFIG.dbHost,
-        port: parseInt(process.env.POSTGRES_PORT || SSH_CONFIG.dbPort),
-        database: process.env.POSTGRES_DB || SSH_CONFIG.dbName,
-        user: process.env.POSTGRES_USER || 'postgres',
-        password: process.env.POSTGRES_PASSWORD || SSH_CONFIG.dbPassword,
-        max: 5,
-        idleTimeoutMillis: 30000,
-        connectionTimeoutMillis: 10000,
-        ssl: {
-          rejectUnauthorized: false // Allow self-signed certificates for AWS RDS
-        }
-      };
-    } else {
-      // Development: Use SSH tunnel (existing logic)
-      logger.info('Development mode - checking for existing SSH tunnel...');
-
-      try {
-        // Try to connect to existing tunnel first
-        const testPool = new Pool({
-          host: 'localhost',
-          port: parseInt(SSH_CONFIG.localPort),
-          database: SSH_CONFIG.dbName,
-          user: SSH_CONFIG.dbUser,
-          password: SSH_CONFIG.dbPassword,
-          max: 1,
-          connectionTimeoutMillis: 5000,
-        });
-
-        const testClient = await testPool.connect();
-        await testClient.query('SELECT 1');
-        testClient.release();
-        await testPool.end();
-
-        logger.info('Found existing SSH tunnel, using it...');
-
-        dbConfig = {
-          host: 'localhost',
-          port: parseInt(SSH_CONFIG.localPort),
-          database: SSH_CONFIG.dbName,
-          user: SSH_CONFIG.dbUser,
-          password: SSH_CONFIG.dbPassword,
-          max: 5,
-          idleTimeoutMillis: 30000,
-          connectionTimeoutMillis: 10000,
-        };
-
-      } catch (tunnelError) {
-        logger.error('No SSH tunnel found. Please run: ./db_connect.sh');
-        throw new Error('SSH tunnel not available. Please establish connection with: ./db_connect.sh');
-      }
-    }
-
-    // Create database connection pool with determined config
-    misfitsPool = new Pool(dbConfig);
-
-    // Test connection
-    const testClient = await misfitsPool.connect();
-    await testClient.query('SELECT 1');
-    testClient.release();
-
-    logger.info('Scaling database connection established successfully');
-    return misfitsPool;
-
-  } catch (error) {
-    logger.error('Failed to initialize scaling database connection:', error);
-    throw error;
-  }
-}
-
-/**
- * Execute query against Misfits database with error handling
- */
-async function queryMisfits(text: string, params?: any[]): Promise<any> {
-  const pool = await initializeMisfitsConnection();
-  const client = await pool.connect();
-
-  try {
-    const result = await client.query(text, params);
-    return result;
-  } finally {
-    client.release();
-  }
-}
 
 // Get cities and areas for scaling planner dropdowns
 router.get('/cities', async (req, res) => {
@@ -153,7 +19,7 @@ router.get('/cities', async (req, res) => {
       ORDER BY c.name
     `;
 
-    const result = await queryMisfits(citiesQuery);
+    const result = await queryProductionWithTunnel(citiesQuery);
 
     if (result.rows && result.rows.length > 0) {
       const cities = result.rows.map(row => ({
@@ -181,7 +47,7 @@ router.get('/cities', async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Failed to fetch cities data from database',
-      message: 'Database connection failed. Please ensure SSH tunnel is established.',
+      message: 'Database connection failed. SSH tunnel service unable to connect.',
       details: error instanceof Error ? error.message : 'Unknown error'
     });
   }
@@ -215,7 +81,7 @@ router.get('/areas/:cityId', async (req, res) => {
       ORDER BY a.name
     `;
 
-    const result = await queryMisfits(areasQuery, [cityId]);
+    const result = await queryProductionWithTunnel(areasQuery, [cityId]);
 
     if (result.rows && result.rows.length > 0) {
       const areas = result.rows.map(row => ({
@@ -257,7 +123,7 @@ router.get('/areas/:cityId', async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Failed to fetch areas data from database',
-      message: 'Database connection failed. Please ensure SSH tunnel is established.',
+      message: 'Database connection failed. SSH tunnel service unable to connect.',
       details: error instanceof Error ? error.message : 'Unknown error'
     });
   }
@@ -284,7 +150,7 @@ router.get('/areas', async (req, res) => {
       ORDER BY c.name, a.name
     `;
 
-    const result = await queryMisfits(areasQuery);
+    const result = await queryProductionWithTunnel(areasQuery);
 
     if (result.rows && result.rows.length > 0) {
       const areas = result.rows.map(row => ({
@@ -344,7 +210,7 @@ router.get('/areas', async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Failed to fetch areas data from database',
-      message: 'Database connection failed. Please ensure SSH tunnel is established.',
+      message: 'Database connection failed. SSH tunnel service unable to connect.',
       details: error instanceof Error ? error.message : 'Unknown error'
     });
   }
@@ -423,7 +289,7 @@ router.get('/clubs', async (req, res) => {
       ORDER BY current_revenue DESC, total_events DESC
     `;
 
-    const result = await queryMisfits(clubsQuery);
+    const result = await queryProductionWithTunnel(clubsQuery);
 
     if (result.rows && result.rows.length > 0) {
       // Process the results
@@ -496,7 +362,7 @@ router.get('/clubs', async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Failed to fetch clubs data from database',
-      message: 'Database connection failed. Please ensure SSH tunnel is established.',
+      message: 'Database connection failed. SSH tunnel service unable to connect.',
       details: error instanceof Error ? error.message : 'Unknown error'
     });
   }
@@ -598,8 +464,7 @@ router.get('/activities', async (req, res) => {
       ORDER BY active_clubs DESC, club_count DESC
     `;
 
-    const pool = await initializeMisfitsConnection();
-    const result = await pool.query(activitiesQuery);
+    const result = await queryProductionWithTunnel(activitiesQuery);
 
     const activities = result.rows.map(row => ({
       id: row.id,
@@ -627,200 +492,6 @@ router.get('/activities', async (req, res) => {
   }
 });
 
-// Get all cities and their areas from database
-router.get('/cities', async (req, res) => {
-  try {
-    logger.info('Fetching cities and areas from database...');
-
-    const citiesQuery = `
-      SELECT
-        ci.id as city_id,
-        ci.name as city_name,
-        COUNT(DISTINCT a.id) as area_count,
-        COUNT(DISTINCT c.pk) as club_count,
-        json_agg(DISTINCT jsonb_build_object('id', a.id, 'name', a.name)) as areas
-      FROM city ci
-      LEFT JOIN area a ON ci.id = a.city_id
-      LEFT JOIN location l ON a.id = l.area_id
-      LEFT JOIN event e ON l.id = e.location_id
-      LEFT JOIN club c ON e.club_id = c.pk
-      WHERE ci.name IS NOT NULL
-        AND ci.name != ''
-      GROUP BY ci.id, ci.name
-      HAVING COUNT(DISTINCT a.id) > 0
-      ORDER BY club_count DESC, ci.name
-    `;
-
-    const pool = await initializeMisfitsConnection();
-    const result = await pool.query(citiesQuery);
-
-    const cities = result.rows.map(row => ({
-      id: row.city_id,
-      name: row.city_name,
-      areaCount: parseInt(row.area_count),
-      clubCount: parseInt(row.club_count),
-      areas: row.areas.filter(area => area.name && area.name.trim())
-    }));
-
-    logger.info(`Successfully fetched ${cities.length} cities`);
-
-    res.json({
-      success: true,
-      cities,
-      generated_at: new Date().toISOString()
-    });
-
-  } catch (error) {
-    logger.error('Cities fetch failed:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch cities from database',
-      details: error instanceof Error ? error.message : 'Unknown error'
-    });
-  }
-});
-
-// Get all clubs with their basic info for scaling planner
-router.get('/clubs', async (req, res) => {
-  try {
-    logger.info('Fetching clubs from database...');
-
-    const { activity, city, area, status } = req.query;
-
-    let whereConditions = [
-      "c.is_private = false",
-      "a.name != 'Test'"
-    ];
-
-    // Add status filter if specified, otherwise show all statuses
-    if (status && status !== 'all') {
-      if (status === 'active') {
-        whereConditions.push("c.status = 'ACTIVE'");
-      } else if (status === 'inactive') {
-        whereConditions.push("c.status = 'INACTIVE'");
-      }
-    }
-
-    if (activity && activity !== 'all') {
-      whereConditions.push(`a.name = '${activity}'`);
-    }
-
-    // City/area filtering through most recent event location
-    let cityAreaJoin = '';
-    if (city && city !== 'all') {
-      cityAreaJoin = `
-        AND EXISTS (
-          SELECT 1 FROM event e2
-          LEFT JOIN location l2 ON e2.location_id = l2.id
-          LEFT JOIN area ar2 ON l2.area_id = ar2.id
-          LEFT JOIN city ci2 ON ar2.city_id = ci2.id
-          WHERE e2.club_id = c.pk AND ci2.name = '${city}'
-        )
-      `;
-    }
-
-    if (area && area !== 'all') {
-      cityAreaJoin += `
-        AND EXISTS (
-          SELECT 1 FROM event e3
-          LEFT JOIN location l3 ON e3.location_id = l3.id
-          LEFT JOIN area ar3 ON l3.area_id = ar3.id
-          WHERE e3.club_id = c.pk AND ar3.name = '${area}'
-        )
-      `;
-    }
-
-    const clubsQuery = `
-      SELECT
-        c.pk,
-        c.id as club_uuid,
-        c.name as club_name,
-        c.status,
-        c.created_at,
-        a.name as activity_name,
-        -- Get most recent city/area
-        (
-          SELECT ci.name
-          FROM event e
-          LEFT JOIN location l ON e.location_id = l.id
-          LEFT JOIN area ar ON l.area_id = ar.id
-          LEFT JOIN city ci ON ar.city_id = ci.id
-          WHERE e.club_id = c.pk
-          ORDER BY e.start_time DESC
-          LIMIT 1
-        ) as city_name,
-        (
-          SELECT ar.name
-          FROM event e
-          LEFT JOIN location l ON e.location_id = l.id
-          LEFT JOIN area ar ON l.area_id = ar.id
-          WHERE e.club_id = c.pk
-          ORDER BY e.start_time DESC
-          LIMIT 1
-        ) as area_name,
-        -- Basic metrics
-        (
-          SELECT COUNT(*)
-          FROM event e
-          WHERE e.club_id = c.pk
-            AND e.created_at >= CURRENT_DATE - INTERVAL '30 days'
-            AND e.state = 'CREATED'
-        ) as recent_events,
-        (
-          SELECT COUNT(*)
-          FROM event e
-          WHERE e.club_id = c.pk AND e.state = 'CREATED'
-        ) as total_events
-      FROM club c
-      LEFT JOIN activity a ON c.activity_id = a.id
-      WHERE ${whereConditions.join(' AND ')}
-        ${cityAreaJoin}
-      ORDER BY
-        CASE WHEN c.status = 'ACTIVE' THEN 1 ELSE 2 END,
-        recent_events DESC,
-        total_events DESC,
-        c.name
-    `;
-
-    const pool = await initializeMisfitsConnection();
-    const result = await pool.query(clubsQuery);
-
-    const clubs = result.rows.map(row => ({
-      id: row.pk,
-      uuid: row.club_uuid,
-      name: row.club_name,
-      status: row.status,
-      activity: row.activity_name || 'Unknown',
-      city: row.city_name || 'Unknown',
-      area: row.area_name || 'Unknown',
-      recentEvents: parseInt(row.recent_events),
-      totalEvents: parseInt(row.total_events),
-      createdAt: row.created_at
-    }));
-
-    logger.info(`Successfully fetched ${clubs.length} clubs`);
-
-    res.json({
-      success: true,
-      clubs,
-      filters: {
-        activity: activity || 'all',
-        city: city || 'all',
-        area: area || 'all',
-        status: status || 'all'
-      },
-      generated_at: new Date().toISOString()
-    });
-
-  } catch (error) {
-    logger.error('Clubs fetch failed:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch clubs from database',
-      details: error instanceof Error ? error.message : 'Unknown error'
-    });
-  }
-});
 
 // ===== TARGET TRACKING ENDPOINTS =====
 
@@ -874,9 +545,9 @@ router.get('/data', async (req, res) => {
     `;
 
     const [activityTargets, existingClubsSummary, newClubsSummary] = await Promise.all([
-      queryMisfits(activityTargetsQuery),
-      queryMisfits(existingClubsQuery),
-      queryMisfits(newClubsQuery)
+      queryProductionWithTunnel(activityTargetsQuery),
+      queryProductionWithTunnel(existingClubsQuery),
+      queryProductionWithTunnel(newClubsQuery)
     ]);
 
     // Calculate overall summary
@@ -940,9 +611,9 @@ router.get('/activity/:activityName', async (req, res) => {
     `;
 
     const [activityData, existingClubs, newClubLaunches] = await Promise.all([
-      queryMisfits(activityQuery, [activityName]),
-      queryMisfits(existingClubsQuery, [activityName]),
-      queryMisfits(newClubLaunchesQuery, [activityName])
+      queryProductionWithTunnel(activityQuery, [activityName]),
+      queryProductionWithTunnel(existingClubsQuery, [activityName]),
+      queryProductionWithTunnel(newClubLaunchesQuery, [activityName])
     ]);
 
     if (activityData.rows.length === 0) {
@@ -998,7 +669,7 @@ router.put('/activity/:activityName/targets', async (req, res) => {
       RETURNING *
     `;
 
-    const result = await queryMisfits(upsertActivityQuery, [
+    const result = await queryProductionWithTunnel(upsertActivityQuery, [
       activityName,
       target_meetups_existing || 0,
       target_meetups_new || 0,
@@ -1042,7 +713,7 @@ router.put('/club/:clubId/targets', async (req, res) => {
       RETURNING *
     `;
 
-    const result = await queryMisfits(upsertClubQuery, [
+    const result = await queryProductionWithTunnel(upsertClubQuery, [
       clubId,
       activity_name,
       target_meetups || 0,
@@ -1090,7 +761,7 @@ router.post('/new-club-launch', async (req, res) => {
       RETURNING *
     `;
 
-    const result = await queryMisfits(insertQuery, [
+    const result = await queryProductionWithTunnel(insertQuery, [
       activity_name,
       planned_clubs_count || 1,
       target_meetups_per_club || 0,
@@ -1157,9 +828,9 @@ router.post('/transition-club', async (req, res) => {
       VALUES ($1, $2, $3, $4, $5)
     `;
 
-    await queryMisfits(updateLaunchStatusQuery, [new_club_launch_id]);
-    const clubResult = await queryMisfits(insertClubTargetQuery, [club_id, activity_name, target_meetups, target_revenue]);
-    await queryMisfits(insertTransitionQuery, [new_club_launch_id, club_id, activity_name, target_meetups, target_revenue]);
+    await queryProductionWithTunnel(updateLaunchStatusQuery, [new_club_launch_id]);
+    const clubResult = await queryProductionWithTunnel(insertClubTargetQuery, [club_id, activity_name, target_meetups, target_revenue]);
+    await queryProductionWithTunnel(insertTransitionQuery, [new_club_launch_id, club_id, activity_name, target_meetups, target_revenue]);
 
     res.json({
       success: true,

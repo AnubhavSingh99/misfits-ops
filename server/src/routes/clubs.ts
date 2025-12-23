@@ -1,135 +1,16 @@
 import { Router } from 'express';
-import { Pool } from 'pg';
 import { logger } from '../utils/logger';
+import { queryProductionWithTunnel } from '../services/sshTunnel';
 
 const router = Router();
 
-// Production Misfits database connection pool
-let misfitsPool: Pool | null = null;
-
-// SSH tunnel connection details
-const SSH_CONFIG = {
-  keyFile: process.env.NODE_ENV === 'production'
-    ? '/home/ec2-user/Downloads/claude-control-key'
-    : '/Users/retalplaza/Downloads/DB claude key/claude-control-key',
-  sshHost: '15.207.255.212',
-  sshUser: 'claude-control',
-  dbHost: 'misfits.cgncbvolnhe7.ap-south-1.rds.amazonaws.com',
-  dbPort: '5432',
-  localPort: '5433',
-  dbName: 'misfits',
-  dbUser: 'dev',
-  dbPassword: 'postgres'
-};
-
-/**
- * Initialize database connection for clubs
- */
-async function initializeMisfitsConnection(): Promise<Pool> {
-  if (misfitsPool) {
-    try {
-      // Test existing connection
-      const client = await misfitsPool.connect();
-      await client.query('SELECT 1');
-      client.release();
-      return misfitsPool;
-    } catch (error) {
-      logger.info('Existing connection failed, recreating...');
-      misfitsPool = null;
-    }
-  }
-
-  try {
-    const isProduction = false;
-    let dbConfig;
-
-    if (isProduction) {
-      // Production: Use direct database connection
-      dbConfig = {
-        host: process.env.POSTGRES_HOST || SSH_CONFIG.dbHost,
-        port: parseInt(process.env.POSTGRES_PORT || SSH_CONFIG.dbPort),
-        database: process.env.POSTGRES_DB || SSH_CONFIG.dbName,
-        user: process.env.POSTGRES_USER || SSH_CONFIG.dbUser,
-        password: process.env.POSTGRES_PASSWORD || SSH_CONFIG.dbPassword,
-        max: 5,
-        idleTimeoutMillis: 30000,
-        connectionTimeoutMillis: 10000,
-        ssl: { rejectUnauthorized: false }
-      };
-    } else {
-      // Development: Use SSH tunnel
-      try {
-        // Test existing tunnel
-        const testPool = new Pool({
-          host: 'localhost',
-          port: parseInt(SSH_CONFIG.localPort),
-          database: SSH_CONFIG.dbName,
-          user: SSH_CONFIG.dbUser,
-          password: SSH_CONFIG.dbPassword,
-          max: 1,
-          connectionTimeoutMillis: 5000,
-        });
-
-        const testClient = await testPool.connect();
-        await testClient.query('SELECT 1');
-        testClient.release();
-        await testPool.end();
-
-        dbConfig = {
-          host: 'localhost',
-          port: parseInt(SSH_CONFIG.localPort),
-          database: SSH_CONFIG.dbName,
-          user: SSH_CONFIG.dbUser,
-          password: SSH_CONFIG.dbPassword,
-          max: 5,
-          idleTimeoutMillis: 30000,
-          connectionTimeoutMillis: 10000,
-        };
-
-      } catch (tunnelError) {
-        throw new Error('SSH tunnel not available. Please establish connection with: ./db_connect.sh');
-      }
-    }
-
-    // Create database connection pool
-    misfitsPool = new Pool(dbConfig);
-
-    // Test connection
-    const testClient = await misfitsPool.connect();
-    await testClient.query('SELECT 1');
-    testClient.release();
-
-    logger.info('Clubs database connection established successfully');
-    return misfitsPool;
-
-  } catch (error) {
-    logger.error('Failed to initialize clubs database connection:', error);
-    throw error;
-  }
-}
-
-/**
- * Execute query against Misfits database
- */
-async function queryMisfits(text: string, params?: any[]): Promise<any> {
-  const pool = await initializeMisfitsConnection();
-  const client = await pool.connect();
-
-  try {
-    const result = await client.query(text, params);
-    return result;
-  } finally {
-    client.release();
-  }
-}
-
-// No mock data - using only real database data
+// Using centralized SSH tunnel service for all database queries
 
 // Get activities with club counts and revenue
 router.get('/activities', async (req, res) => {
   try {
     // Try to fetch from real database first
-    const result = await queryMisfits(`
+    const result = await queryProductionWithTunnel(`
       SELECT
         a.name as activity,
         COUNT(DISTINCT c.id) as club_count,
@@ -234,7 +115,7 @@ router.get('/', async (req, res) => {
     if (city && city !== 'all') {
     }
 
-    const result = await queryMisfits(`
+    const result = await queryProductionWithTunnel(`
       WITH club_metrics AS (
         SELECT
           c.pk as club_id,
@@ -374,7 +255,7 @@ router.get('/:id', async (req, res) => {
   try {
     const { id } = req.params;
 
-    const result = await queryMisfits(`
+    const result = await queryProductionWithTunnel(`
       WITH monthly_data AS (
         SELECT
           c.pk as club_id,

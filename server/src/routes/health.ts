@@ -1,121 +1,21 @@
 import express from 'express';
-import { Pool } from 'pg';
-import { exec } from 'child_process';
-import { promisify } from 'util';
 import { logger } from '../utils/logger';
 import { calculateClubHealth, calculateSystemHealth } from '../services/healthEngine';
+import { queryProductionWithTunnel } from '../services/sshTunnel';
 
 const router = express.Router();
-const execAsync = promisify(exec);
-
-// Production Misfits database connection pool
-let misfitsPool: Pool | null = null;
-
-// SSH tunnel connection details
-const SSH_CONFIG = {
-  keyFile: process.env.NODE_ENV === 'production'
-    ? '/home/ec2-user/Downloads/claude-control-key'
-    : '/Users/retalplaza/Downloads/DB claude key/claude-control-key',
-  sshHost: '15.207.255.212',
-  sshUser: 'claude-control',
-  dbHost: 'misfits.cgncbvolnhe7.ap-south-1.rds.amazonaws.com',
-  dbPort: '5432',
-  localPort: '5433',
-  dbName: 'misfits',
-  dbUser: 'dev',
-  dbPassword: 'postgres'
-};
 
 /**
- * Initialize database connection (production uses direct connection)
- */
-async function initializeMisfitsConnection(): Promise<Pool> {
-  if (misfitsPool) {
-    try {
-      // Test existing connection
-      const client = await misfitsPool.connect();
-      await client.query('SELECT 1');
-      client.release();
-      return misfitsPool;
-    } catch (error) {
-      logger.info('Existing connection failed, recreating...');
-      misfitsPool = null;
-    }
-  }
-
-  try {
-    // Use SSH tunnel connection for production
-    const isProduction = false;
-    logger.info(`Health endpoint environment detection - isProduction: ${isProduction}, NODE_ENV: ${process.env.NODE_ENV}, POSTGRES_HOST: ${process.env.POSTGRES_HOST}`);
-
-    let dbConfig;
-
-    if (isProduction) {
-      // Production: Use direct database connection
-      logger.info('Using direct database connection in production...');
-
-      dbConfig = {
-        host: process.env.POSTGRES_HOST || SSH_CONFIG.dbHost,
-        port: parseInt(process.env.POSTGRES_PORT || SSH_CONFIG.dbPort),
-        database: process.env.POSTGRES_DB || SSH_CONFIG.dbName,
-        user: process.env.POSTGRES_USER || 'postgres',
-        password: process.env.POSTGRES_PASSWORD || SSH_CONFIG.dbPassword,
-        max: 5,
-        idleTimeoutMillis: 30000,
-        connectionTimeoutMillis: 10000,
-        ssl: {
-          rejectUnauthorized: false // Allow self-signed certificates for AWS RDS
-        }
-      };
-    } else {
-      // Development: Use existing SSH tunnel - don't create a new one
-      // The tunnel should already be established by db_connect.sh
-      logger.info('Development mode - using existing SSH tunnel for health metrics...');
-
-      dbConfig = {
-        host: 'localhost',
-        port: parseInt(SSH_CONFIG.localPort),
-        database: SSH_CONFIG.dbName,
-        user: SSH_CONFIG.dbUser,
-        password: SSH_CONFIG.dbPassword,
-        max: 5,
-        idleTimeoutMillis: 30000,
-        connectionTimeoutMillis: 10000,
-      };
-    }
-
-    // Create database connection pool with determined config
-    misfitsPool = new Pool(dbConfig);
-
-    // Test connection
-    const testClient = await misfitsPool.connect();
-    await testClient.query('SELECT 1');
-    testClient.release();
-
-    logger.info('Health database connection established successfully');
-    return misfitsPool;
-
-  } catch (error) {
-    logger.error('Failed to initialize health database connection:', error);
-    if (!process.env.POSTGRES_HOST && !process.env.NODE_ENV) {
-      logger.error('Make sure SSH tunnel is established: ./db_connect.sh');
-    }
-    throw error;
-  }
-}
-
-/**
- * Execute query against Misfits database with error handling
+ * Execute query against Misfits database using centralized SSH tunnel service
  */
 async function queryMisfits(text: string, params?: any[]): Promise<any> {
-  const pool = await initializeMisfitsConnection();
-  const client = await pool.connect();
-
   try {
-    const result = await client.query(text, params);
+    logger.info('Executing query against production database using centralized SSH tunnel...');
+    const result = await queryProductionWithTunnel(text, params);
     return result;
-  } finally {
-    client.release();
+  } catch (error) {
+    logger.error('Failed to query Misfits database:', error);
+    throw error;
   }
 }
 

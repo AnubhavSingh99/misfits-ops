@@ -36,9 +36,7 @@ const PORT = process.env.PORT || (process.env.NODE_ENV === 'production' ? 80 : 5
 // Security middleware
 app.use(helmet());
 app.use(cors({
-  origin: process.env.NODE_ENV === 'production'
-    ? process.env.FRONTEND_URL
-    : 'http://localhost:3000',
+  origin: process.env.FRONTEND_URL || 'http://localhost:3000',
   credentials: true,
 }));
 
@@ -68,6 +66,25 @@ app.use('/api/health', healthRoutes);
 app.use('/api/scaling', scalingRoutes);
 app.use('/api/targets', targetsRoutes);
 app.use('/api', revenueRoutes); // Also handle direct /api/revenue-growth
+
+// Teams endpoints (simple fallback)
+app.get('/api/teams/leaderboard', (req, res) => {
+  res.json([]);
+});
+
+app.get('/api/teams/:team', (req, res) => {
+  res.json({
+    team: req.params.team,
+    metrics: {
+      totalRevenue: 0,
+      totalEvents: 0,
+      totalClubs: 0,
+      avgRating: 0
+    },
+    performance: "stable",
+    lastUpdated: new Date().toISOString()
+  });
+});
 
 // Serve static files from React app
 app.use(express.static(path.join(__dirname, '../public')));
@@ -108,7 +125,7 @@ async function startServer() {
     server.listen(PORT, () => {
       logger.info(`🚀 Misfits Operations Server running on port ${PORT}`);
       logger.info(`📊 Environment: ${process.env.NODE_ENV || 'development'}`);
-      logger.info(`🔗 Frontend URL: http://localhost:3000`);
+      logger.info(`🔗 Frontend URL: ${process.env.FRONTEND_URL || 'http://localhost:3000'}`);
     });
 
     // Graceful shutdown
