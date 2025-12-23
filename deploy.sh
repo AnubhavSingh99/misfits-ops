@@ -5,7 +5,7 @@
 
 set -e
 
-PRODUCTION_KEY="~/Downloads/cdk-key-staging.pem"
+PRODUCTION_KEY="/Users/retalplaza/Downloads/cdk-key-staging.pem"
 PRODUCTION_SERVER="ec2-user@13.201.15.180"
 PRODUCTION_PATH="/home/ec2-user/misfits-operations"
 
