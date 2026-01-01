@@ -125,10 +125,13 @@ public
 
 # MacOS
 .DS_Store
+._*
+.CFUserTextEncoding
 
 # IDE
 .vscode/
 .idea/
+.claude/
 
 # Keys and credentials
 *.pem
@@ -136,6 +139,32 @@ public
 *-key
 claude-control-key
 
+# Config files
+ecosystem.config.js
+
 # Temporary files
 *.tmp
 *.temp
+
+# User specific files
+CLAUDE.md
+
+# Backup files
+*.backup
+
+# Excel/Office files
+*.xlsx
+*.xls
+*.docx
+*.doc
+
+# Python files
+*.py
+*.csv
+
+# Archive files
+*.tar.gz
+*.zip
+
+# Script files
+*.sh
