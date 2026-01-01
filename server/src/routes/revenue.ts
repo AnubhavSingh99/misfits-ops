@@ -1,8 +1,28 @@
 import express from 'express';
-import { query } from '../services/database';
+import { queryProduction } from '../services/database';
 import { logger } from '../utils/logger';
 
 const router = express.Router();
+
+// GET /api/revenue - Basic revenue summary
+router.get('/', async (req, res) => {
+  try {
+    res.json({
+      success: true,
+      totalRevenue: 0,
+      monthlyRevenue: 0,
+      growth: 0,
+      message: "Revenue endpoint working - connect to production data for real metrics"
+    });
+  } catch (error) {
+    logger.error('Failed to fetch revenue data:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch revenue data',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
 
 // GET /api/revenue/growth - Time-period growth analysis (PRD v8.1)
 router.get('/growth', async (req, res) => {

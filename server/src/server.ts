@@ -21,6 +21,7 @@ import databaseRoutes from './routes/database';
 import healthRoutes from './routes/health';
 import scalingRoutes from './routes/scaling';
 import targetsRoutes from './routes/targets';
+import meetupsRoutes from './routes/meetups';
 
 // Import services
 import { initializeDatabase } from './services/database';
@@ -38,6 +39,18 @@ app.use(helmet());
 app.use(cors({
   origin: process.env.FRONTEND_URL || 'http://localhost:3000',
   credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
+  optionsSuccessStatus: 200,
+  preflightContinue: false
+}));
+
+// Handle preflight requests explicitly
+app.options('*', cors({
+  origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
 }));
 
 // General middleware
@@ -65,6 +78,7 @@ app.use('/api/database', databaseRoutes);
 app.use('/api/health', healthRoutes);
 app.use('/api/scaling', scalingRoutes);
 app.use('/api/targets', targetsRoutes);
+app.use('/api/meetups', meetupsRoutes);
 app.use('/api', revenueRoutes); // Also handle direct /api/revenue-growth
 
 // Teams endpoints (simple fallback)

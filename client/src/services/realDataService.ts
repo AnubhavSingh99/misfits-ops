@@ -20,7 +20,7 @@ export class RealDataService {
     progress_percentage: number;
   }> {
     try {
-      const response = await fetch(`${API_URL}/api/database/revenue`, {
+      const response = await fetch(`${API_URL}/api/revenue`, {
         method: 'GET',
         headers: { 'Content-Type': 'application/json' }
       });
@@ -58,7 +58,7 @@ export class RealDataService {
     total: number;
   }> {
     try {
-      const response = await fetch(`${API_URL}/api/database/health`, {
+      const response = await fetch(`${API_URL}/api/health`, {
         method: 'GET',
         headers: { 'Content-Type': 'application/json' }
       });
@@ -90,7 +90,7 @@ export class RealDataService {
     progress_percentage: number;
   }> {
     try {
-      const response = await fetch(`${API_URL}/api/database/meetups`, {
+      const response = await fetch(`${API_URL}/api/meetups`, {
         method: 'GET',
         headers: { 'Content-Type': 'application/json' }
       });

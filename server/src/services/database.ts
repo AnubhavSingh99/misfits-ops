@@ -1,17 +1,15 @@
 import { Pool, PoolClient } from 'pg';
 import { logger } from '../utils/logger';
+import { queryProductionWithTunnel } from './sshTunnel';
 
 let pool: Pool; // Local operations database
 let prodPool: Pool; // Production database (read-only)
 
 export async function initializeDatabase() {
-  // Skip local database initialization if production database is configured
-  if (process.env.PROD_DB_HOST) {
-    logger.info('Production database configured, skipping local database initialization');
-    return;
-  }
+  // Always initialize local operations database
+  // Production database is accessed separately via SSH tunnel
 
-  // Initialize local operations database only if production database is not available
+  // Initialize local operations database
   pool = new Pool({
     host: process.env.LOCAL_DB_HOST || 'localhost',
     port: parseInt(process.env.LOCAL_DB_PORT || '5432'),
@@ -44,7 +42,30 @@ export async function getClient(): Promise<PoolClient> {
   return pool.connect();
 }
 
+// Query local operations database (for POC, tasks, etc.)
+export async function queryLocal(text: string, params?: any[]) {
+  const client = await getClient();
+  try {
+    const result = await client.query(text, params);
+    return result;
+  } finally {
+    client.release();
+  }
+}
+
+// Query production database (for clubs, events, payments, etc.)
+export async function queryProduction(text: string, params?: any[]) {
+  return await queryProductionWithTunnel(text, params);
+}
+
+// Default query function - use production for backwards compatibility
 export async function query(text: string, params?: any[]) {
+  // If production database is configured, use SSH tunnel
+  if (process.env.PROD_DB_HOST) {
+    return await queryProductionWithTunnel(text, params);
+  }
+
+  // Otherwise use local database
   const client = await getClient();
   try {
     const result = await client.query(text, params);
@@ -74,7 +95,7 @@ export async function transaction<T>(
 async function runMigrations() {
   try {
     // Create tables if they don't exist
-    await query(`
+    await queryLocal(`
       CREATE TABLE IF NOT EXISTS clubs (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         name VARCHAR(255) NOT NULL,
@@ -96,7 +117,7 @@ async function runMigrations() {
       );
     `);
 
-    await query(`
+    await queryLocal(`
       CREATE TABLE IF NOT EXISTS users (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         name VARCHAR(255) NOT NULL,
@@ -112,7 +133,7 @@ async function runMigrations() {
       );
     `);
 
-    await query(`
+    await queryLocal(`
       CREATE TABLE IF NOT EXISTS intelligent_tasks (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         trigger_event VARCHAR(100) NOT NULL,
@@ -134,7 +155,7 @@ async function runMigrations() {
       );
     `);
 
-    await query(`
+    await queryLocal(`
       CREATE TABLE IF NOT EXISTS user_workspace (
         user_id UUID PRIMARY KEY,
         personal_todos JSONB DEFAULT '[]',
@@ -148,7 +169,7 @@ async function runMigrations() {
       );
     `);
 
-    await query(`
+    await queryLocal(`
       CREATE TABLE IF NOT EXISTS smart_notifications (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         event_type VARCHAR(100) NOT NULL,
@@ -165,7 +186,7 @@ async function runMigrations() {
       );
     `);
 
-    await query(`
+    await queryLocal(`
       CREATE TABLE IF NOT EXISTS system_patterns (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         pattern_type VARCHAR(100) NOT NULL,
@@ -182,7 +203,7 @@ async function runMigrations() {
 
     // Create indexes
     // Create target tracking tables for scaling planner
-    await query(`
+    await queryLocal(`
       CREATE TABLE IF NOT EXISTS activity_scaling_targets (
         id SERIAL PRIMARY KEY,
         activity_name VARCHAR(255) NOT NULL UNIQUE,
@@ -206,7 +227,7 @@ async function runMigrations() {
       );
     `);
 
-    await query(`
+    await queryLocal(`
       CREATE TABLE IF NOT EXISTS club_scaling_targets (
         id SERIAL PRIMARY KEY,
         club_id UUID NOT NULL UNIQUE,
@@ -230,7 +251,7 @@ async function runMigrations() {
       );
     `);
 
-    await query(`
+    await queryLocal(`
       CREATE TABLE IF NOT EXISTS new_club_launches (
         id SERIAL PRIMARY KEY,
         activity_name VARCHAR(255) NOT NULL,
@@ -267,15 +288,15 @@ async function runMigrations() {
     `);
 
     // Create indexes for existing tables
-    await query('CREATE INDEX IF NOT EXISTS idx_clubs_city ON clubs(city);');
-    await query('CREATE INDEX IF NOT EXISTS idx_clubs_activity ON clubs(activity);');
-    await query('CREATE INDEX IF NOT EXISTS idx_clubs_health_status ON clubs(health_status);');
-    await query('CREATE INDEX IF NOT EXISTS idx_tasks_assigned_to ON intelligent_tasks(assigned_to);');
-    await query('CREATE INDEX IF NOT EXISTS idx_tasks_club_id ON intelligent_tasks(club_id);');
-    await query('CREATE INDEX IF NOT EXISTS idx_notifications_recipient ON smart_notifications(recipient);');
+    await queryLocal('CREATE INDEX IF NOT EXISTS idx_clubs_city ON clubs(city);');
+    await queryLocal('CREATE INDEX IF NOT EXISTS idx_clubs_activity ON clubs(activity);');
+    await queryLocal('CREATE INDEX IF NOT EXISTS idx_clubs_health_status ON clubs(health_status);');
+    await queryLocal('CREATE INDEX IF NOT EXISTS idx_tasks_assigned_to ON intelligent_tasks(assigned_to);');
+    await queryLocal('CREATE INDEX IF NOT EXISTS idx_tasks_club_id ON intelligent_tasks(club_id);');
+    await queryLocal('CREATE INDEX IF NOT EXISTS idx_notifications_recipient ON smart_notifications(recipient);');
 
     // Create POC structure table
-    await query(`
+    await queryLocal(`
       CREATE TABLE IF NOT EXISTS poc_structure (
         id SERIAL PRIMARY KEY,
         name VARCHAR(255) NOT NULL,
@@ -293,7 +314,7 @@ async function runMigrations() {
     `);
 
     // Create POC assignments table
-    await query(`
+    await queryLocal(`
       CREATE TABLE IF NOT EXISTS poc_assignments (
         id SERIAL PRIMARY KEY,
         club_id UUID REFERENCES clubs(id),
@@ -308,7 +329,7 @@ async function runMigrations() {
     `);
 
     // Create operations tasks table
-    await query(`
+    await queryLocal(`
       CREATE TABLE IF NOT EXISTS operations_tasks (
         id SERIAL PRIMARY KEY,
         title VARCHAR(500) NOT NULL,
@@ -329,7 +350,7 @@ async function runMigrations() {
     `);
 
     // Create task comments table
-    await query(`
+    await queryLocal(`
       CREATE TABLE IF NOT EXISTS task_comments (
         id SERIAL PRIMARY KEY,
         task_id INTEGER REFERENCES operations_tasks(id) ON DELETE CASCADE,
@@ -340,22 +361,22 @@ async function runMigrations() {
     `);
 
     // Create indexes for target tracking tables
-    await query('CREATE INDEX IF NOT EXISTS idx_activity_targets_name ON activity_scaling_targets(activity_name);');
-    await query('CREATE INDEX IF NOT EXISTS idx_club_targets_club_id ON club_scaling_targets(club_id);');
-    await query('CREATE INDEX IF NOT EXISTS idx_club_targets_activity ON club_scaling_targets(activity_name);');
-    await query('CREATE INDEX IF NOT EXISTS idx_club_targets_new_club ON club_scaling_targets(is_new_club);');
-    await query('CREATE INDEX IF NOT EXISTS idx_new_launches_activity ON new_club_launches(activity_name);');
-    await query('CREATE INDEX IF NOT EXISTS idx_new_launches_status ON new_club_launches(launch_status);');
+    await queryLocal('CREATE INDEX IF NOT EXISTS idx_activity_targets_name ON activity_scaling_targets(activity_name);');
+    await queryLocal('CREATE INDEX IF NOT EXISTS idx_club_targets_club_id ON club_scaling_targets(club_id);');
+    await queryLocal('CREATE INDEX IF NOT EXISTS idx_club_targets_activity ON club_scaling_targets(activity_name);');
+    await queryLocal('CREATE INDEX IF NOT EXISTS idx_club_targets_new_club ON club_scaling_targets(is_new_club);');
+    await queryLocal('CREATE INDEX IF NOT EXISTS idx_new_launches_activity ON new_club_launches(activity_name);');
+    await queryLocal('CREATE INDEX IF NOT EXISTS idx_new_launches_status ON new_club_launches(launch_status);');
 
     // Create indexes for POC and task tables
-    await query('CREATE INDEX IF NOT EXISTS idx_poc_structure_type ON poc_structure(poc_type);');
-    await query('CREATE INDEX IF NOT EXISTS idx_poc_structure_active ON poc_structure(is_active);');
-    await query('CREATE INDEX IF NOT EXISTS idx_poc_assignments_club ON poc_assignments(club_id);');
-    await query('CREATE INDEX IF NOT EXISTS idx_poc_assignments_poc ON poc_assignments(poc_id);');
-    await query('CREATE INDEX IF NOT EXISTS idx_tasks_assigned_poc ON operations_tasks(assigned_to_poc_id);');
-    await query('CREATE INDEX IF NOT EXISTS idx_tasks_status ON operations_tasks(status);');
-    await query('CREATE INDEX IF NOT EXISTS idx_tasks_priority ON operations_tasks(priority);');
-    await query('CREATE INDEX IF NOT EXISTS idx_task_comments_task ON task_comments(task_id);');
+    await queryLocal('CREATE INDEX IF NOT EXISTS idx_poc_structure_type ON poc_structure(poc_type);');
+    await queryLocal('CREATE INDEX IF NOT EXISTS idx_poc_structure_active ON poc_structure(is_active);');
+    await queryLocal('CREATE INDEX IF NOT EXISTS idx_poc_assignments_club ON poc_assignments(club_id);');
+    await queryLocal('CREATE INDEX IF NOT EXISTS idx_poc_assignments_poc ON poc_assignments(poc_id);');
+    await queryLocal('CREATE INDEX IF NOT EXISTS idx_tasks_assigned_poc ON operations_tasks(assigned_to_poc_id);');
+    await queryLocal('CREATE INDEX IF NOT EXISTS idx_tasks_status ON operations_tasks(status);');
+    await queryLocal('CREATE INDEX IF NOT EXISTS idx_tasks_priority ON operations_tasks(priority);');
+    await queryLocal('CREATE INDEX IF NOT EXISTS idx_task_comments_task ON task_comments(task_id);');
 
     logger.info('Database migrations completed');
   } catch (error) {

@@ -1,5 +1,5 @@
 import express from 'express';
-import { query } from '../services/database';
+import { queryLocal, queryProduction } from '../services/database';
 import { logger } from '../utils/logger';
 
 const router = express.Router();
@@ -8,7 +8,7 @@ const router = express.Router();
 // GET /api/poc/list - Get all POCs with assignment data
 router.get('/list', async (req, res) => {
   try {
-    const pocs = await query(`
+    const pocs = await queryLocal(`
       SELECT
         p.*,
         COUNT(DISTINCT pa.club_id) as club_count,

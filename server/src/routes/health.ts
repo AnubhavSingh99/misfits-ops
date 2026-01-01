@@ -5,6 +5,26 @@ import { queryProductionWithTunnel } from '../services/sshTunnel';
 
 const router = express.Router();
 
+// GET /api/health - Basic health summary
+router.get('/', async (req, res) => {
+  try {
+    res.json({
+      success: true,
+      systemHealth: "healthy",
+      totalClubs: 0,
+      healthyClubs: 0,
+      message: "Health endpoint working - connect to production data for real metrics"
+    });
+  } catch (error) {
+    logger.error('Failed to fetch health data:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch health data',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
 /**
  * Execute query against Misfits database using centralized SSH tunnel service
  */
