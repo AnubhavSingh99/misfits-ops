@@ -158,6 +158,27 @@ async function initializeTunnel(): Promise<void> {
   }
 }
 
+// Check if error is a connection error that requires tunnel reset
+function isConnectionError(error: any): boolean {
+  const connectionCodes = [
+    'ECONNREFUSED', 'ECONNRESET', 'ENOTFOUND', 'ETIMEDOUT',
+    'ECONNABORTED', 'EHOSTUNREACH', 'ENETUNREACH'
+  ];
+
+  const connectionMessages = [
+    'connection terminated unexpectedly',
+    'server closed the connection',
+    'Connection terminated',
+    'connect ECONNREFUSED'
+  ];
+
+  const errorCode = error?.code;
+  const errorMessage = error?.message?.toLowerCase() || '';
+
+  return connectionCodes.includes(errorCode) ||
+         connectionMessages.some(msg => errorMessage.includes(msg));
+}
+
 // Helper to query production database with pooled SSH tunnel
 export async function queryProductionWithTunnel(text: string, params?: any[]): Promise<any> {
   for (let queryAttempt = 0; queryAttempt <= 2; queryAttempt++) {
@@ -185,11 +206,17 @@ export async function queryProductionWithTunnel(text: string, params?: any[]): P
     } catch (error) {
       logger.error(`Query attempt ${queryAttempt + 1} failed:`, error);
 
+      // Check if this is an application error (like missing table) vs connection error
+      if (!isConnectionError(error)) {
+        // Application error - don't reset tunnel, just throw the error
+        throw error;
+      }
+
       if (queryAttempt === 2) {
         throw new Error(`Query failed after 3 attempts: ${error}`);
       }
 
-      // Reset tunnel state and retry
+      // Only reset tunnel for connection errors
       logger.info('Reinitializing tunnel for retry...');
       await cleanup();
 

@@ -486,7 +486,7 @@ export async function getActivities(): Promise<Array<{
       activeClubs: number;
       inactiveClubs: number;
     }>;
-  }>('/scaling/activities');
+  }>('/api/scaling/activities');
 
   if (response.success) {
     return response.activities;
@@ -510,7 +510,7 @@ export async function getCities(): Promise<Array<{
       areas?: Array<{id: string, name: string}>;
       clubCount?: number;
     }>;
-  }>('/scaling/cities');
+  }>('/api/scaling/cities');
 
   if (response.success) {
     return response.cities;

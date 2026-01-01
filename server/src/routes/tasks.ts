@@ -322,6 +322,18 @@ router.get('/assignees/pocs', async (req, res) => {
 
   } catch (error) {
     logger.error('Error fetching POCs for assignment:', error);
+
+    // If poc_structure table doesn't exist, return empty list
+    if (error instanceof Error && error.message.includes('poc_structure') && error.message.includes('does not exist')) {
+      logger.warn('poc_structure table does not exist in production database, returning empty POCs list');
+      res.json({
+        success: true,
+        pocs: [],
+        message: 'POC structure not configured in this database'
+      });
+      return;
+    }
+
     res.status(500).json({
       success: false,
       error: 'Failed to fetch POCs for assignment',

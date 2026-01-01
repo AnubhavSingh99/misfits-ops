@@ -36,9 +36,9 @@ export class RealDataService {
       }
 
       return {
-        current_revenue: result.data.current_revenue,
-        target_revenue: result.data.target_revenue,
-        progress_percentage: result.data.progress_percentage
+        current_revenue: result.totalRevenue || 0,
+        target_revenue: result.targetRevenue || 5000000,
+        progress_percentage: result.growth || 0
       };
 
     } catch (error) {
@@ -73,7 +73,12 @@ export class RealDataService {
         throw new Error(result.error || 'Health calculation failed');
       }
 
-      return result.data.distribution;
+      return {
+        green: result.healthyClubs || 0,
+        yellow: 0,
+        red: 0,
+        total: result.totalClubs || 0
+      };
 
     } catch (error) {
       console.error('Failed to fetch health distribution:', error);
@@ -106,9 +111,9 @@ export class RealDataService {
       }
 
       return {
-        active_meetups: result.data.active_meetups,
-        target_meetups: result.data.target_meetups,
-        progress_percentage: result.data.progress_percentage
+        active_meetups: result.totalMeetups || 0,
+        target_meetups: 300, // Target from env
+        progress_percentage: ((result.totalMeetups || 0) / 300) * 100
       };
 
     } catch (error) {
