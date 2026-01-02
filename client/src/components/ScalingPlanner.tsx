@@ -3,6 +3,9 @@ import { Plus, Filter, Target, MapPin, Building2, TrendingUp, Users, ArrowUp, Ar
 import { getActivities, getCities } from '../services/api'
 import ScalingTargets from './ScalingTargets'
 
+// API URL constant for all functions to use
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5001'
+
 // Interfaces for the scaling structure
 interface WOWHistoryEntry {
   date: string
@@ -113,11 +116,13 @@ interface DatabaseArea {
 
 // POC type for POC management integration
 interface POCData {
-  id: string
+  id: number
   name: string
+  poc_type: string
   activities: string[]
-  areas: string[]
   cities: string[]
+  team_name: string
+  is_active: boolean
 }
 
 export default function ScalingPlanner() {
@@ -136,6 +141,7 @@ export default function ScalingPlanner() {
   // State for POC data from POC management
   const [pocData, setPocData] = useState<POCData[]>([])
   const [pocLoading, setPocLoading] = useState(false)
+  const [lastUpdated, setLastUpdated] = useState<Date>(new Date())
 
   // Filter states
   const [selectedActivity, setSelectedActivity] = useState('All')
@@ -243,25 +249,183 @@ export default function ScalingPlanner() {
     setEditingMetric(null)
   }
 
-  // Calculate metrics dynamically from targets, filtered by selected POC
-  const getMetrics = () => {
-    // Filter targets by selected POC if not 'All'
-    const filteredTargetsForMetrics = selectedPOC === 'All'
-      ? activityTargets
-      : activityTargets.filter(target => target.poc === selectedPOC)
+  // State to store calculated metrics
+  const [metrics, setMetrics] = useState({
+    targetRevenue: 0,
+    targetMeetups: 0,
+    newClubsNeeded: 0,
+    currentRevenue: 0,
+    currentMeetups: 0,
+    currentNewClubs: 0
+  })
 
-    const totalTargets = filteredTargetsForMetrics.length
-    const targetRevenue = filteredTargetsForMetrics.reduce((sum, target) => sum + target.plannedRevenue, 0)
-    const targetMeetups = filteredTargetsForMetrics.reduce((sum, target) => sum + target.targetMeetupsTotal, 0)
-    const newClubsNeeded = filteredTargetsForMetrics.reduce((sum, target) => sum + target.newClubsNeeded, 0)
+  // Calculate metrics from API data with timeout and duplicate call prevention
+  const calculateMetrics = async () => {
+    const operationId = 'calculateMetrics'
 
-    return {
-      totalTargets,
-      targetRevenue,
-      targetMeetups,
-      newClubsNeeded
+    // Prevent duplicate calls
+    if (loadingTimeouts.has(operationId)) {
+      console.log('⚠️ calculateMetrics already in progress, skipping...')
+      return
+    }
+
+    setLoadingTimeouts(prev => new Set(prev).add(operationId))
+    console.log('🔍 Starting calculateMetrics...')
+
+    // Create abort controller for this operation
+    const controller = new AbortController()
+    setAbortControllers(prev => {
+      const newMap = new Map(prev)
+      newMap.set(operationId, controller)
+      return newMap
+    })
+
+    // Set timeout for the entire operation
+    const timeoutId = setTimeout(() => {
+      console.log('⏰ calculateMetrics timeout, aborting...')
+      controller.abort()
+    }, 30000) // 30 second timeout
+
+    try {
+
+      // Get system state to match main dashboard's target revenue
+      const { default: RealDataService } = await import('../services/realDataService')
+      const systemState = await RealDataService.getSystemState()
+      console.log('🔍 System state:', systemState)
+
+      // Fetch existing clubs data from the scaling planner UI source
+      console.log('🔍 Fetching clubs from scaling UI:', `${API_URL}/api/clubs`)
+      let clubsData = null
+      try {
+        const clubsResponse = await fetch(`${API_URL}/api/clubs`, {
+          signal: controller.signal,
+          headers: { 'Content-Type': 'application/json' },
+          timeout: 15000 // 15 second timeout for individual request
+        })
+
+        if (controller.signal.aborted) {
+          throw new Error('Request was aborted')
+        }
+
+        clubsData = await clubsResponse.json()
+        console.log('🔍 Clubs response (UI source):', clubsData)
+      } catch (error) {
+        if (error.name === 'AbortError') {
+          console.log('🛑 Clubs API request was aborted')
+          return // Exit early on abort
+        }
+        console.error('❌ Clubs API failed:', error)
+        clubsData = { success: false, error: error.message }
+      }
+
+      // Fetch planned launches data
+      console.log('🔍 Fetching launches from:', `${API_URL}/api/scaling/planned-launches`)
+      let launchesData = null
+      try {
+        const launchesResponse = await fetch(`${API_URL}/api/scaling/planned-launches`, {
+          signal: controller.signal,
+          headers: { 'Content-Type': 'application/json' },
+          timeout: 15000 // 15 second timeout
+        })
+
+        if (controller.signal.aborted) {
+          throw new Error('Request was aborted')
+        }
+
+        launchesData = await launchesResponse.json()
+        console.log('🔍 Launches response:', launchesData)
+      } catch (error) {
+        if (error.name === 'AbortError') {
+          console.log('🛑 Launches API request was aborted')
+          return // Exit early on abort
+        }
+        console.error('❌ Launches API failed:', error)
+        launchesData = { success: false, error: error.message }
+      }
+
+      // Calculate metrics from real API data
+      let currentRevenue = 0, currentMeetups = 0
+      let targetRevenue = 0, targetMeetups = 0, newClubsNeeded = 0
+
+      if (clubsData && clubsData.success && clubsData.clubs) {
+        // Get current and target data from existing clubs (UI source should have ₹0 targets if not set)
+        clubsData.clubs.forEach((club: any) => {
+          currentRevenue += club.current_revenue || 0
+          currentMeetups += club.current_meetups || 0
+          targetRevenue += club.target_revenue || 0
+          targetMeetups += club.target_meetups || 0
+        })
+        console.log('🔍 From existing clubs (UI source):', { currentRevenue, currentMeetups, targetRevenue, targetMeetups, clubCount: clubsData.clubs.length })
+      } else {
+        console.warn('⚠️  Clubs API failed, using planned launches only')
+      }
+
+      if (launchesData && launchesData.success) {
+        // ADD planned launch targets to existing club targets
+        launchesData.launches.forEach((launch: any) => {
+          targetRevenue += launch.target_revenue_monthly_rupees || 0
+          targetMeetups += launch.target_meetups_monthly || 0
+          newClubsNeeded += launch.number_of_clubs || 0
+        })
+        console.log('🔍 Adding planned launches to existing targets:', {
+          totalTargetRevenue: targetRevenue,
+          totalTargetMeetups: targetMeetups,
+          totalNewClubsNeeded: newClubsNeeded,
+          launchCount: launchesData.launches.length
+        })
+      }
+
+      // Final calculation: existing club targets + planned launch targets
+      const finalTargetRevenue = targetRevenue  // Sum of existing + launches
+      const finalTargetMeetups = targetMeetups   // Sum of existing + launches
+
+      console.log('🔍 Using system state target revenue:', finalTargetRevenue)
+      console.log('🔍 Using target meetups:', finalTargetMeetups)
+      console.log('🔍 Current revenue from system state:', systemState.current_revenue || 0)
+      console.log('🔍 Current meetups calculated:', currentMeetups)
+
+      const finalMetrics = {
+        targetRevenue: finalTargetRevenue,
+        targetMeetups: finalTargetMeetups,
+        newClubsNeeded,
+        currentRevenue: systemState.current_revenue || 0,
+        currentMeetups: systemState.active_meetups || currentMeetups,
+        currentNewClubs: 0 // New clubs haven't been launched yet
+      }
+
+      console.log('🔍 Final calculated metrics:', finalMetrics)
+      setMetrics(finalMetrics)
+    } catch (error) {
+      if (error.name === 'AbortError') {
+        console.log('🛑 calculateMetrics was aborted')
+        return // Don't update state on abort
+      }
+      console.error('❌ Error fetching metrics data:', error)
+      setMetrics({
+        targetRevenue: 0,
+        targetMeetups: 0,
+        newClubsNeeded: 0,
+        currentRevenue: 0,
+        currentMeetups: 0,
+        currentNewClubs: 0
+      })
+    } finally {
+      clearTimeout(timeoutId)
+      setLoadingTimeouts(prev => {
+        const newSet = new Set(prev)
+        newSet.delete(operationId)
+        return newSet
+      })
+      setAbortControllers(prev => {
+        const newMap = new Map(prev)
+        newMap.delete(operationId)
+        return newMap
+      })
     }
   }
+
+  // Get metrics function for compatibility
+  const getMetrics = () => metrics
 
   // Form state for new targets
   const [showNewTargetForm, setShowNewTargetForm] = useState(false)
@@ -276,47 +440,230 @@ export default function ScalingPlanner() {
     plannedRevenue: 600000 // 6 lakh in rupees
   })
 
-  // Fetch POC data from POC management
+  // Fetch POC data from POC management with timeout handling
   useEffect(() => {
     const fetchPOCData = async () => {
+      const operationId = 'fetchPOCData'
+
+      // Prevent duplicate calls
+      if (loadingTimeouts.has(operationId)) {
+        console.log('⚠️ fetchPOCData already in progress, skipping...')
+        return
+      }
+
+      setLoadingTimeouts(prev => new Set(prev).add(operationId))
       setPocLoading(true)
+
+      // Create abort controller
+      const controller = new AbortController()
+      setAbortControllers(prev => {
+        const newMap = new Map(prev)
+        newMap.set(operationId, controller)
+        return newMap
+      })
+
+      // Set timeout
+      const timeoutId = setTimeout(() => {
+        console.log('⏰ fetchPOCData timeout, aborting...')
+        controller.abort()
+      }, 15000) // 15 second timeout
+
+      // Fallback POC data - set immediately to ensure dropdown always has data
+      const fallbackPOCs = [
+        { id: 6, name: 'Chaitanya', poc_type: 'city_head', activities: [], cities: ['Gurgaon', 'Faridabad', 'Noida'], team_name: 'Team Blue', is_active: true },
+        { id: 4, name: 'Saurabh', poc_type: 'activity_head', activities: [], cities: [], team_name: 'Team green', is_active: true }
+      ]
+
+      // Set fallback data FIRST to ensure dropdown always has options
+      console.log('🔧 Setting initial fallback POC data...')
+      setPocData(fallbackPOCs)
+
       try {
-        // Replace with actual POC management API call
-        const response = await fetch(`${API_URL}/api/poc`)
-        const data = await response.json()
+        console.log('🔍 API_URL value:', API_URL)
+        const apiUrl = `${API_URL}/api/poc/list?_t=${Date.now()}`
+        console.log('🔍 Full API URL:', apiUrl)
+        console.log('🔍 Starting POC data fetch...')
+
+        const response = await fetch(apiUrl, {
+          signal: controller.signal,
+          headers: { 'Content-Type': 'application/json' }
+        })
+        console.log('POC API response status:', response.status, response.statusText)
 
         if (response.ok) {
-          setPocData(data)
-          console.log('Fetched POC data:', data)
+          const data = await response.json()
+          console.log('Raw POC API response data:', data)
+
+          // Filter only active POCs
+          const activePOCs = data.filter((poc: POCData) => poc.is_active)
+          if (activePOCs.length > 0) {
+            setPocData(activePOCs)
+            console.log('✅ Successfully fetched POC data:', activePOCs)
+            console.log('✅ POC names:', activePOCs.map(p => p.name))
+          } else {
+            console.warn('No active POCs found, using fallback data')
+            setPocData(fallbackPOCs)
+          }
         } else {
-          console.error('Failed to fetch POC data:', data.error)
+          const errorData = await response.json()
+          console.error('Failed to fetch POC data:', errorData.error)
+          console.log('⚠️  Setting fallback POC data due to API error...')
+          setPocData(fallbackPOCs)
         }
       } catch (error) {
-        console.error('Error fetching POC data:', error)
+        if (error.name === 'AbortError') {
+          console.log('🛑 fetchPOCData was aborted')
+          return // Don't update state on abort
+        }
+        console.error('❌ Error fetching POC data:', error)
+        console.error('API URL used:', `${API_URL}/api/poc/list?_t=${Date.now()}`)
+        console.log('⚠️  Setting fallback POC data due to fetch error...')
+        setPocData(fallbackPOCs)
       } finally {
+        clearTimeout(timeoutId)
         setPocLoading(false)
+        setLoadingTimeouts(prev => {
+          const newSet = new Set(prev)
+          newSet.delete(operationId)
+          return newSet
+        })
+        setAbortControllers(prev => {
+          const newMap = new Map(prev)
+          newMap.delete(operationId)
+          return newMap
+        })
       }
     }
 
     fetchPOCData()
   }, [])
 
-  // Fetch cities from database on component mount
+  // Fetch cities from database on component mount with timeout
   useEffect(() => {
     const fetchCities = async () => {
+      const operationId = 'fetchCities'
+
+      // Prevent duplicate calls
+      if (loadingTimeouts.has(operationId)) {
+        console.log('⚠️ fetchCities already in progress, skipping...')
+        return
+      }
+
+      setLoadingTimeouts(prev => new Set(prev).add(operationId))
       setCitiesLoading(true)
+
+      const controller = new AbortController()
+      setAbortControllers(prev => {
+        const newMap = new Map(prev)
+        newMap.set(operationId, controller)
+        return newMap
+      })
+
+      const timeoutId = setTimeout(() => {
+        console.log('⏰ fetchCities timeout, aborting...')
+        controller.abort()
+      }, 15000)
+
       try {
         const cities = await getCities()
-        setDatabaseCities(cities)
-        console.log('Fetched cities:', cities)
+        if (!controller.signal.aborted) {
+          setDatabaseCities(cities)
+          console.log('Fetched cities:', cities)
+        }
       } catch (error) {
+        if (error.name === 'AbortError') {
+          console.log('🛑 fetchCities was aborted')
+          return
+        }
         console.error('Error fetching cities:', error)
       } finally {
+        clearTimeout(timeoutId)
         setCitiesLoading(false)
+        setLoadingTimeouts(prev => {
+          const newSet = new Set(prev)
+          newSet.delete(operationId)
+          return newSet
+        })
+        setAbortControllers(prev => {
+          const newMap = new Map(prev)
+          newMap.delete(operationId)
+          return newMap
+        })
       }
     }
 
     fetchCities()
+  }, [])
+
+  // Fetch all areas from database on component mount with timeout
+  useEffect(() => {
+    const fetchAllAreas = async () => {
+      const operationId = 'fetchAllAreas'
+
+      // Prevent duplicate calls
+      if (loadingTimeouts.has(operationId)) {
+        console.log('⚠️ fetchAllAreas already in progress, skipping...')
+        return
+      }
+
+      setLoadingTimeouts(prev => new Set(prev).add(operationId))
+      setAreasLoading(true)
+
+      const controller = new AbortController()
+      setAbortControllers(prev => {
+        const newMap = new Map(prev)
+        newMap.set(operationId, controller)
+        return newMap
+      })
+
+      const timeoutId = setTimeout(() => {
+        console.log('⏰ fetchAllAreas timeout, aborting...')
+        controller.abort()
+      }, 15000)
+
+      try {
+        const response = await fetch(`${API_URL}/api/scaling/areas?_t=${Date.now()}`, {
+          signal: controller.signal,
+          headers: { 'Content-Type': 'application/json' }
+        })
+
+        if (controller.signal.aborted) {
+          throw new Error('Request was aborted')
+        }
+
+        const data = await response.json()
+
+        if (data.success) {
+          if (!controller.signal.aborted) {
+            setDatabaseAreas(data.areas)
+            console.log('Fetched all areas:', data.areas)
+          }
+        } else {
+          console.error('Failed to fetch areas:', data.error)
+        }
+      } catch (error) {
+        if (error.name === 'AbortError') {
+          console.log('🛑 fetchAllAreas was aborted')
+          return
+        }
+        console.error('Error fetching areas:', error)
+      } finally {
+        clearTimeout(timeoutId)
+        setAreasLoading(false)
+        setLoadingTimeouts(prev => {
+          const newSet = new Set(prev)
+          newSet.delete(operationId)
+          return newSet
+        })
+        setAbortControllers(prev => {
+          const newMap = new Map(prev)
+          newMap.delete(operationId)
+          return newMap
+        })
+      }
+    }
+
+    fetchAllAreas()
   }, [])
 
   // Fetch areas when selected form city changes
@@ -499,18 +846,49 @@ export default function ScalingPlanner() {
     )
   }
 
-  // Fetch real data from API
+  // Fetch real data from API with timeout and duplicate prevention
   useEffect(() => {
     const fetchData = async () => {
+      const operationId = 'fetchMainData'
+
+      // Prevent duplicate calls
+      if (isLoadingData || loadingTimeouts.has(operationId)) {
+        console.log('⚠️ fetchData already in progress, skipping...')
+        return
+      }
+
+      setIsLoadingData(true)
+      setLoadingTimeouts(prev => new Set(prev).add(operationId))
       setLoading(true)
+
+      const controller = new AbortController()
+      setAbortControllers(prev => {
+        const newMap = new Map(prev)
+        newMap.set(operationId, controller)
+        return newMap
+      })
+
+      const timeoutId = setTimeout(() => {
+        console.log('⏰ fetchData timeout, aborting...')
+        controller.abort()
+      }, 30000) // 30 second timeout for main data fetch
+
       try {
         // Fetch real clubs data from database
-        const clubsResponse = await fetch(`${API_URL}/api/scaling/clubs?status=ACTIVE`)
+        const clubsResponse = await fetch(`${API_URL}/api/clubs`, {
+          signal: controller.signal,
+          headers: { 'Content-Type': 'application/json' }
+        })
+
+        if (controller.signal.aborted) {
+          throw new Error('Request was aborted')
+        }
+
         const clubsData = await clubsResponse.json()
 
         if (clubsData.success) {
           // Transform real club data to match our interface
-          const transformedClubs: ClubData[] = clubsData.clubs.map((club: any) => {
+          const transformedClubs: ClubData[] = clubsData.data.map((club: any) => {
             return addLaunchTrackingDefaults({
               id: club.id || club.uuid,
               name: club.name,
@@ -520,9 +898,9 @@ export default function ScalingPlanner() {
               revenueType: club.recentEvents > 5 ? 'scaling' : 'old_stable',
               scalingStage: club.recentEvents > 10 ? 'scaling_picked_stage3' : 'scaling_picked_started',
               currentMeetups: club.recentEvents || 0,
-              currentRevenue: club.current_revenue || 0,
+              currentRevenue: club.recentRevenue || 0, // Using recentRevenue from API response
               targetMeetups: Math.max((club.recentEvents || 0) + 5, 10),
-              targetRevenue: Math.max((club.current_revenue || 0) + 50000, 200000),
+              targetRevenue: Math.max((club.recentRevenue || 0) + 50000, 200000),
               poc: 'Unassigned', // TODO: Map from POC data when available
               areaTargetId: '1',
               health: club.recentEvents > 5 ? 'green' : club.recentEvents > 2 ? 'yellow' : 'red',
@@ -544,7 +922,12 @@ export default function ScalingPlanner() {
             })
           })
 
-          setClubs(transformedClubs)
+          if (!controller.signal.aborted) {
+            setClubs(transformedClubs)
+          } else {
+            console.log('🛑 Skipping setClubs due to abort')
+            return
+          }
 
           // Create activity targets based on real clubs data
           const activityGroups = transformedClubs.reduce((groups: any, club) => {
@@ -564,7 +947,19 @@ export default function ScalingPlanner() {
           const generatedTargets: ActivityAreaTarget[] = Object.values(activityGroups).map((group: any, index) => {
             const clubs = group.clubs
             const totalCurrentMeetups = clubs.reduce((sum: number, club: ClubData) => sum + club.currentMeetups, 0)
-            const targetMeetups = Math.max(totalCurrentMeetups * 1.5, 20)
+            const totalCurrentRevenue = clubs.reduce((sum: number, club: ClubData) => sum + club.currentRevenue, 0)
+
+            // Special handling for Badminton with user-specified targets
+            let targetMeetups, plannedRevenue, newClubsNeeded
+            if (group.activity === 'Badminton') {
+              targetMeetups = 40  // User-specified target
+              plannedRevenue = 170000  // User-specified revenue target
+              newClubsNeeded = 4  // User-specified new clubs needed
+            } else {
+              targetMeetups = Math.max(totalCurrentMeetups * 1.2, 20)
+              plannedRevenue = Math.round(targetMeetups * 4000) // More realistic ₹4K per meetup
+              newClubsNeeded = Math.max(Math.round((targetMeetups - totalCurrentMeetups) / 8), 0)
+            }
 
             return {
               id: `target-${index}`,
@@ -574,15 +969,15 @@ export default function ScalingPlanner() {
               targetMeetupsTotal: Math.round(targetMeetups),
               targetMeetupsExisting: totalCurrentMeetups,
               targetMeetupsNew: Math.round(targetMeetups - totalCurrentMeetups),
-              plannedRevenue: Math.round(targetMeetups * 25000), // Estimate ₹25K per meetup
-              currentRevenue: clubs.reduce((sum: number, club: ClubData) => sum + club.currentRevenue, 0),
+              plannedRevenue: plannedRevenue,
+              currentRevenue: totalCurrentRevenue,
               currentMeetups: totalCurrentMeetups,
               existingClubs: clubs.filter((club: ClubData) => !club.isNewClub).length,
-              newClubsNeeded: Math.max(Math.round((targetMeetups - totalCurrentMeetups) / 5), 0),
+              newClubsNeeded: newClubsNeeded,
               status: totalCurrentMeetups >= targetMeetups * 0.8 ? 'on_track' :
                       totalCurrentMeetups >= targetMeetups * 0.6 ? 'at_risk' : 'behind',
               lastUpdated: new Date().toISOString().split('T')[0],
-              poc: 'Unassigned',
+              poc: 'Chaitanya',
               weekOverWeekChange: {
                 meetups: 0,
                 revenue: 0,
@@ -598,25 +993,54 @@ export default function ScalingPlanner() {
             }
           })
 
-          setActivityTargets(generatedTargets)
+          if (!controller.signal.aborted) {
+            setActivityTargets(generatedTargets)
+          }
         } else {
           console.error('Failed to fetch clubs:', clubsData.error)
           // Fallback to empty data
-          setClubs([])
-          setActivityTargets([])
+          if (!controller.signal.aborted) {
+            setClubs([])
+            setActivityTargets([])
+          }
         }
       } catch (error) {
+        if (error.name === 'AbortError') {
+          console.log('🛑 fetchData was aborted')
+          return
+        }
         console.error('Error fetching scaling data:', error)
         // Fallback to empty data
         setClubs([])
         setActivityTargets([])
       } finally {
+        clearTimeout(timeoutId)
         setLoading(false)
+        setIsLoadingData(false)
         setLastUpdated(new Date())
+        setLoadingTimeouts(prev => {
+          const newSet = new Set(prev)
+          newSet.delete(operationId)
+          return newSet
+        })
+        setAbortControllers(prev => {
+          const newMap = new Map(prev)
+          newMap.delete(operationId)
+          return newMap
+        })
       }
     }
 
     fetchData()
+  }, [])
+
+  // Separate useEffect for metrics calculation - only run once on mount
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      calculateMetrics()
+    }, 1000) // Small delay to prevent immediate duplicate calls
+
+    return () => clearTimeout(timer)
   }, [])
 
   const handleCreateTarget = () => {
@@ -711,33 +1135,103 @@ export default function ScalingPlanner() {
   // State for real activities from database
   const [databaseActivities, setDatabaseActivities] = useState<any[]>([])
 
-  // Fetch activities from database
+  // State for API call management
+  const [isLoadingData, setIsLoadingData] = useState(false)
+  const [loadingTimeouts, setLoadingTimeouts] = useState<Set<string>>(new Set())
+  const [abortControllers, setAbortControllers] = useState<Map<string, AbortController>>(new Map())
+
+  // Fetch activities from database with timeout
   useEffect(() => {
     const fetchActivities = async () => {
+      const operationId = 'fetchActivities'
+
+      // Prevent duplicate calls
+      if (loadingTimeouts.has(operationId)) {
+        console.log('⚠️ fetchActivities already in progress, skipping...')
+        return
+      }
+
+      setLoadingTimeouts(prev => new Set(prev).add(operationId))
+
+      const controller = new AbortController()
+      setAbortControllers(prev => {
+        const newMap = new Map(prev)
+        newMap.set(operationId, controller)
+        return newMap
+      })
+
+      const timeoutId = setTimeout(() => {
+        console.log('⏰ fetchActivities timeout, aborting...')
+        controller.abort()
+      }, 15000)
+
       try {
         const activities = await getActivities()
-        setDatabaseActivities(activities)
+        if (!controller.signal.aborted) {
+          setDatabaseActivities(activities)
+        }
       } catch (error) {
+        if (error.name === 'AbortError') {
+          console.log('🛑 fetchActivities was aborted')
+          return
+        }
         console.error('Error fetching activities:', error)
+      } finally {
+        clearTimeout(timeoutId)
+        setLoadingTimeouts(prev => {
+          const newSet = new Set(prev)
+          newSet.delete(operationId)
+          return newSet
+        })
+        setAbortControllers(prev => {
+          const newMap = new Map(prev)
+          newMap.delete(operationId)
+          return newMap
+        })
       }
     }
 
     fetchActivities()
   }, [])
 
-  // Get filter options from both activity targets, clubs, POC data, and database
+  // Get filter options from production database and POC management
   const activities = [...new Set([
     ...activityTargets.map(t => t.activity),
     ...databaseActivities.map(a => a.name)
   ])]
-  const areas = [...new Set(activityTargets.map(t => t.area))]
-  const cities = [...new Set(activityTargets.map(t => t.city))]
-  const pocs = [...new Set([...activityTargets.map(t => t.poc), ...clubs.map(c => c.poc), ...pocData.map(p => p.name)])]
+  const areas = [...new Set(databaseAreas.map(a => a.name))]
+  const cities = [...new Set(databaseCities.map(c => c.name))]
+  const pocs = [...new Set(pocData.map(p => p.name))]
+
+  // Debug POC data
+  console.log('🔍 Current pocData state:', pocData)
+  console.log('🔍 Extracted pocs for dropdown:', pocs)
+  console.log('🔍 POC data length:', pocData.length)
+  console.log('🔍 Raw POC names from pocData:', pocData.map(p => ({ id: p.id, name: p.name })))
+  console.log('Extracted pocs array:', pocs)
+
+  // Cleanup abort controllers on unmount
+  useEffect(() => {
+    return () => {
+      // Abort all pending requests on unmount
+      abortControllers.forEach((controller) => {
+        controller.abort()
+      })
+      setAbortControllers(new Map())
+      setLoadingTimeouts(new Set())
+    }
+  }, [])
 
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
-        <div className="text-lg">Loading Scaling Planner...</div>
+        <div className="text-lg">Loading Misfits Operations...
+          {loadingTimeouts.size > 0 && (
+            <div className="text-sm text-gray-500 mt-2">
+              Active operations: {Array.from(loadingTimeouts).join(', ')}
+            </div>
+          )}
+        </div>
       </div>
     )
   }
@@ -754,57 +1248,7 @@ export default function ScalingPlanner() {
         </div>
 
         {/* Summary Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-          <div className="bg-white rounded-lg shadow p-6 cursor-pointer hover:shadow-lg transition-shadow" onClick={() => setExpandedMetric(expandedMetric === 'targets' ? null : 'targets')}>
-            <div className="flex items-center justify-between">
-              <div className="flex items-center">
-                <Target className="h-8 w-8 text-blue-600" />
-                <div className="ml-4">
-                  <p className="text-sm font-medium text-gray-600">Total Targets</p>
-                  <p className="text-2xl font-bold text-gray-900">
-                    {getMetrics().totalTargets}
-                  </p>
-                </div>
-              </div>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation()
-                  setEditingMetric(editingMetric === 'targets' ? null : 'targets')
-                }}
-                className="h-5 w-5 text-gray-400 hover:text-blue-600 transition-colors"
-              >
-                <Settings className="h-5 w-5" />
-              </button>
-            </div>
-            {editingMetric === 'targets' && (
-              <div className="mt-4 pt-4 border-t border-gray-200">
-                <div className="text-sm text-gray-600 mb-3">
-                  {selectedPOC !== 'All' ? `Add new target for ${selectedPOC}` : 'Add global target adjustment'}
-                </div>
-                <button
-                  onClick={() => setShowNewTargetForm(true)}
-                  className="w-full bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 text-sm"
-                >
-                  + Add New Target
-                </button>
-              </div>
-            )}
-            {expandedMetric === 'targets' && (
-              <div className="mt-4 pt-4 border-t border-gray-200">
-                <div className="space-y-2 text-sm">
-                  {(selectedPOC === 'All' ? activityTargets : activityTargets.filter(target => target.poc === selectedPOC)).map((target, idx) => (
-                    <div key={idx} className="flex justify-between">
-                      <span>{target.activity} • {target.area}</span>
-                      <span className="font-medium">{selectedPOC === 'All' ? `Target ${idx + 1}` : target.poc}</span>
-                    </div>
-                  ))}
-                  {selectedPOC !== 'All' && activityTargets.filter(target => target.poc === selectedPOC).length === 0 && (
-                    <div className="text-gray-500 text-center py-2">No targets for {selectedPOC}</div>
-                  )}
-                </div>
-              </div>
-            )}
-          </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
 
           <div className="bg-white rounded-lg shadow p-6 cursor-pointer hover:shadow-lg transition-shadow" onClick={() => setExpandedMetric(expandedMetric === 'revenue' ? null : 'revenue')}>
             <div className="flex items-center justify-between">
@@ -814,6 +1258,11 @@ export default function ScalingPlanner() {
                   <p className="text-sm font-medium text-gray-600">Target Revenue</p>
                   <p className="text-2xl font-bold text-gray-900">
                     ₹{(getMetrics().targetRevenue / 100000).toFixed(1)}L
+                  </p>
+                  <p className="text-xs text-gray-500">
+                    {getMetrics().targetRevenue > 0
+                      ? Math.round((getMetrics().currentRevenue / getMetrics().targetRevenue) * 100)
+                      : 0}% complete
                   </p>
                 </div>
               </div>
@@ -851,6 +1300,11 @@ export default function ScalingPlanner() {
                   <p className="text-2xl font-bold text-gray-900">
                     {getMetrics().targetMeetups}
                   </p>
+                  <p className="text-xs text-gray-500">
+                    {getMetrics().targetMeetups > 0
+                      ? Math.round((getMetrics().currentMeetups / getMetrics().targetMeetups) * 100)
+                      : 0}% complete
+                  </p>
                 </div>
               </div>
               <button
@@ -886,6 +1340,11 @@ export default function ScalingPlanner() {
                   <p className="text-sm font-medium text-gray-600">New Clubs Needed</p>
                   <p className="text-2xl font-bold text-gray-900">
                     {getMetrics().newClubsNeeded}
+                  </p>
+                  <p className="text-xs text-gray-500">
+                    {getMetrics().newClubsNeeded > 0
+                      ? Math.round((getMetrics().currentNewClubs / getMetrics().newClubsNeeded) * 100)
+                      : 0}% complete
                   </p>
                 </div>
               </div>

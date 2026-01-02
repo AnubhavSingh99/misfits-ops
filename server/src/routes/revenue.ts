@@ -7,12 +7,58 @@ const router = express.Router();
 // GET /api/revenue - Basic revenue summary
 router.get('/', async (req, res) => {
   try {
+    // Import the real revenue calculation logic from database.ts
+    const { queryProductionWithTunnel } = await import('../services/sshTunnel');
+
+    const revenueQuery = `
+      SELECT
+        DATE_TRUNC('month', p.created_at) as month,
+        SUM(p.amount)/100.0 as total_revenue_rupees
+      FROM payment p
+      JOIN transaction t ON t.payment_id = p.pk
+      JOIN booking b ON t.entity_id = b.id AND t.entity_type = 'BOOKING'
+      JOIN event e ON b.event_id = e.pk
+      JOIN club c ON e.club_id = c.pk
+      WHERE p.state = 'COMPLETED'
+        AND p.created_at >= DATE_TRUNC('month', CURRENT_DATE - INTERVAL '3 months')
+        AND c.status = 'ACTIVE'
+      GROUP BY DATE_TRUNC('month', p.created_at)
+      ORDER BY month DESC
+      LIMIT 4;
+    `;
+
+    const result = await queryProductionWithTunnel(revenueQuery);
+
+    // Get current month revenue (January 2026)
+    const currentMonthData = result.rows.find(row =>
+      new Date(row.month).getMonth() === new Date().getMonth() &&
+      new Date(row.month).getFullYear() === new Date().getFullYear()
+    );
+    const currentMonthRevenue = parseFloat(currentMonthData?.total_revenue_rupees || '0');
+
+    // Calculate last 3 completed months average (Oct, Nov, Dec 2025)
+    const last3Months = result.rows.filter(row => {
+      const rowDate = new Date(row.month);
+      const currentDate = new Date();
+      return rowDate.getTime() < new Date(currentDate.getFullYear(), currentDate.getMonth(), 1).getTime();
+    }).slice(0, 3);
+
+    const averageMonthly = last3Months.reduce((sum, row) =>
+      sum + parseFloat(row.total_revenue_rupees), 0
+    ) / Math.max(last3Months.length, 1);
+
+    // Use average of last 3 months as target (realistic expectation)
+    const targetRevenue = averageMonthly;
+    const progressPercentage = (currentMonthRevenue / targetRevenue) * 100;
+
     res.json({
       success: true,
-      totalRevenue: 0,
-      monthlyRevenue: 0,
-      growth: 0,
-      message: "Revenue endpoint working - connect to production data for real metrics"
+      data: {
+        current_revenue: Math.round(currentMonthRevenue * 100), // Convert to paisa
+        target_revenue: Math.round(targetRevenue * 100),
+        progress_percentage: Math.min(progressPercentage, 100),
+        raw_data: result.rows
+      }
     });
   } catch (error) {
     logger.error('Failed to fetch revenue data:', error);
@@ -443,22 +489,64 @@ router.get('/revenue-growth', async (req, res) => {
       GROUP BY c.pk, c.name, c.activity
     `);
 
-    // Get top activities by revenue
+    // Get top activities by revenue with growth calculation
     const topActivities = await query(`
+      WITH current_month AS (
+        SELECT
+          c.activity,
+          SUM(p.amount)/100.0 as current_revenue
+        FROM payment p
+        JOIN booking b ON p.booking_id = b.pk
+        JOIN event e ON b.event_id = e.pk
+        JOIN club c ON e.club_id = c.pk
+        WHERE p.status = 'COMPLETED'
+        AND p.created_at >= DATE_TRUNC('month', CURRENT_DATE)
+        AND c.status = 'ACTIVE'
+        GROUP BY c.activity
+      ),
+      previous_month AS (
+        SELECT
+          c.activity,
+          SUM(p.amount)/100.0 as previous_revenue
+        FROM payment p
+        JOIN booking b ON p.booking_id = b.pk
+        JOIN event e ON b.event_id = e.pk
+        JOIN club c ON e.club_id = c.pk
+        WHERE p.status = 'COMPLETED'
+        AND p.created_at >= DATE_TRUNC('month', CURRENT_DATE - INTERVAL '1 month')
+        AND p.created_at < DATE_TRUNC('month', CURRENT_DATE)
+        AND c.status = 'ACTIVE'
+        GROUP BY c.activity
+      ),
+      total_activity_revenue AS (
+        SELECT
+          c.activity,
+          SUM(p.amount)/100.0 as revenue,
+          COUNT(DISTINCT e.id) as events,
+          (SUM(p.amount)/100.0 / NULLIF(COUNT(DISTINCT e.id), 0)) as revenue_per_event
+        FROM payment p
+        JOIN booking b ON p.booking_id = b.pk
+        JOIN event e ON b.event_id = e.pk
+        JOIN club c ON e.club_id = c.pk
+        WHERE p.status = 'COMPLETED'
+        AND p.created_at >= CURRENT_DATE - INTERVAL '3 months'
+        AND c.status = 'ACTIVE'
+        GROUP BY c.activity
+      )
       SELECT
-        c.activity,
-        SUM(p.amount)/100.0 as revenue,
-        COUNT(DISTINCT e.id) as events,
-        (SUM(p.amount)/100.0 / NULLIF(COUNT(DISTINCT e.id), 0)) as revenue_per_event
-      FROM payment p
-      JOIN booking b ON p.booking_id = b.pk
-      JOIN event e ON b.event_id = e.pk
-      JOIN club c ON e.club_id = c.pk
-      WHERE p.status = 'COMPLETED'
-      AND p.created_at >= CURRENT_DATE - INTERVAL '3 months'
-      AND c.status = 'ACTIVE'
-      GROUP BY c.activity
-      ORDER BY revenue DESC
+        tar.activity,
+        tar.revenue,
+        tar.events,
+        tar.revenue_per_event,
+        CASE
+          WHEN pm.previous_revenue > 0 THEN
+            ROUND(((cm.current_revenue - pm.previous_revenue) / pm.previous_revenue * 100)::numeric, 1)
+          ELSE 0
+        END as growth_percent
+      FROM total_activity_revenue tar
+      LEFT JOIN current_month cm ON tar.activity = cm.activity
+      LEFT JOIN previous_month pm ON tar.activity = pm.activity
+      ORDER BY tar.revenue DESC
       LIMIT 5
     `);
 
@@ -480,10 +568,10 @@ router.get('/revenue-growth', async (req, res) => {
         month: row.month,
         total_revenue_rupees: parseFloat(row.total_revenue_rupees)
       })),
-      topActivities: topActivities.rows.map((row, index) => ({
+      topActivities: topActivities.rows.map(row => ({
         activity: row.activity,
         revenue: parseFloat(row.revenue),
-        growth: index === 0 ? 15.2 : index === 1 ? 12.8 : index === 2 ? 8.5 : 5.2 // Mock growth data
+        growth: parseFloat(row.growth_percent || 0)
       })),
       clubAnalysis: {
         totalActiveClubs: parseInt(clubAnalysis.rows[0]?.total_active_clubs || 0),

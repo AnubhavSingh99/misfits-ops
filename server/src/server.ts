@@ -11,9 +11,8 @@ import { createServer } from 'http';
 import authRoutes from './routes/auth';
 import clubRoutes from './routes/clubs';
 import taskRoutes from './routes/tasks';
-import userRoutes from './routes/users';
-import workspaceRoutes from './routes/workspace';
-import notificationRoutes from './routes/notifications';
+// Mock user routes removed
+// Mock workspace and notification routes removed
 import pocRoutes from './routes/poc';
 import testRoutes from './routes/test';
 import revenueRoutes from './routes/revenue';
@@ -22,6 +21,7 @@ import healthRoutes from './routes/health';
 import scalingRoutes from './routes/scaling';
 import targetsRoutes from './routes/targets';
 import meetupsRoutes from './routes/meetups';
+import trendsRoutes from './routes/trends';
 
 // Import services
 import { initializeDatabase } from './services/database';
@@ -37,20 +37,28 @@ const PORT = process.env.PORT || (process.env.NODE_ENV === 'production' ? 80 : 5
 // Security middleware
 app.use(helmet());
 app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+  origin: [
+    process.env.FRONTEND_URL || 'http://localhost:3000',
+    'http://localhost:3000',
+    'http://127.0.0.1:3000'
+  ],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Cache-Control', 'Pragma', 'Expires'],
   optionsSuccessStatus: 200,
   preflightContinue: false
 }));
 
 // Handle preflight requests explicitly
 app.options('*', cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+  origin: [
+    process.env.FRONTEND_URL || 'http://localhost:3000',
+    'http://localhost:3000',
+    'http://127.0.0.1:3000'
+  ],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Cache-Control', 'Pragma', 'Expires'],
 }));
 
 // General middleware
@@ -58,6 +66,17 @@ app.use(compression());
 app.use(morgan('combined'));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
+
+// Add no-cache headers to all API responses
+app.use('/api', (req, res, next) => {
+  res.set({
+    'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+    'Pragma': 'no-cache',
+    'Expires': '0',
+    'Surrogate-Control': 'no-store'
+  });
+  next();
+});
 
 // Health check
 app.get('/health', (req, res) => {
@@ -68,9 +87,8 @@ app.get('/health', (req, res) => {
 app.use('/api/auth', authRoutes);
 app.use('/api/clubs', clubRoutes);
 app.use('/api/tasks', taskRoutes);
-app.use('/api/users', userRoutes);
-app.use('/api/workspace', workspaceRoutes);
-app.use('/api/notifications', notificationRoutes);
+// Mock users endpoint removed
+// Workspace and notifications endpoints removed - were mock only
 app.use('/api/poc', pocRoutes);
 app.use('/api/test', testRoutes);
 app.use('/api/revenue', revenueRoutes);
@@ -79,6 +97,7 @@ app.use('/api/health', healthRoutes);
 app.use('/api/scaling', scalingRoutes);
 app.use('/api/targets', targetsRoutes);
 app.use('/api/meetups', meetupsRoutes);
+app.use('/api/trends', trendsRoutes);
 app.use('/api', revenueRoutes); // Also handle direct /api/revenue-growth
 
 // Teams endpoints (simple fallback)

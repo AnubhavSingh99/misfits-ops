@@ -1,0 +1,58 @@
+[
+  {
+    "id": 1,
+    "name": "The Badminton Squad",
+    "activity": "Badminton",
+    "city": "Gurgaon",
+    "area": "Sector 14",
+    "currentMeetups": 8,
+    "currentRevenue": 25000,
+    "memberCount": 45,
+    "isNewClub": false,
+    "status": "Active",
+    "poc": "Chaitanya",
+    "lastUpdated": "2026-01-02"
+  },
+  {
+    "id": 2,
+    "name": "Badminton Champions",
+    "activity": "Badminton",
+    "city": "Gurgaon",
+    "area": "MG Road",
+    "currentMeetups": 6,
+    "currentRevenue": 18000,
+    "memberCount": 32,
+    "isNewClub": false,
+    "status": "Active",
+    "poc": "Chaitanya",
+    "lastUpdated": "2026-01-02"
+  },
+  {
+    "id": 3,
+    "name": "Court Masters",
+    "activity": "Badminton",
+    "city": "Gurgaon",
+    "area": "DLF Phase 1",
+    "currentMeetups": 10,
+    "currentRevenue": 35000,
+    "memberCount": 56,
+    "isNewClub": false,
+    "status": "Active",
+    "poc": "Chaitanya",
+    "lastUpdated": "2026-01-02"
+  },
+  {
+    "id": 4,
+    "name": "Shuttle Stars",
+    "activity": "Badminton",
+    "city": "Gurgaon",
+    "area": "Sector 29",
+    "currentMeetups": 12,
+    "currentRevenue": 40000,
+    "memberCount": 67,
+    "isNewClub": false,
+    "status": "Active",
+    "poc": "Chaitanya",
+    "lastUpdated": "2026-01-02"
+  }
+]

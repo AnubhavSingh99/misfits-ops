@@ -50,7 +50,7 @@ interface CityHead {
   id: string
   pocId: string
   pocName: string
-  city: string
+  cities: string[]
   clubs: number
   revenue: number
   health: number
@@ -59,7 +59,7 @@ interface CityHead {
   dualRoleDescription?: string
 }
 
-const TEAMS = ['Phoenix', 'Rocket', 'Thunder']
+// TEAMS moved to state - loaded from API
 
 function getActivityBadge(activity: string, activities: Activity[], onClick?: () => void) {
   const activityData = activities.find(a => a.name === activity)
@@ -123,7 +123,7 @@ export function POCManagement() {
   const [newActivityHead, setNewActivityHead] = useState({
     name: '',
     activities: [] as string[],
-    team: 'Phoenix'
+    team: ''
   })
 
   const [activityHeads, setActivityHeads] = useState<ActivityHead[]>([])
@@ -148,7 +148,7 @@ export function POCManagement() {
   const [newCityHead, setNewCityHead] = useState({
     pocId: '',
     pocName: '',
-    city: '',
+    cities: [] as string[],
     isDualRole: false,
     dualRoleDescription: ''
   })
@@ -159,6 +159,10 @@ export function POCManagement() {
     email: '',
     phone: ''
   })
+
+  // New state for teams from POC API
+  const [availableTeams, setAvailableTeams] = useState<string[]>([])
+  const [availablePOCs, setAvailablePOCs] = useState<{id: string, name: string, team: string}[]>([]) // for activity heads dropdown
 
   // POC Activity Mapping state and functions
   const [showPOCActivityMapping, setShowPOCActivityMapping] = useState(false)
@@ -208,15 +212,16 @@ export function POCManagement() {
         setCities(citiesData)
         console.log('Cities loaded from database:', citiesData)
 
-        // Set default city for new city head form
-        if (citiesData.length > 0) {
-          setNewCityHead(prev => ({ ...prev, city: citiesData[0].name }))
-        }
+        // Clear selected cities for new city head form
+        setNewCityHead(prev => ({ ...prev, cities: [] }))
 
         setDataSource('database')
 
         // Load POCs from the database
         await loadPOCs()
+
+        // Load teams and POCs for dropdowns
+        await loadTeamsAndPOCs()
       } catch (error) {
         console.error('Error fetching POC management data:', error)
         console.error('API Base URL being used:', import.meta.env.VITE_API_URL || 'http://localhost:5001/api')
@@ -275,7 +280,7 @@ export function POCManagement() {
             id: poc.id.toString(),
             pocId: poc.id.toString(),
             pocName: poc.name,
-            city: poc.cities?.[0] || 'Unknown',
+            cities: poc.cities || ['Unknown'],
             clubs: Math.floor(Math.random() * 30) + 30,
             revenue: Math.floor(Math.random() * 1000000) + 500000,
             health: Math.floor(Math.random() * 30) + 70,
@@ -290,21 +295,52 @@ export function POCManagement() {
     }
   }
 
+  // Load teams and POCs for Activity Heads dropdowns
+  const loadTeamsAndPOCs = async () => {
+    try {
+      // Load teams
+      const teamsResponse = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5001'}/api/poc/teams`)
+      const teamsData = await teamsResponse.json()
+
+      if (teamsData.success && teamsData.teams) {
+        setAvailableTeams(teamsData.teams)
+        // Initialize form with first available team if form is empty
+        if (!newActivityHead.team && teamsData.teams.length > 0) {
+          setNewActivityHead(prev => ({ ...prev, team: teamsData.teams[0] }))
+        }
+      }
+
+      // Load available POCs for Activity Heads dropdown
+      const pocsResponse = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5001'}/api/poc/activity-heads`)
+      const pocsData = await pocsResponse.json()
+
+      if (pocsData.success && pocsData.activity_heads) {
+        const pocOptions = pocsData.activity_heads.map((poc: any) => ({
+          id: poc.id.toString(),
+          name: poc.name,
+          team: poc.team_name || 'Operations Team'
+        }))
+        setAvailablePOCs(pocOptions)
+      }
+    } catch (error) {
+      console.error('Failed to load teams and POCs:', error)
+      // Keep fallback values
+    }
+  }
+
   const addActivityHead = async () => {
     if (newActivityHead.name && newActivityHead.activities.length > 0) {
       try {
-        // Save to database using the POC API
-        const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5001'}/api/poc`, {
+        // Save to database using the specific Activity Head API endpoint
+        const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5001'}/api/poc/activity-head`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
             name: newActivityHead.name,
-            poc_type: 'activity_head',
-            activities: newActivityHead.activities,
-            team_name: newActivityHead.team,
-            cities: []
+            team: newActivityHead.team,
+            activities: newActivityHead.activities
           })
         })
 
@@ -328,7 +364,10 @@ export function POCManagement() {
 
         // Update local state
         setActivityHeads([...activityHeads, newHead])
-        setNewActivityHead({ name: '', activities: [], team: 'Phoenix' })
+        setNewActivityHead({ name: '', activities: [], team: availableTeams[0] || '' })
+
+        // Refresh teams and POCs data after adding
+        await loadTeamsAndPOCs()
 
         // Also add to POC list for consistency
         const newPOC: POC = {
@@ -443,28 +482,51 @@ export function POCManagement() {
     }
   }
 
-  const addCityHead = () => {
-    if (newCityHead.pocId && newCityHead.pocName && newCityHead.city) {
-      // Calculate total clubs and revenue for the city (mock data)
-      const totalClubs = Math.floor(Math.random() * 30) + 30 // 30-60 clubs
-      const totalRevenue = totalClubs * 10000 // ₹10k per club average
+  const addCityHead = async () => {
+    if (newCityHead.pocId && newCityHead.pocName && newCityHead.cities.length > 0) {
+      try {
+        // Update the POC in the database to include the new cities
+        const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5001'}/api/poc/${newCityHead.pocId}`, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            cities: newCityHead.cities,
+            poc_type: 'city_head'
+          })
+        })
 
-      const newHead: CityHead = {
-        id: Date.now().toString(),
-        pocId: newCityHead.pocId,
-        pocName: newCityHead.pocName,
-        city: newCityHead.city,
-        clubs: totalClubs,
-        revenue: totalRevenue,
-        health: Math.floor(Math.random() * 30) + 70,
-        healthStatus: 'green',
-        isDualRole: newCityHead.isDualRole,
-        dualRoleDescription: newCityHead.dualRoleDescription
+        if (!response.ok) {
+          throw new Error('Failed to update POC with cities')
+        }
+
+        // Calculate total clubs and revenue for all cities (mock data)
+        const totalClubs = Math.floor(Math.random() * 30) + 30 // 30-60 clubs per city
+        const totalRevenue = totalClubs * 10000 * newCityHead.cities.length // ₹10k per club average
+
+        const newHead: CityHead = {
+          id: Date.now().toString(),
+          pocId: newCityHead.pocId,
+          pocName: newCityHead.pocName,
+          cities: newCityHead.cities,
+          clubs: totalClubs * newCityHead.cities.length,
+          revenue: totalRevenue,
+          health: Math.floor(Math.random() * 30) + 70,
+          healthStatus: 'green',
+          isDualRole: newCityHead.isDualRole,
+          dualRoleDescription: newCityHead.dualRoleDescription
+        }
+
+        setCityHeads([...cityHeads, newHead])
+        setNewCityHead({ pocId: '', pocName: '', cities: [], isDualRole: false, dualRoleDescription: '' })
+        setShowAddCityHead(false)
+
+        console.log(`City head created for cities: ${newCityHead.cities.join(', ')}`)
+      } catch (error) {
+        console.error('Failed to create city head:', error)
+        alert('Failed to create city head. Please try again.')
       }
-
-      setCityHeads([...cityHeads, newHead])
-      setNewCityHead({ pocId: '', pocName: '', city: cities[0]?.name || '', isDualRole: false, dualRoleDescription: '' })
-      setShowAddCityHead(false)
     }
   }
 
@@ -474,35 +536,72 @@ export function POCManagement() {
     }
 
     try {
-      // Delete from database first
-      const response = await fetch(`/api/database/activity-heads/${id}`, {
+      // Delete from database using the POC API (Activity Heads are POCs)
+      const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5001'}/api/poc/${id}`, {
         method: 'DELETE',
       })
 
+      const result = await response.json()
+
       if (!response.ok) {
-        throw new Error('Failed to delete activity head from database')
+        throw new Error(result.error || 'Failed to delete activity head from database')
       }
 
-      const result = await response.json()
       if (!result.success) {
         throw new Error(result.error || 'Failed to delete activity head')
       }
 
       // Update local state only after successful database deletion
       setActivityHeads(activityHeads.filter(head => head.id !== id))
+
+      // Also remove from POC list
+      setPocs(pocs.filter(poc => poc.id !== id))
+
+      // Refresh teams and POCs data
+      await loadTeamsAndPOCs()
+
       console.log('Activity head deleted successfully:', result.message)
     } catch (error) {
       console.error('Failed to delete activity head:', error)
-      // Still update local state for offline functionality
-      setActivityHeads(activityHeads.filter(head => head.id !== id))
+      alert('Failed to delete activity head. Please try again.')
     }
   }
 
-  const deleteCityHead = (id: string) => {
+  const deleteCityHead = async (id: string) => {
     if (!confirm('Are you sure you want to delete this City Head? This action cannot be undone.')) {
       return
     }
-    setCityHeads(cityHeads.filter(head => head.id !== id))
+
+    try {
+      // Delete from database using the POC API (City Heads are POCs)
+      const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5001'}/api/poc/${id}`, {
+        method: 'DELETE',
+      })
+
+      const result = await response.json()
+
+      if (!response.ok) {
+        throw new Error(result.error || 'Failed to delete city head from database')
+      }
+
+      if (!result.success) {
+        throw new Error(result.error || 'Failed to delete city head')
+      }
+
+      // Update local state only after successful database deletion
+      setCityHeads(cityHeads.filter(head => head.id !== id))
+
+      // Also remove from POC list
+      setPocs(pocs.filter(poc => poc.id !== id))
+
+      // Refresh teams and POCs data
+      await loadTeamsAndPOCs()
+
+      console.log('City head deleted successfully:', result.message)
+    } catch (error) {
+      console.error('Failed to delete city head:', error)
+      alert('Failed to delete city head. Please try again.')
+    }
   }
 
   // Activity management functions
@@ -577,11 +676,42 @@ export function POCManagement() {
     }
   }
 
-  const deletePOC = (id: string) => {
+  const deletePOC = async (id: string) => {
     if (!confirm('Are you sure you want to delete this POC? This action cannot be undone.')) {
       return
     }
-    setPocs(pocs.filter(poc => poc.id !== id))
+
+    try {
+      // Delete from database first
+      const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5001'}/api/poc/${id}`, {
+        method: 'DELETE',
+      })
+
+      const result = await response.json()
+
+      if (!response.ok) {
+        throw new Error(result.error || 'Failed to delete POC from database')
+      }
+
+      if (!result.success) {
+        throw new Error(result.error || 'Failed to delete POC')
+      }
+
+      // Update local state only after successful database deletion
+      setPocs(pocs.filter(poc => poc.id !== id))
+
+      // Also remove from Activity Heads and City Heads if it exists there
+      setActivityHeads(activityHeads.filter(head => head.id !== id))
+      setCityHeads(cityHeads.filter(head => head.pocId !== id))
+
+      // Refresh teams and POCs data
+      await loadTeamsAndPOCs()
+
+      console.log('POC deleted successfully:', result.message)
+    } catch (error) {
+      console.error('Failed to delete POC:', error)
+      alert('Failed to delete POC. Please try again.')
+    }
   }
 
   const addPOCTeamMember = (pocId: string) => {
@@ -707,7 +837,7 @@ export function POCManagement() {
     }
 
     setActivityHeads([...activityHeads, newHead])
-    setNewActivityHead({ name: '', activities: [], team: 'Phoenix' })
+    setNewActivityHead({ name: '', activities: [], team: availableTeams[0] || '' })
     setShowAddActivityHeadForm(false)
   }
 
@@ -1410,13 +1540,28 @@ export function POCManagement() {
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>
-                  <input
-                    type="text"
+                  <select
                     value={newActivityHead.name}
-                    onChange={(e) => setNewActivityHead({...newActivityHead, name: e.target.value})}
+                    onChange={(e) => {
+                      const selectedPOC = pocs.find(poc => poc.name === e.target.value)
+                      setNewActivityHead({
+                        ...newActivityHead,
+                        name: e.target.value,
+                        team: selectedPOC?.teamName || availableTeams[0] || ''
+                      })
+                    }}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500"
-                    placeholder="Enter name"
-                  />
+                  >
+                    <option value="">Select POC from list...</option>
+                    {pocs.map(poc => (
+                      <option key={poc.id} value={poc.name}>
+                        {poc.name} ({poc.teamName})
+                      </option>
+                    ))}
+                  </select>
+                  {pocs.length === 0 && (
+                    <p className="text-sm text-gray-500 mt-1">No POCs available. Add POCs in POC Management first.</p>
+                  )}
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Team</label>
@@ -1425,7 +1570,7 @@ export function POCManagement() {
                     onChange={(e) => setNewActivityHead({...newActivityHead, team: e.target.value})}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500"
                   >
-                    {TEAMS.map(team => (
+                    {availableTeams.map(team => (
                       <option key={team} value={team}>{team}</option>
                     ))}
                   </select>
@@ -1823,22 +1968,43 @@ export function POCManagement() {
                   )}
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">City</label>
-                  <select
-                    value={newCityHead.city}
-                    onChange={(e) => setNewCityHead({...newCityHead, city: e.target.value})}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                  >
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Cities</label>
+                  <div className="border border-gray-300 rounded-lg p-2 max-h-32 overflow-y-auto">
                     {citiesLoading ? (
-                      <option value="">Loading cities...</option>
+                      <div className="text-gray-500">Loading cities...</div>
                     ) : (
                       cities.map(city => (
-                        <option key={city.id} value={city.name}>
-                          {city.name} ({city.clubCount} clubs)
-                        </option>
+                        <label key={city.id} className="flex items-center py-1 hover:bg-gray-50">
+                          <input
+                            type="checkbox"
+                            checked={newCityHead.cities.includes(city.name)}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setNewCityHead({
+                                  ...newCityHead,
+                                  cities: [...newCityHead.cities, city.name]
+                                })
+                              } else {
+                                setNewCityHead({
+                                  ...newCityHead,
+                                  cities: newCityHead.cities.filter(c => c !== city.name)
+                                })
+                              }
+                            }}
+                            className="mr-2 h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                          />
+                          <span className="text-sm text-gray-700">
+                            {city.name} ({city.clubCount} clubs)
+                          </span>
+                        </label>
                       ))
                     )}
-                  </select>
+                  </div>
+                  {newCityHead.cities.length > 0 && (
+                    <div className="mt-2 text-sm text-gray-600">
+                      Selected: {newCityHead.cities.join(', ')}
+                    </div>
+                  )}
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Dual Role</label>
@@ -1907,7 +2073,16 @@ export function POCManagement() {
                       )}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {head.city}
+                      <div className="flex flex-wrap gap-1">
+                        {head.cities.map((city, index) => (
+                          <span
+                            key={index}
+                            className="inline-block px-2 py-1 text-xs bg-blue-100 text-blue-800 rounded-md"
+                          >
+                            {city}
+                          </span>
+                        ))}
+                      </div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                       Yes

@@ -30,11 +30,18 @@ async function apiRequest<T>(
   endpoint: string,
   options: RequestInit = {}
 ): Promise<T> {
-  const url = `${API_BASE_URL}${endpoint}`;
+  // Add cache-busting timestamp for GET requests
+  const separator = endpoint.includes('?') ? '&' : '?';
+  const cacheBuster = options.method === 'GET' || !options.method ?
+    `${separator}_t=${Date.now()}` : '';
+  const url = `${API_BASE_URL}${endpoint}${cacheBuster}`;
 
   const config: RequestInit = {
     headers: {
       'Content-Type': 'application/json',
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'Pragma': 'no-cache',
+      'Expires': '0',
       ...options.headers,
     },
     ...options,

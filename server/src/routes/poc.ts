@@ -4,6 +4,9 @@ import { logger } from '../utils/logger';
 
 const router = express.Router();
 
+// Use queryLocal as the main query function for POC operations
+const query = queryLocal;
+
 
 // GET /api/poc/list - Get all POCs with assignment data
 router.get('/list', async (req, res) => {
@@ -357,6 +360,131 @@ router.put('/:id', async (req, res) => {
   } catch (error) {
     logger.error('Failed to update POC:', error);
     res.status(500).json({ error: 'Failed to update POC' });
+  }
+});
+
+// DELETE /api/poc/:id - Delete POC
+router.delete('/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // First check if POC exists
+    const checkResult = await query(`
+      SELECT id, name FROM poc_structure WHERE id = $1
+    `, [id]);
+
+    if (checkResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'POC not found'
+      });
+    }
+
+    // Delete the POC
+    const result = await query(`
+      DELETE FROM poc_structure WHERE id = $1 RETURNING *
+    `, [id]);
+
+    logger.info(`POC deleted: ${checkResult.rows[0].name} (ID: ${id})`);
+
+    res.json({
+      success: true,
+      message: `POC "${checkResult.rows[0].name}" deleted successfully`,
+      deletedPOC: result.rows[0]
+    });
+  } catch (error) {
+    logger.error('Failed to delete POC:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to delete POC'
+    });
+  }
+});
+
+// GET /api/poc/activity-heads - Get all activity heads for Activity Heads section
+router.get('/activity-heads', async (req, res) => {
+  try {
+    const activityHeads = await query(`
+      SELECT
+        id,
+        name,
+        team_name,
+        activities,
+        cities,
+        email,
+        phone,
+        is_active,
+        created_at
+      FROM poc_structure
+      WHERE poc_type = 'activity_head' AND is_active = true
+      ORDER BY name
+    `);
+
+    res.json({
+      success: true,
+      activity_heads: activityHeads.rows
+    });
+  } catch (error) {
+    logger.error('Failed to fetch activity heads:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch activity heads'
+    });
+  }
+});
+
+// GET /api/poc/teams - Get all unique team names for dropdown
+router.get('/teams', async (req, res) => {
+  try {
+    const teams = await query(`
+      SELECT DISTINCT team_name
+      FROM poc_structure
+      WHERE team_name IS NOT NULL AND team_name != '' AND is_active = true
+      ORDER BY team_name
+    `);
+
+    res.json({
+      success: true,
+      teams: teams.rows.map(row => row.team_name)
+    });
+  } catch (error) {
+    logger.error('Failed to fetch teams:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch teams'
+    });
+  }
+});
+
+// POST /api/poc/activity-head - Create activity head (maps to POC creation)
+router.post('/activity-head', async (req, res) => {
+  try {
+    const { name, team, activities } = req.body;
+
+    if (!name || !team) {
+      return res.status(400).json({
+        success: false,
+        error: 'Name and team are required'
+      });
+    }
+
+    // Create as activity head POC
+    const result = await query(`
+      INSERT INTO poc_structure (name, poc_type, activities, team_name)
+      VALUES ($1, 'activity_head', $2, $3)
+      RETURNING *
+    `, [name, activities || [], team]);
+
+    res.status(201).json({
+      success: true,
+      activity_head: result.rows[0]
+    });
+  } catch (error) {
+    logger.error('Failed to create activity head:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to create activity head'
+    });
   }
 });
 

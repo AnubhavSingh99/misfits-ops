@@ -50,9 +50,11 @@ async function getCurrentMetrics() {
         ELSE NULL
       END) as current_meetups_week,
 
-      -- Current meetups: Events in last 30 days
+      -- Current meetups: Events in MTD (Month-To-Date) - only completed events
       COUNT(DISTINCT CASE
-        WHEN e.created_at >= CURRENT_DATE - INTERVAL '30 days'
+        WHEN e.created_at >= DATE_TRUNC('month', CURRENT_DATE)
+        AND e.state = 'CREATED'
+        AND e.end_time <= CURRENT_TIMESTAMP
         THEN e.pk
         ELSE NULL
       END) as current_meetups_month,
@@ -67,12 +69,21 @@ async function getCurrentMetrics() {
         ELSE NULL
       END) as active_clubs_count,
 
-      -- Revenue calculation (simplified for now - will add payment data later)
-      0 as current_revenue_rupees
+      -- Revenue calculation using correct payment linkage (MTD - Month To Date)
+      COALESCE(SUM(
+        CASE
+          WHEN p.state = 'COMPLETED' AND p.created_at >= DATE_TRUNC('month', CURRENT_DATE)
+          THEN p.amount / 100.0  -- Convert paisa to rupees
+          ELSE 0
+        END
+      ), 0) as current_revenue_rupees
 
     FROM activity a
     LEFT JOIN club c ON a.id = c.activity_id AND c.is_private = false
     LEFT JOIN event e ON c.pk = e.club_id
+    LEFT JOIN booking b ON b.event_id = e.pk
+    LEFT JOIN transaction t ON t.entity_id = b.id AND t.entity_type = 'BOOKING'
+    LEFT JOIN payment p ON p.pk = t.payment_id
     WHERE a.name IS NOT NULL
       AND a.name != 'Test'
       AND a.name != ''
@@ -247,9 +258,11 @@ router.get('/activities/:activityName/clubs', async (req, res) => {
         c.status,
         c.created_at,
 
-        -- Current meetups: Events in last 30 days
+        -- Current meetups: Events in MTD (Month-To-Date) - only completed events
         COUNT(DISTINCT CASE
-          WHEN e.created_at >= CURRENT_DATE - INTERVAL '30 days'
+          WHEN e.created_at >= DATE_TRUNC('month', CURRENT_DATE)
+          AND e.state = 'CREATED'
+          AND e.end_time <= CURRENT_TIMESTAMP
           THEN e.pk
           ELSE NULL
         END) as current_meetups,
@@ -257,8 +270,17 @@ router.get('/activities/:activityName/clubs', async (req, res) => {
         -- Total events
         COUNT(DISTINCT e.pk) as total_events,
 
-        -- Revenue (simplified for now)
-        0 as current_revenue_rupees,
+        -- Revenue calculation using correct payment linkage (MTD - Month To Date)
+        COALESCE((
+          SELECT SUM(p.amount) / 100.0  -- Convert paisa to rupees
+          FROM event e2
+          JOIN booking b ON b.event_id = e2.pk
+          JOIN transaction t ON t.entity_id = b.id AND t.entity_type = 'BOOKING'
+          JOIN payment p ON p.pk = t.payment_id
+          WHERE e2.club_id = c.pk
+            AND p.state = 'COMPLETED'
+            AND p.created_at >= DATE_TRUNC('month', CURRENT_DATE)
+        ), 0) as current_revenue_rupees,
 
         -- Most recent city/area
         (
@@ -540,19 +562,19 @@ router.get('/filter-options', async (req, res) => {
         ORDER BY ci.name
       `,
       pocs: `
-        SELECT DISTINCT 'POC 1' as poc_name
-        UNION ALL
-        SELECT DISTINCT 'POC 2' as poc_name
+        SELECT DISTINCT name as poc_name
+        FROM poc_structure
+        WHERE is_active = true
         ORDER BY poc_name
       `
     };
 
-    // Query production data
+    // Query production data (except POCs which are in local db)
     const [activitiesResult, areasResult, citiesResult, pocsResult] = await Promise.all([
       queryProductionWithTunnel(filterQueries.activities),
       queryProductionWithTunnel(filterQueries.areas),
       queryProductionWithTunnel(filterQueries.cities),
-      queryProductionWithTunnel(filterQueries.pocs)
+      queryLocal(filterQueries.pocs) // POCs are in local operations database
     ]);
 
     const filters = {
@@ -575,6 +597,42 @@ router.get('/filter-options', async (req, res) => {
       error: 'Failed to load filter options',
       details: error instanceof Error ? error.message : 'Unknown error'
     });
+  }
+});
+
+// GET /api/targets/cities - Get all active cities
+router.get('/cities', async (req, res) => {
+  try {
+    const cities = await queryProductionWithTunnel(`
+      SELECT id, name, state
+      FROM city
+      WHERE is_active = true
+      ORDER BY name
+    `);
+
+    res.json(cities.rows);
+  } catch (error) {
+    logger.error('Failed to fetch cities:', error);
+    res.status(500).json({ error: 'Failed to fetch cities' });
+  }
+});
+
+// GET /api/targets/areas/:cityId - Get areas for a specific city
+router.get('/areas/:cityId', async (req, res) => {
+  try {
+    const { cityId } = req.params;
+
+    const areas = await queryProductionWithTunnel(`
+      SELECT id, name, lat, lng
+      FROM area
+      WHERE city_id = $1
+      ORDER BY name
+    `, [cityId]);
+
+    res.json(areas.rows);
+  } catch (error) {
+    logger.error('Failed to fetch areas:', error);
+    res.status(500).json({ error: 'Failed to fetch areas' });
   }
 });
 

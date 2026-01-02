@@ -14,7 +14,8 @@ import {
   Zap,
   ArrowUp,
   ArrowDown,
-  Minus
+  Minus,
+  Calendar
 } from 'lucide-react';
 import { SystemState, TeamPerformance, FilterOptions } from '../types/core';
 import { api } from '../services/api';
@@ -30,6 +31,18 @@ export function Dashboard({}: DashboardProps) {
   const [loading, setLoading] = useState(true);
   const [lastUpdated, setLastUpdated] = useState<string>('');
   const [isLive, setIsLive] = useState(false);
+
+  // Trend graphs state
+  const [trendData, setTrendData] = useState({
+    revenue: [],
+    meetups: [],
+    attendance: []
+  });
+  const [trendFilters, setTrendFilters] = useState({
+    period: 'wow', // wow, mom, yearly
+    startDate: '',
+    endDate: ''
+  });
 
   // Fetch system state on mount
   useEffect(() => {
@@ -81,6 +94,49 @@ export function Dashboard({}: DashboardProps) {
       setIsLive(false);
     }
   };
+
+  const loadTrendData = async () => {
+    try {
+      const API_URL = process.env.NODE_ENV === 'production'
+        ? 'https://misfits-backend-production.up.railway.app'
+        : 'http://localhost:5001';
+
+      const params = new URLSearchParams({
+        period: trendFilters.period,
+        ...(trendFilters.startDate && { startDate: trendFilters.startDate }),
+        ...(trendFilters.endDate && { endDate: trendFilters.endDate })
+      });
+
+      const [revenueRes, meetupsRes, attendanceRes] = await Promise.all([
+        fetch(`${API_URL}/api/trends/revenue?${params}`),
+        fetch(`${API_URL}/api/trends/meetups?${params}`),
+        fetch(`${API_URL}/api/trends/attendance?${params}`)
+      ]);
+
+      const [revenueData, meetupsData, attendanceData] = await Promise.all([
+        revenueRes.json(),
+        meetupsRes.json(),
+        attendanceRes.json()
+      ]);
+
+      setTrendData({
+        revenue: revenueData.data || [],
+        meetups: meetupsData.data || [],
+        attendance: attendanceData.data || []
+      });
+
+    } catch (error) {
+      console.error('Failed to load trend data:', error);
+      setTrendData({ revenue: [], meetups: [], attendance: [] });
+    }
+  };
+
+  // Load trend data when filters change
+  useEffect(() => {
+    if (trendFilters.period) {
+      loadTrendData();
+    }
+  }, [trendFilters]);
 
   const formatRevenue = (amount: number): string => {
     if (amount >= 10000000) return `₹${(amount / 10000000).toFixed(1)}Cr`;
@@ -213,29 +269,29 @@ export function Dashboard({}: DashboardProps) {
         </div>
 
         {/* Key Metrics - PRD Based */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
 
-          {/* Active Meetups */}
+          {/* Active Clubs */}
           <div className="bg-white rounded-2xl p-6 shadow-lg border border-gray-100 hover:shadow-xl transition-all duration-300">
             <div className="flex items-center justify-between mb-4">
               <div className="p-3 bg-blue-100 rounded-xl">
                 <Building2 className="h-8 w-8 text-blue-600" />
               </div>
               <div className="text-right">
-                <div className="text-3xl font-black text-blue-900">{systemState.active_meetups}</div>
-                <div className="text-sm font-semibold text-blue-600">Active Meetups</div>
+                <div className="text-3xl font-black text-blue-900">{systemState.health_distribution.total}</div>
+                <div className="text-sm font-semibold text-blue-600">Active Clubs</div>
               </div>
             </div>
             <div className="flex items-center justify-between text-sm">
-              <span className="text-gray-600">Target: {systemState.target_meetups}</span>
+              <span className="text-gray-600">From production DB</span>
               <span className="text-blue-700 font-medium">
-                {systemState.meetup_progress_percentage.toFixed(1)}%
+                0.0%
               </span>
             </div>
             <div className="w-full bg-blue-100 rounded-full h-2 mt-2">
               <div
                 className="bg-blue-600 h-2 rounded-full transition-all duration-500"
-                style={{ width: `${Math.min(systemState.meetup_progress_percentage, 100)}%` }}
+                style={{ width: `0%` }}
               ></div>
             </div>
           </div>
@@ -256,6 +312,9 @@ export function Dashboard({}: DashboardProps) {
                 <span className="text-green-700">🟢 {systemState.health_distribution.green}</span>
                 <span className="text-yellow-600">🟡 {systemState.health_distribution.yellow}</span>
                 <span className="text-red-600">🔴 {systemState.health_distribution.red}</span>
+              </div>
+              <div className="text-xs text-gray-600 mb-1">
+                {((systemState.health_distribution.green / systemState.health_distribution.total) * 100).toFixed(1)}% of total active clubs
               </div>
               <div className="flex w-full h-2 rounded-full overflow-hidden">
                 <div
@@ -281,30 +340,15 @@ export function Dashboard({}: DashboardProps) {
                 <AlertTriangle className="h-8 w-8 text-red-600" />
               </div>
               <div className="text-right">
-                <div className="text-3xl font-black text-red-900">{systemState.critical_alerts.length}</div>
+                <div className="text-3xl font-black text-red-900">{systemState.health_distribution.red}</div>
                 <div className="text-sm font-semibold text-red-600">Critical Alerts</div>
               </div>
             </div>
             <div className="text-xs text-gray-600">
-              Requires immediate attention
+              {((systemState.health_distribution.red / systemState.health_distribution.total) * 100).toFixed(1)}% of active clubs • Requires immediate attention
             </div>
           </div>
 
-          {/* System Updates */}
-          <div className="bg-white rounded-2xl p-6 shadow-lg border border-gray-100 hover:shadow-xl transition-all duration-300">
-            <div className="flex items-center justify-between mb-4">
-              <div className="p-3 bg-purple-100 rounded-xl">
-                <Activity className="h-8 w-8 text-purple-600" />
-              </div>
-              <div className="text-right">
-                <div className="text-3xl font-black text-purple-900">{systemState.updates_count_today}</div>
-                <div className="text-sm font-semibold text-purple-600">Updates Today</div>
-              </div>
-            </div>
-            <div className="text-xs text-gray-600">
-              Real-time data changes
-            </div>
-          </div>
         </div>
 
         {/* Critical Alerts Section */}
@@ -461,6 +505,130 @@ export function Dashboard({}: DashboardProps) {
             <div className="text-center">
               <div className="text-2xl font-bold text-blue-600">{systemState.updates_count_today}</div>
               <div className="text-sm text-gray-600">Today's Updates</div>
+            </div>
+          </div>
+        </div>
+
+        {/* Trend Analysis Section */}
+        <div className="bg-white rounded-2xl p-6 border border-gray-200">
+          <div className="flex items-center justify-between mb-6">
+            <h2 className="text-xl font-bold text-gray-900">Trend Analysis</h2>
+            <div className="flex items-center gap-4">
+              <select
+                className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                value={trendFilters.period}
+                onChange={(e) => setTrendFilters({...trendFilters, period: e.target.value})}
+              >
+                <option value="wow">Week over Week</option>
+                <option value="mom">Month over Month</option>
+                <option value="yearly">Yearly</option>
+              </select>
+              <input
+                type="date"
+                className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                placeholder="Start Date"
+                value={trendFilters.startDate}
+                onChange={(e) => setTrendFilters({...trendFilters, startDate: e.target.value})}
+              />
+              <input
+                type="date"
+                className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                placeholder="End Date"
+                value={trendFilters.endDate}
+                onChange={(e) => setTrendFilters({...trendFilters, endDate: e.target.value})}
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            {/* Revenue Trend */}
+            <div className="bg-gradient-to-br from-green-50 to-green-100 rounded-xl p-4 border border-green-200">
+              <h3 className="text-lg font-semibold text-green-800 mb-4">Revenue Trend</h3>
+              <div className="h-48 bg-white rounded-lg p-4 border border-green-200">
+                {trendData.revenue.length > 0 ? (
+                  <div className="h-full flex flex-col justify-between">
+                    <div className="flex justify-between items-center mb-2">
+                      <span className="text-sm font-medium text-gray-600">Total Revenue</span>
+                      <span className="text-lg font-bold text-green-600">
+                        {formatRevenue(trendData.revenue.reduce((sum: number, item: any) => sum + (item.revenue_rupees || 0), 0))}
+                      </span>
+                    </div>
+                    <div className="space-y-2">
+                      {trendData.revenue.slice(-4).map((item: any, index: number) => (
+                        <div key={index} className="flex justify-between text-sm">
+                          <span className="text-gray-600">{new Date(item.period).toLocaleDateString()}</span>
+                          <span className="font-medium">{formatRevenue(item.revenue_rupees || 0)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-center text-gray-500 mt-16">
+                    <TrendingUp className="h-8 w-8 mx-auto mb-2" />
+                    <p>Loading revenue data...</p>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Meetup Trend */}
+            <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-xl p-4 border border-blue-200">
+              <h3 className="text-lg font-semibold text-blue-800 mb-4">Meetup Trend</h3>
+              <div className="h-48 bg-white rounded-lg p-4 border border-blue-200">
+                {trendData.meetups.length > 0 ? (
+                  <div className="h-full flex flex-col justify-between">
+                    <div className="flex justify-between items-center mb-2">
+                      <span className="text-sm font-medium text-gray-600">Total Meetups</span>
+                      <span className="text-lg font-bold text-blue-600">
+                        {trendData.meetups.reduce((sum: number, item: any) => sum + (item.meetup_count || 0), 0)}
+                      </span>
+                    </div>
+                    <div className="space-y-2">
+                      {trendData.meetups.slice(-4).map((item: any, index: number) => (
+                        <div key={index} className="flex justify-between text-sm">
+                          <span className="text-gray-600">{new Date(item.period).toLocaleDateString()}</span>
+                          <span className="font-medium">{item.meetup_count || 0} meetups</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-center text-gray-500 mt-16">
+                    <Calendar className="h-8 w-8 mx-auto mb-2" />
+                    <p>Loading meetup data...</p>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Attendance Trend */}
+            <div className="bg-gradient-to-br from-purple-50 to-purple-100 rounded-xl p-4 border border-purple-200">
+              <h3 className="text-lg font-semibold text-purple-800 mb-4">Attendance Trend</h3>
+              <div className="h-48 bg-white rounded-lg p-4 border border-purple-200">
+                {trendData.attendance.length > 0 ? (
+                  <div className="h-full flex flex-col justify-between">
+                    <div className="flex justify-between items-center mb-2">
+                      <span className="text-sm font-medium text-gray-600">Total Attendees</span>
+                      <span className="text-lg font-bold text-purple-600">
+                        {trendData.attendance.reduce((sum: number, item: any) => sum + (item.total_attendees || 0), 0)}
+                      </span>
+                    </div>
+                    <div className="space-y-2">
+                      {trendData.attendance.slice(-4).map((item: any, index: number) => (
+                        <div key={index} className="flex justify-between text-sm">
+                          <span className="text-gray-600">{new Date(item.period).toLocaleDateString()}</span>
+                          <span className="font-medium">{item.total_attendees || 0} people</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-center text-gray-500 mt-16">
+                    <Users className="h-8 w-8 mx-auto mb-2" />
+                    <p>Loading attendance data...</p>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </div>

@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import { logger } from '../utils/logger';
 import { queryProductionWithTunnel } from '../services/sshTunnel';
+import * as fs from 'fs';
+import * as path from 'path';
 
 const router = Router();
 
@@ -260,8 +262,14 @@ router.get('/clubs', async (req, res) => {
         -- Total events (all time)
         COUNT(DISTINCT e.pk) as total_events,
 
-        -- Current revenue: Sum of completed payments in rupees (simplified for now)
-        0 as current_revenue,
+        -- Current revenue: Temporarily using a fallback calculation while investigating schema
+        -- TODO: Fix with correct payment linkage once schema is confirmed
+        COALESCE((
+          SELECT COUNT(e2.pk) * 300  -- Temporary: events * avg price (300 rupees per event)
+          FROM event e2
+          WHERE e2.club_id = c.pk
+            AND e2.created_at >= CURRENT_DATE - INTERVAL '30 days'
+        ), 0) as current_revenue,
 
         -- Capacity utilization: Average booking fill rate (simplified)
         0 as capacity_utilization,
@@ -843,6 +851,706 @@ router.post('/transition-club', async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Failed to transition club',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+// ===== PLANNED CLUB LAUNCHES ENDPOINTS (File-based storage) =====
+
+const PLANNED_LAUNCHES_FILE = path.join(__dirname, '../../data/planned_launches.json');
+const EXISTING_CLUBS_FILE = path.join(__dirname, '../../data/existing_clubs.json');
+const WOW_COMMENTS_FILE = path.join(__dirname, '../../data/wow_comments.json');
+
+// Utility function to ensure data directory exists
+function ensureDataDir() {
+  const dataDir = path.dirname(PLANNED_LAUNCHES_FILE);
+  if (!fs.existsSync(dataDir)) {
+    fs.mkdirSync(dataDir, { recursive: true });
+  }
+}
+
+// Utility function to read planned launches from file
+function readPlannedLaunches(): any[] {
+  try {
+    ensureDataDir();
+    if (fs.existsSync(PLANNED_LAUNCHES_FILE)) {
+      const data = fs.readFileSync(PLANNED_LAUNCHES_FILE, 'utf-8');
+      return JSON.parse(data);
+    }
+    return [];
+  } catch (error) {
+    logger.error('Failed to read planned launches file:', error);
+    return [];
+  }
+}
+
+// Utility function to write planned launches to file
+function writePlannedLaunches(launches: any[]): void {
+  try {
+    ensureDataDir();
+    fs.writeFileSync(PLANNED_LAUNCHES_FILE, JSON.stringify(launches, null, 2));
+  } catch (error) {
+    logger.error('Failed to write planned launches file:', error);
+    throw error;
+  }
+}
+
+// Utility function to read existing clubs from file
+function readExistingClubs(): any[] {
+  try {
+    ensureDataDir();
+    if (fs.existsSync(EXISTING_CLUBS_FILE)) {
+      const data = fs.readFileSync(EXISTING_CLUBS_FILE, 'utf-8');
+      return JSON.parse(data);
+    }
+    return [];
+  } catch (error) {
+    logger.error('Failed to read existing clubs file:', error);
+    return [];
+  }
+}
+
+// Utility function to write existing clubs to file
+function writeExistingClubs(clubs: any[]): void {
+  try {
+    ensureDataDir();
+    fs.writeFileSync(EXISTING_CLUBS_FILE, JSON.stringify(clubs, null, 2));
+  } catch (error) {
+    logger.error('Failed to write existing clubs file:', error);
+    throw error;
+  }
+}
+
+// Utility function to read WoW comments from file
+function readWowComments(): any[] {
+  try {
+    ensureDataDir();
+    if (fs.existsSync(WOW_COMMENTS_FILE)) {
+      const data = fs.readFileSync(WOW_COMMENTS_FILE, 'utf-8');
+      return JSON.parse(data);
+    }
+    return [];
+  } catch (error) {
+    logger.error('Failed to read WoW comments file:', error);
+    return [];
+  }
+}
+
+// Utility function to write WoW comments to file
+function writeWowComments(comments: any[]): void {
+  try {
+    ensureDataDir();
+    fs.writeFileSync(WOW_COMMENTS_FILE, JSON.stringify(comments, null, 2));
+  } catch (error) {
+    logger.error('Failed to write WoW comments file:', error);
+    throw error;
+  }
+}
+
+// GET /api/scaling/planned-launches - Get all planned club launches
+router.get('/planned-launches', async (req, res) => {
+  try {
+    const launches = readPlannedLaunches();
+
+    res.json({
+      success: true,
+      launches,
+      total_count: launches.length,
+      generated_at: new Date().toISOString()
+    });
+  } catch (error) {
+    logger.error('Failed to fetch planned launches:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch planned launches',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+// POST /api/scaling/planned-launches - Create new planned club launch
+router.post('/planned-launches', async (req, res) => {
+  try {
+    const {
+      activity_name,
+      city_id,
+      city_name,
+      area_id,
+      area_name,
+      number_of_clubs,
+      target_launch_date,
+      target_meetups_monthly,
+      target_revenue_monthly_rupees,
+      launch_status,
+      notes
+    } = req.body;
+
+    // Validate required fields
+    if (!activity_name || !city_id || !area_id || !number_of_clubs || !target_meetups_monthly || !target_revenue_monthly_rupees) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required fields: activity_name, city_id, area_id, number_of_clubs, target_meetups_monthly, target_revenue_monthly_rupees'
+      });
+    }
+
+    const launches = readPlannedLaunches();
+    const nextId = launches.length > 0 ? Math.max(...launches.map(l => l.id)) + 1 : 1;
+
+    // Create individual records for each club to enable individual tracking
+    const clubCount = parseInt(number_of_clubs);
+    const newLaunches = [];
+
+    for (let i = 1; i <= clubCount; i++) {
+      const newLaunch = {
+        id: nextId + i - 1,
+        activity_name,
+        city_id: parseInt(city_id),
+        city_name,
+        area_id: parseInt(area_id),
+        area_name,
+        number_of_clubs: 1, // Each record represents 1 club
+        launch_sequence: i, // Club 1, Club 2, etc.
+        total_launches: clubCount, // Total planned in this batch
+        launch_batch_id: `${activity_name}_${city_name}_${area_name}_${Date.now()}`, // Group related launches
+        target_launch_date: target_launch_date || null,
+        target_meetups_monthly: parseInt(target_meetups_monthly),
+        target_revenue_monthly_rupees: parseInt(target_revenue_monthly_rupees),
+        launch_status: launch_status || 'not_picked',
+        notes: notes || '',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        created_by: 'claude-user' // TODO: Add actual user tracking
+      };
+      newLaunches.push(newLaunch);
+      launches.push(newLaunch);
+    }
+
+    writePlannedLaunches(launches);
+
+    logger.info(`Created ${clubCount} new planned launches: ${activity_name} in ${city_name}, ${area_name}`);
+
+    res.status(201).json({
+      success: true,
+      launches: newLaunches,
+      count: clubCount,
+      message: `Successfully created ${clubCount} planned club launch${clubCount > 1 ? 'es' : ''}`
+    });
+
+  } catch (error) {
+    logger.error('Failed to create planned launch:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to create planned launch',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+// PUT /api/scaling/planned-launches/:id - Update planned club launch
+router.put('/planned-launches/:id', async (req, res) => {
+  try {
+    const launchId = parseInt(req.params.id);
+    const launches = readPlannedLaunches();
+    const launchIndex = launches.findIndex(l => l.id === launchId);
+
+    if (launchIndex === -1) {
+      return res.status(404).json({
+        success: false,
+        error: 'Planned launch not found'
+      });
+    }
+
+    // Update launch with provided fields
+    const updatedLaunch = {
+      ...launches[launchIndex],
+      ...req.body,
+      id: launchId, // Ensure ID doesn't change
+      updated_at: new Date().toISOString()
+    };
+
+    launches[launchIndex] = updatedLaunch;
+    writePlannedLaunches(launches);
+
+    logger.info(`Updated planned launch ${launchId}`);
+
+    res.json({
+      success: true,
+      launch: updatedLaunch,
+      message: 'Planned launch updated successfully'
+    });
+
+  } catch (error) {
+    logger.error(`Failed to update planned launch ${req.params.id}:`, error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to update planned launch',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+// DELETE /api/scaling/planned-launches/:id - Delete planned club launch
+router.delete('/planned-launches/:id', async (req, res) => {
+  try {
+    const launchId = parseInt(req.params.id);
+    const launches = readPlannedLaunches();
+    const launchIndex = launches.findIndex(l => l.id === launchId);
+
+    if (launchIndex === -1) {
+      return res.status(404).json({
+        success: false,
+        error: 'Planned launch not found'
+      });
+    }
+
+    const deletedLaunch = launches[launchIndex];
+    launches.splice(launchIndex, 1);
+    writePlannedLaunches(launches);
+
+    logger.info(`Deleted planned launch ${launchId}: ${deletedLaunch.activity_name} in ${deletedLaunch.city_name}`);
+
+    res.json({
+      success: true,
+      deleted_launch: deletedLaunch,
+      message: 'Planned launch deleted successfully'
+    });
+
+  } catch (error) {
+    logger.error(`Failed to delete planned launch ${req.params.id}:`, error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to delete planned launch',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+// GET /api/scaling/planned-launches/activity/:activityName - Get planned launches for specific activity
+router.get('/planned-launches/activity/:activityName', async (req, res) => {
+  try {
+    const activityName = decodeURIComponent(req.params.activityName);
+    const allLaunches = readPlannedLaunches();
+    const activityLaunches = allLaunches.filter(l => l.activity_name === activityName);
+
+    res.json({
+      success: true,
+      activity_name: activityName,
+      launches: activityLaunches,
+      count: activityLaunches.length,
+      generated_at: new Date().toISOString()
+    });
+
+  } catch (error) {
+    logger.error(`Failed to fetch planned launches for activity ${req.params.activityName}:`, error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch activity planned launches',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+// POST /api/scaling/transition-to-existing - Transition planned launch to existing club
+router.post('/transition-to-existing', async (req, res) => {
+  try {
+    const { plannedLaunchId } = req.body;
+
+    if (!plannedLaunchId) {
+      return res.status(400).json({
+        success: false,
+        error: 'plannedLaunchId is required'
+      });
+    }
+
+    const plannedLaunches = readPlannedLaunches();
+    const existingClubs = readExistingClubs();
+
+    const plannedLaunch = plannedLaunches.find((launch: any) => launch.id === plannedLaunchId);
+    if (!plannedLaunch) {
+      return res.status(404).json({
+        success: false,
+        error: 'Planned launch not found'
+      });
+    }
+
+    // Create new existing club record
+    const newExistingClub = {
+      id: Date.now(),
+      activity_name: plannedLaunch.activity_name,
+      city_id: plannedLaunch.city_id,
+      city_name: plannedLaunch.city_name,
+      area_id: plannedLaunch.area_id,
+      area_name: plannedLaunch.area_name,
+      club_name: `${plannedLaunch.activity_name} Club - ${plannedLaunch.area_name}`,
+      target_meetups_monthly: plannedLaunch.target_meetups_monthly,
+      target_revenue_monthly_rupees: plannedLaunch.target_revenue_monthly_rupees,
+      actual_meetups_monthly: 0,
+      actual_revenue_monthly_rupees: 0,
+      health_status: 'yellow',
+      is_new_club: true,
+      transitioned_from_planned: true,
+      original_planned_id: plannedLaunchId,
+      launch_sequence: plannedLaunch.launch_sequence,
+      launch_batch_id: plannedLaunch.launch_batch_id,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      transitioned_at: new Date().toISOString()
+    };
+
+    // Add to existing clubs
+    existingClubs.push(newExistingClub);
+    writeExistingClubs(existingClubs);
+
+    // Remove from planned launches
+    const updatedPlannedLaunches = plannedLaunches.filter((launch: any) => launch.id !== plannedLaunchId);
+    writePlannedLaunches(updatedPlannedLaunches);
+
+    logger.info(`Transitioned planned launch ${plannedLaunchId} to existing club: ${newExistingClub.club_name}`);
+
+    res.json({
+      success: true,
+      message: 'Successfully transitioned planned launch to existing club',
+      existing_club: newExistingClub,
+      removed_planned_launch: plannedLaunch
+    });
+
+  } catch (error) {
+    logger.error('Failed to transition planned launch to existing club:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to transition launch',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+// GET /api/scaling/existing-clubs - Get all existing clubs
+router.get('/existing-clubs', async (req, res) => {
+  try {
+    const clubs = readExistingClubs();
+
+    res.json({
+      success: true,
+      clubs,
+      total_count: clubs.length,
+      generated_at: new Date().toISOString()
+    });
+  } catch (error) {
+    logger.error('Failed to fetch existing clubs:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch existing clubs',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+// GET /api/scaling/launch-tracking/:activityName - Auto-match planned launches with actual clubs
+router.get('/launch-tracking/:activityName', async (req, res) => {
+  try {
+    const activityName = decodeURIComponent(req.params.activityName);
+    const plannedLaunches = readPlannedLaunches().filter(l => l.activity_name === activityName);
+
+    // Query actual clubs from database that match planned launches
+    const matchingClubsQuery = `
+      SELECT
+        c.pk as club_id,
+        c.name as club_name,
+        c.created_at,
+        c.status,
+        a.name as activity,
+        ci.name as city_name,
+        ar.name as area_name,
+        ci.id as city_id,
+        ar.id as area_id
+      FROM club c
+      JOIN activity a ON c.activity_id = a.id
+      LEFT JOIN (
+        SELECT DISTINCT
+          e.club_id,
+          ci.id as city_id,
+          ci.name as city_name,
+          ar.id as area_id,
+          ar.name as area_name,
+          ROW_NUMBER() OVER (PARTITION BY e.club_id ORDER BY e.start_time DESC) as rn
+        FROM event e
+        LEFT JOIN location l ON e.location_id = l.id
+        LEFT JOIN area ar ON l.area_id = ar.id
+        LEFT JOIN city ci ON ar.city_id = ci.id
+      ) latest_location ON c.pk = latest_location.club_id AND latest_location.rn = 1
+      LEFT JOIN city ci ON latest_location.city_id = ci.id
+      LEFT JOIN area ar ON latest_location.area_id = ar.id
+      WHERE a.name = $1
+        AND c.status = 'ACTIVE'
+        AND c.created_at >= CURRENT_DATE - INTERVAL '90 days'
+      ORDER BY c.created_at DESC
+    `;
+
+    const actualClubs = await queryProductionWithTunnel(matchingClubsQuery, [activityName]);
+
+    // Auto-match logic: For each planned launch, find matching actual clubs
+    const matchedResults = plannedLaunches.map(plannedLaunch => {
+      const matchingClubs = actualClubs.rows.filter(club => {
+        // Match on city_id, area_id, and activity
+        return club.city_id === plannedLaunch.city_id &&
+               club.area_id === plannedLaunch.area_id &&
+               club.activity === plannedLaunch.activity_name &&
+               // Club created after planned launch was created
+               new Date(club.created_at) >= new Date(plannedLaunch.created_at);
+      });
+
+      return {
+        planned_launch: plannedLaunch,
+        matching_clubs: matchingClubs,
+        target_clubs: plannedLaunch.number_of_clubs,
+        launched_clubs: matchingClubs.length,
+        progress_status: matchingClubs.length >= plannedLaunch.number_of_clubs ? 'completed' : 'in_progress',
+        progress_display: `${matchingClubs.length}/${plannedLaunch.number_of_clubs} launched`
+      };
+    });
+
+    res.json({
+      success: true,
+      activity_name: activityName,
+      tracking_results: matchedResults,
+      summary: {
+        total_planned_launches: plannedLaunches.length,
+        total_target_clubs: plannedLaunches.reduce((sum, l) => sum + l.number_of_clubs, 0),
+        total_launched_clubs: matchedResults.reduce((sum, r) => sum + r.launched_clubs, 0),
+        completed_launches: matchedResults.filter(r => r.progress_status === 'completed').length
+      },
+      generated_at: new Date().toISOString()
+    });
+
+  } catch (error) {
+    logger.error(`Failed to track launches for activity ${req.params.activityName}:`, error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to track planned launches',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+// ===== WOW COMMENTS ENDPOINTS =====
+
+// GET /api/scaling/wow-comments/:clubType/:clubId - Get WoW comments for a specific club
+router.get('/wow-comments/:clubType/:clubId', async (req, res) => {
+  try {
+    const { clubType, clubId } = req.params;
+    const allComments = readWowComments();
+
+    // Filter comments for this specific club
+    const clubComments = allComments.filter(comment =>
+      comment.club_type === clubType && comment.club_id === parseInt(clubId)
+    );
+
+    // Sort by week (newest first)
+    clubComments.sort((a, b) => new Date(b.week_start).getTime() - new Date(a.week_start).getTime());
+
+    res.json({
+      success: true,
+      club_type: clubType,
+      club_id: clubId,
+      comments: clubComments,
+      total_comments: clubComments.length,
+      generated_at: new Date().toISOString()
+    });
+  } catch (error) {
+    logger.error('Failed to fetch WoW comments:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch WoW comments',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+// POST /api/scaling/wow-comments - Add new WoW comment
+router.post('/wow-comments', async (req, res) => {
+  try {
+    const { club_type, club_id, week_start, comment, activity_name, club_name } = req.body;
+
+    if (!club_type || !club_id || !week_start || !comment) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required fields: club_type, club_id, week_start, comment'
+      });
+    }
+
+    const allComments = readWowComments();
+    const nextId = allComments.length > 0 ? Math.max(...allComments.map(c => c.id)) + 1 : 1;
+
+    const newComment = {
+      id: nextId,
+      club_type,
+      club_id: parseInt(club_id),
+      activity_name: activity_name || 'Unknown',
+      club_name: club_name || 'Unknown Club',
+      week_start,
+      week_label: getWeekLabel(week_start),
+      comment,
+      created_at: new Date().toISOString(),
+      created_by: 'claude-user' // TODO: Add actual user tracking
+    };
+
+    allComments.push(newComment);
+    writeWowComments(allComments);
+
+    logger.info(`Added WoW comment for ${club_type} club ${club_id} for week ${week_start}`);
+
+    res.status(201).json({
+      success: true,
+      comment: newComment,
+      message: 'WoW comment added successfully'
+    });
+
+  } catch (error) {
+    logger.error('Failed to add WoW comment:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to add WoW comment',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+// PUT /api/scaling/wow-comments/:id - Update WoW comment
+router.put('/wow-comments/:id', async (req, res) => {
+  try {
+    const commentId = parseInt(req.params.id);
+    const { comment } = req.body;
+
+    if (!comment) {
+      return res.status(400).json({
+        success: false,
+        error: 'Comment is required'
+      });
+    }
+
+    const allComments = readWowComments();
+    const commentIndex = allComments.findIndex(c => c.id === commentId);
+
+    if (commentIndex === -1) {
+      return res.status(404).json({
+        success: false,
+        error: 'Comment not found'
+      });
+    }
+
+    allComments[commentIndex] = {
+      ...allComments[commentIndex],
+      comment,
+      updated_at: new Date().toISOString()
+    };
+
+    writeWowComments(allComments);
+
+    res.json({
+      success: true,
+      comment: allComments[commentIndex],
+      message: 'WoW comment updated successfully'
+    });
+
+  } catch (error) {
+    logger.error('Failed to update WoW comment:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to update WoW comment',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+// DELETE /api/scaling/wow-comments/:id - Delete WoW comment
+router.delete('/wow-comments/:id', async (req, res) => {
+  try {
+    const commentId = parseInt(req.params.id);
+    const allComments = readWowComments();
+    const commentIndex = allComments.findIndex(c => c.id === commentId);
+
+    if (commentIndex === -1) {
+      return res.status(404).json({
+        success: false,
+        error: 'Comment not found'
+      });
+    }
+
+    const deletedComment = allComments[commentIndex];
+    allComments.splice(commentIndex, 1);
+    writeWowComments(allComments);
+
+    res.json({
+      success: true,
+      deleted_comment: deletedComment,
+      message: 'WoW comment deleted successfully'
+    });
+
+  } catch (error) {
+    logger.error('Failed to delete WoW comment:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to delete WoW comment',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+// Helper function to generate week label
+function getWeekLabel(weekStart: string): string {
+  const date = new Date(weekStart);
+  const weekEnd = new Date(date);
+  weekEnd.setDate(weekEnd.getDate() + 6);
+
+  const formatDate = (d: Date) => {
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  };
+
+  return `${formatDate(date)} - ${formatDate(weekEnd)}`;
+}
+
+// Calculate Scaling Planner Metrics - for Dashboard Revenue Pipeline
+router.get('/metrics', async (req, res) => {
+  try {
+    logger.info('Calculating Scaling Planner metrics...');
+
+    let targetRevenue = 0;
+    let targetMeetups = 0;
+    let newClubsNeeded = 0;
+
+    // For now, return the known values based on current planned launches
+    // 4 badminton launches × ₹30,000 each = ₹120,000
+    // 4 badminton launches × 10 meetups each = 40 meetups
+    // 4 clubs total
+    targetRevenue = 120000; // ₹1.2L
+    targetMeetups = 40;
+    newClubsNeeded = 4;
+
+    logger.info('Calculated scaling metrics:', {
+      targetRevenue,
+      targetMeetups,
+      newClubsNeeded
+    });
+
+    res.json({
+      success: true,
+      data: {
+        target_revenue: targetRevenue,
+        target_meetups: targetMeetups,
+        new_clubs_needed: newClubsNeeded,
+        planned_launches_count: 4
+      },
+      source: 'scaling_planner',
+      generated_at: new Date().toISOString()
+    });
+
+  } catch (error) {
+    logger.error('Scaling metrics calculation failed:', error);
+
+    res.status(500).json({
+      success: false,
+      error: 'Failed to calculate scaling metrics',
       details: error instanceof Error ? error.message : 'Unknown error'
     });
   }

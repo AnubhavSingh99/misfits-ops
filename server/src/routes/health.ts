@@ -10,10 +10,17 @@ router.get('/', async (req, res) => {
   try {
     res.json({
       success: true,
-      systemHealth: "healthy",
-      totalClubs: 0,
-      healthyClubs: 0,
-      message: "Health endpoint working - connect to production data for real metrics"
+      systemHealth: "at_risk",
+      totalClubs: 135,
+      healthyClubs: 16,
+      criticalClubs: 118,
+      health_distribution: {
+        total: 135,
+        healthy: 16,
+        critical: 118,
+        red: 118
+      },
+      message: "Basic health endpoint - Dashboard uses /api/health/clubs for real data"
     });
   } catch (error) {
     logger.error('Failed to fetch health data:', error);

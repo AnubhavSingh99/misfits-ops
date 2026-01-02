@@ -9,9 +9,78 @@ import { API_URL } from '../config/api';
  * Replaces hardcoded ₹42L with real database values
  */
 export class RealDataService {
+  // Static map to track ongoing requests and prevent duplicates
+  private static ongoingRequests = new Map<string, Promise<any>>()
+  private static requestTimeouts = new Map<string, NodeJS.Timeout>()
 
   /**
-   * Calculate actual current revenue from database
+   * Create a fetch request with timeout and duplicate prevention
+   */
+  private static async fetchWithTimeout(
+    url: string,
+    options: RequestInit = {},
+    timeout: number = 15000,
+    operationId?: string
+  ): Promise<Response> {
+    // Create abort controller for timeout
+    const controller = new AbortController()
+
+    // Set timeout
+    const timeoutId = setTimeout(() => {
+      console.log(`⏰ Request timeout for ${operationId || url}, aborting...`)
+      controller.abort()
+    }, timeout)
+
+    // Store timeout for cleanup
+    if (operationId) {
+      this.requestTimeouts.set(operationId, timeoutId)
+    }
+
+    try {
+      const response = await fetch(url, {
+        ...options,
+        signal: controller.signal,
+        headers: {
+          'Content-Type': 'application/json',
+          ...options.headers
+        }
+      })
+      return response
+    } finally {
+      clearTimeout(timeoutId)
+      if (operationId) {
+        this.requestTimeouts.delete(operationId)
+      }
+    }
+  }
+
+  /**
+   * Generic method to handle duplicate request prevention
+   */
+  private static async preventDuplicateRequest<T>(
+    operationId: string,
+    requestFunction: () => Promise<T>
+  ): Promise<T> {
+    // Check if request is already ongoing
+    if (this.ongoingRequests.has(operationId)) {
+      console.log(`⚠️ ${operationId} already in progress, waiting for existing request...`)
+      return this.ongoingRequests.get(operationId)
+    }
+
+    // Create new request promise
+    const requestPromise = requestFunction().finally(() => {
+      // Clean up when request completes
+      this.ongoingRequests.delete(operationId)
+    })
+
+    // Store the promise to prevent duplicates
+    this.ongoingRequests.set(operationId, requestPromise)
+
+    return requestPromise
+  }
+
+  /**
+   * Calculate actual current revenue from database with Scaling Planner target
    * Based on your CLAUDE.md database queries
    */
   static async getCurrentRevenue(): Promise<{
@@ -19,32 +88,61 @@ export class RealDataService {
     target_revenue: number;
     progress_percentage: number;
   }> {
-    try {
-      const response = await fetch(`${API_URL}/api/revenue`, {
-        method: 'GET',
-        headers: { 'Content-Type': 'application/json' }
-      });
+    return this.preventDuplicateRequest('getCurrentRevenue', async () => {
+      try {
+        // Get current revenue from production database
+        const revenueResponse = await this.fetchWithTimeout(
+          `${API_URL}/api/revenue`,
+          { method: 'GET' },
+          15000,
+          'revenue-api'
+        )
 
-      if (!response.ok) {
+      if (!revenueResponse.ok) {
         throw new Error('Revenue API request failed');
       }
 
-      const result = await response.json();
+      const revenueResult = await revenueResponse.json();
 
-      if (!result.success) {
-        throw new Error(result.error || 'Revenue calculation failed');
+      if (!revenueResult.success) {
+        throw new Error(revenueResult.error || 'Revenue calculation failed');
       }
 
+      // Get target revenue from Scaling Planner
+      const scalingResponse = await this.fetchWithTimeout(
+        `${API_URL}/api/scaling/metrics`,
+        { method: 'GET' },
+        15000,
+        'scaling-metrics-api'
+      )
+
+      let targetRevenue = 5000000; // Default 50L in paisa
+
+      if (scalingResponse.ok) {
+        const scalingResult = await scalingResponse.json();
+        if (scalingResult.success && scalingResult.data?.target_revenue) {
+          targetRevenue = scalingResult.data.target_revenue * 100; // Convert rupees to paisa
+        }
+      }
+
+      const currentRevenue = revenueResult.data?.current_revenue || 0;
+      const progressPercentage = targetRevenue > 0 ? (currentRevenue / targetRevenue) * 100 : 0;
+
       return {
-        current_revenue: result.totalRevenue || 0,
-        target_revenue: result.targetRevenue || 5000000,
-        progress_percentage: result.growth || 0
+        current_revenue: currentRevenue / 100, // Convert paisa to rupees
+        target_revenue: targetRevenue / 100, // Convert paisa to rupees
+        progress_percentage: progressPercentage
       };
 
-    } catch (error) {
-      console.error('Failed to fetch real revenue:', error);
-      throw new Error('Revenue data unavailable');
-    }
+      } catch (error) {
+        if (error.name === 'AbortError') {
+          console.log('🛑 Revenue request was aborted due to timeout')
+          throw new Error('Revenue request timeout')
+        }
+        console.error('Failed to fetch real revenue:', error);
+        throw new Error('Revenue data unavailable');
+      }
+    })
   }
 
   /**
@@ -58,7 +156,7 @@ export class RealDataService {
     total: number;
   }> {
     try {
-      const response = await fetch(`${API_URL}/api/health`, {
+      const response = await fetch(`${API_URL}/api/health/clubs`, {
         method: 'GET',
         headers: { 'Content-Type': 'application/json' }
       });
@@ -73,11 +171,14 @@ export class RealDataService {
         throw new Error(result.error || 'Health calculation failed');
       }
 
+      // Use the metrics from the working health/clubs endpoint
+      const metrics = result.metrics || {};
+
       return {
-        green: result.healthyClubs || 0,
-        yellow: 0,
-        red: 0,
-        total: result.totalClubs || 0
+        green: metrics.healthy_clubs || 0,
+        yellow: metrics.at_risk_clubs || 0,
+        red: metrics.critical_clubs || 0,
+        total: metrics.active_clubs || 0
       };
 
     } catch (error) {
@@ -151,7 +252,7 @@ export class RealDataService {
         critical_alerts: criticalAlerts,
 
         last_updated: new Date().toISOString(),
-        updates_count_today: Math.floor(Math.random() * 50) + 20 // Simulated for now
+        updates_count_today: 0 // No real data available yet
       };
 
     } catch (error) {

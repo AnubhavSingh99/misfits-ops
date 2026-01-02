@@ -1,0 +1,14 @@
+[
+  {
+    "id": 1,
+    "club_type": "existing",
+    "club_id": 6,
+    "activity_name": "Badminton",
+    "club_name": "The Badminton Squad",
+    "week_start": "2025-12-30",
+    "week_label": "Dec 30 - Jan 5",
+    "comment": "XYZ",
+    "created_at": "2026-01-01T22:43:24.475Z",
+    "created_by": "claude-user"
+  }
+]
