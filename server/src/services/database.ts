@@ -307,10 +307,24 @@ async function runMigrations() {
         email VARCHAR(255),
         phone VARCHAR(20),
         user_id UUID REFERENCES users(id),
+        team_members JSONB DEFAULT '[]',
+        display_in_activity_heads BOOLEAN DEFAULT false,
         is_active BOOLEAN DEFAULT true,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
+    `);
+
+    // Add team_members column if it doesn't exist (for existing databases)
+    await queryLocal(`
+      ALTER TABLE poc_structure
+      ADD COLUMN IF NOT EXISTS team_members JSONB DEFAULT '[]';
+    `);
+
+    // Add display_in_activity_heads column if it doesn't exist (for existing databases)
+    await queryLocal(`
+      ALTER TABLE poc_structure
+      ADD COLUMN IF NOT EXISTS display_in_activity_heads BOOLEAN DEFAULT false;
     `);
 
     // Create POC assignments table
@@ -368,6 +382,17 @@ async function runMigrations() {
     await queryLocal('CREATE INDEX IF NOT EXISTS idx_new_launches_activity ON new_club_launches(activity_name);');
     await queryLocal('CREATE INDEX IF NOT EXISTS idx_new_launches_status ON new_club_launches(launch_status);');
 
+    // Create activity categorization table
+    await queryLocal(`
+      CREATE TABLE IF NOT EXISTS activity_categorizations (
+        id SERIAL PRIMARY KEY,
+        activity_name VARCHAR(255) NOT NULL UNIQUE,
+        category VARCHAR(50) NOT NULL CHECK (category IN ('scale', 'long_tail')),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
     // Create indexes for POC and task tables
     await queryLocal('CREATE INDEX IF NOT EXISTS idx_poc_structure_type ON poc_structure(poc_type);');
     await queryLocal('CREATE INDEX IF NOT EXISTS idx_poc_structure_active ON poc_structure(is_active);');
@@ -377,6 +402,9 @@ async function runMigrations() {
     await queryLocal('CREATE INDEX IF NOT EXISTS idx_tasks_status ON operations_tasks(status);');
     await queryLocal('CREATE INDEX IF NOT EXISTS idx_tasks_priority ON operations_tasks(priority);');
     await queryLocal('CREATE INDEX IF NOT EXISTS idx_task_comments_task ON task_comments(task_id);');
+
+    // Create index for activity categorization table
+    await queryLocal('CREATE INDEX IF NOT EXISTS idx_activity_categorizations_category ON activity_categorizations(category);');
 
     logger.info('Database migrations completed');
   } catch (error) {

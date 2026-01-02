@@ -8,7 +8,7 @@ const router = express.Router();
 const query = queryLocal;
 
 
-// GET /api/poc/list - Get all POCs with assignment data
+// GET /api/poc/list - Get all POCs with assignment data and team members
 router.get('/list', async (req, res) => {
   try {
     const pocs = await queryLocal(`
@@ -27,7 +27,7 @@ router.get('/list', async (req, res) => {
       LEFT JOIN poc_assignments pa ON p.id = pa.poc_id AND pa.unassigned_at IS NULL
       LEFT JOIN clubs c ON pa.club_id = c.id
       WHERE p.is_active = true
-      GROUP BY p.id, p.name, p.poc_type, p.activities, p.cities, p.team_name
+      GROUP BY p.id, p.name, p.poc_type, p.activities, p.cities, p.team_name, p.team_members, p.display_in_activity_heads
       ORDER BY p.name
     `);
 
@@ -363,6 +363,49 @@ router.put('/:id', async (req, res) => {
   }
 });
 
+// DELETE /api/poc/:id/activity-head - Remove Activity Head role (but keep POC)
+router.delete('/:id/activity-head', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // First check if POC exists and is an activity head
+    const checkResult = await query(`
+      SELECT id, name, poc_type, display_in_activity_heads
+      FROM poc_structure
+      WHERE id = $1 AND poc_type = 'activity_head'
+    `, [id]);
+
+    if (checkResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Activity Head not found'
+      });
+    }
+
+    // Remove from activity heads display (but keep the POC)
+    const result = await query(`
+      UPDATE poc_structure
+      SET display_in_activity_heads = false
+      WHERE id = $1
+      RETURNING *
+    `, [id]);
+
+    logger.info(`Activity Head role removed: ${checkResult.rows[0].name} (ID: ${id}) - POC retained`);
+
+    res.json({
+      success: true,
+      message: `"${checkResult.rows[0].name}" removed from Activity Heads but POC retained`,
+      updatedPOC: result.rows[0]
+    });
+  } catch (error) {
+    logger.error('Failed to remove Activity Head role:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to remove Activity Head role'
+    });
+  }
+});
+
 // DELETE /api/poc/:id - Delete POC
 router.delete('/:id', async (req, res) => {
   try {
@@ -416,7 +459,7 @@ router.get('/activity-heads', async (req, res) => {
         is_active,
         created_at
       FROM poc_structure
-      WHERE poc_type = 'activity_head' AND is_active = true
+      WHERE poc_type = 'activity_head' AND is_active = true AND display_in_activity_heads = true
       ORDER BY name
     `);
 
@@ -468,10 +511,10 @@ router.post('/activity-head', async (req, res) => {
       });
     }
 
-    // Create as activity head POC
+    // Create as activity head POC with display flag set to true
     const result = await query(`
-      INSERT INTO poc_structure (name, poc_type, activities, team_name)
-      VALUES ($1, 'activity_head', $2, $3)
+      INSERT INTO poc_structure (name, poc_type, activities, team_name, display_in_activity_heads)
+      VALUES ($1, 'activity_head', $2, $3, true)
       RETURNING *
     `, [name, activities || [], team]);
 
@@ -484,6 +527,227 @@ router.post('/activity-head', async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Failed to create activity head'
+    });
+  }
+});
+
+// POST /api/poc/:pocId/team-members - Add team member to POC
+router.post('/:pocId/team-members', async (req, res) => {
+  try {
+    const { pocId } = req.params;
+    const { name, role, email, phone } = req.body;
+
+    if (!name) {
+      return res.status(400).json({
+        success: false,
+        error: 'Name is required'
+      });
+    }
+
+    // Get current team members
+    const pocResult = await query(`
+      SELECT team_members FROM poc_structure WHERE id = $1
+    `, [pocId]);
+
+    if (pocResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'POC not found'
+      });
+    }
+
+    const currentTeamMembers = pocResult.rows[0].team_members || [];
+    const newTeamMember = {
+      id: Date.now().toString(),
+      name,
+      role: role || '',
+      email: email || '',
+      phone: phone || ''
+    };
+
+    const updatedTeamMembers = [...currentTeamMembers, newTeamMember];
+
+    // Update POC with new team member
+    await query(`
+      UPDATE poc_structure
+      SET team_members = $1, updated_at = CURRENT_TIMESTAMP
+      WHERE id = $2
+    `, [JSON.stringify(updatedTeamMembers), pocId]);
+
+    res.status(201).json({
+      success: true,
+      message: 'Team member added successfully',
+      team_member: newTeamMember
+    });
+  } catch (error) {
+    logger.error('Failed to add team member:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to add team member'
+    });
+  }
+});
+
+// DELETE /api/poc/:pocId/team-members/:memberId - Remove team member
+router.delete('/:pocId/team-members/:memberId', async (req, res) => {
+  try {
+    const { pocId, memberId } = req.params;
+
+    // Get current team members
+    const pocResult = await query(`
+      SELECT team_members FROM poc_structure WHERE id = $1
+    `, [pocId]);
+
+    if (pocResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'POC not found'
+      });
+    }
+
+    const currentTeamMembers = pocResult.rows[0].team_members || [];
+    const updatedTeamMembers = currentTeamMembers.filter((member: any) => member.id !== memberId);
+
+    if (currentTeamMembers.length === updatedTeamMembers.length) {
+      return res.status(404).json({
+        success: false,
+        error: 'Team member not found'
+      });
+    }
+
+    // Update POC with team member removed
+    await query(`
+      UPDATE poc_structure
+      SET team_members = $1, updated_at = CURRENT_TIMESTAMP
+      WHERE id = $2
+    `, [JSON.stringify(updatedTeamMembers), pocId]);
+
+    res.json({
+      success: true,
+      message: 'Team member removed successfully'
+    });
+  } catch (error) {
+    logger.error('Failed to remove team member:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to remove team member'
+    });
+  }
+});
+
+// Activity Categorization endpoints
+
+// Get all activity categorizations
+router.get('/activity-categories', async (req, res) => {
+  try {
+    const result = await queryLocal(`
+      SELECT activity_name, category
+      FROM activity_categorizations
+      ORDER BY activity_name
+    `);
+
+    const categorizations = {
+      scale: [],
+      long_tail: []
+    };
+
+    result.rows.forEach(row => {
+      categorizations[row.category].push(row.activity_name);
+    });
+
+    res.json({
+      success: true,
+      categorizations
+    });
+  } catch (error) {
+    logger.error('Failed to get activity categorizations:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get activity categorizations'
+    });
+  }
+});
+
+// Update activity categorization
+router.put('/activity-categories/:activityName', async (req, res) => {
+  try {
+    const { activityName } = req.params;
+    const { category } = req.body;
+
+    if (!category || !['scale', 'long_tail'].includes(category)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid category. Must be "scale" or "long_tail"'
+      });
+    }
+
+    if (!activityName) {
+      return res.status(400).json({
+        success: false,
+        error: 'Activity name is required'
+      });
+    }
+
+    // Use INSERT ... ON CONFLICT to update existing or insert new
+    await queryLocal(`
+      INSERT INTO activity_categorizations (activity_name, category, updated_at)
+      VALUES ($1, $2, CURRENT_TIMESTAMP)
+      ON CONFLICT (activity_name)
+      DO UPDATE SET
+        category = EXCLUDED.category,
+        updated_at = CURRENT_TIMESTAMP
+    `, [activityName, category]);
+
+    res.json({
+      success: true,
+      message: `Activity "${activityName}" categorized as "${category}"`,
+      activity: activityName,
+      category
+    });
+  } catch (error) {
+    logger.error('Failed to update activity categorization:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to update activity categorization'
+    });
+  }
+});
+
+// Delete activity categorization
+router.delete('/activity-categories/:activityName', async (req, res) => {
+  try {
+    const { activityName } = req.params;
+
+    if (!activityName) {
+      return res.status(400).json({
+        success: false,
+        error: 'Activity name is required'
+      });
+    }
+
+    const result = await queryLocal(`
+      DELETE FROM activity_categorizations
+      WHERE activity_name = $1
+      RETURNING activity_name, category
+    `, [activityName]);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Activity categorization not found'
+      });
+    }
+
+    res.json({
+      success: true,
+      message: `Activity "${activityName}" categorization deleted`,
+      deleted: result.rows[0]
+    });
+  } catch (error) {
+    logger.error('Failed to delete activity categorization:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to delete activity categorization'
     });
   }
 });

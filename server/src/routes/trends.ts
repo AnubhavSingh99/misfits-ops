@@ -52,7 +52,11 @@ router.get('/revenue', async (req, res) => {
     `;
 
     const result = await queryProductionWithTunnel(revenueQuery);
-    res.json({ data: result.rows || [], success: true });
+    const data = result.rows?.map((row: any) => ({
+      ...row,
+      revenue_rupees: parseFloat(row.revenue_rupees) || 0
+    })) || [];
+    res.json({ data, success: true });
 
   } catch (error) {
     logger.error('Failed to fetch revenue trend:', error);
@@ -104,13 +108,17 @@ router.get('/meetups', async (req, res) => {
       JOIN club c ON e.club_id = c.pk
       WHERE ${dateFilter}
         AND c.status = 'ACTIVE'
-        AND e.status != 'CANCELLED'
+        AND e.state = 'CREATED'
       GROUP BY ${dateGrouping}
       ORDER BY period ASC;
     `;
 
     const result = await queryProductionWithTunnel(meetupsQuery);
-    res.json({ data: result.rows || [], success: true });
+    const data = result.rows?.map((row: any) => ({
+      ...row,
+      meetup_count: parseInt(row.meetup_count) || 0
+    })) || [];
+    res.json({ data, success: true });
 
   } catch (error) {
     logger.error('Failed to fetch meetup trend:', error);
@@ -163,14 +171,18 @@ router.get('/attendance', async (req, res) => {
       JOIN booking b ON b.event_id = e.pk
       WHERE ${dateFilter}
         AND c.status = 'ACTIVE'
-        AND e.status != 'CANCELLED'
-        AND b.status = 'CONFIRMED'
+        AND e.state = 'CREATED'
+        AND b.booking_status = 'REGISTERED'
       GROUP BY ${dateGrouping}
       ORDER BY period ASC;
     `;
 
     const result = await queryProductionWithTunnel(attendanceQuery);
-    res.json({ data: result.rows || [], success: true });
+    const data = result.rows?.map((row: any) => ({
+      ...row,
+      total_attendees: parseInt(row.total_attendees) || 0
+    })) || [];
+    res.json({ data, success: true });
 
   } catch (error) {
     logger.error('Failed to fetch attendance trend:', error);

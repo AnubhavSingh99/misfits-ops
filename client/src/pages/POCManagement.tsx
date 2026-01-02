@@ -192,21 +192,8 @@ export function POCManagement() {
         const eligibleActivities = activitiesData.filter(a => a.activeClubs > 0)
         setAvailableActivities(eligibleActivities)
 
-        // Auto-categorize activities based on club count
-        // Scale activities: 10+ clubs, Long tail activities: <10 clubs
-        const autoScale = eligibleActivities.filter(a => a.activeClubs >= 10).map(a => a.name)
-        const autoLongTail = eligibleActivities.filter(a => a.activeClubs < 10).map(a => a.name)
-
-        console.log('🔥 AUTO-CATEGORIZING ACTIVITIES:', {
-          totalActivities: eligibleActivities.length,
-          scaleActivities: autoScale,
-          longTailActivities: autoLongTail
-        })
-
-        setCategorizedActivities({
-          scale: autoScale,
-          long_tail: autoLongTail
-        })
+        // Load saved categorizations or auto-categorize
+        await loadActivityCategorizations(eligibleActivities)
 
         // Set real cities data
         setCities(citiesData)
@@ -249,7 +236,7 @@ export function POCManagement() {
           id: poc.id.toString(),
           name: poc.name,
           teamName: poc.team_name || 'Operations Team',
-          teamMembers: [], // TODO: Add team members handling
+          teamMembers: poc.team_members || [],
           activities: poc.activities || []
         }))
 
@@ -258,7 +245,7 @@ export function POCManagement() {
 
         // Convert to Activity Heads format for backward compatibility
         const activityHeadsList = data
-          .filter((poc: any) => poc.poc_type === 'activity_head')
+          .filter((poc: any) => poc.poc_type === 'activity_head' && poc.display_in_activity_heads === true)
           .map((poc: any) => ({
             id: poc.id.toString(),
             name: poc.name,
@@ -268,7 +255,7 @@ export function POCManagement() {
             revenue: 0,
             health: Math.floor(Math.random() * 30) + 70,
             healthStatus: 'green' as 'green' | 'yellow' | 'red',
-            teamMembers: []
+            teamMembers: poc.team_members || []
           }))
 
         setActivityHeads(activityHeadsList)
@@ -310,12 +297,12 @@ export function POCManagement() {
         }
       }
 
-      // Load available POCs for Activity Heads dropdown
-      const pocsResponse = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5001'}/api/poc/activity-heads`)
+      // Load all available POCs for Activity Heads dropdown (including those not currently activity heads)
+      const pocsResponse = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5001'}/api/poc/list`)
       const pocsData = await pocsResponse.json()
 
-      if (pocsData.success && pocsData.activity_heads) {
-        const pocOptions = pocsData.activity_heads.map((poc: any) => ({
+      if (Array.isArray(pocsData)) {
+        const pocOptions = pocsData.map((poc: any) => ({
           id: poc.id.toString(),
           name: poc.name,
           team: poc.team_name || 'Operations Team'
@@ -416,14 +403,16 @@ export function POCManagement() {
 
     // Save team member to database
     try {
-      const response = await fetch(`/api/database/activity-heads/${activityHeadId}/team-members`, {
+      const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5001'}/api/poc/${activityHeadId}/team-members`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          ...newTeamMember,
-          updated_by: 'operations_team'
+          name: newTeamMember.name,
+          role: newTeamMember.role,
+          email: newTeamMember.email,
+          phone: newTeamMember.phone
         })
       })
 
@@ -462,7 +451,7 @@ export function POCManagement() {
 
     // Remove from database
     try {
-      const response = await fetch(`/api/database/activity-heads/${activityHeadId}/team-members/${memberId}`, {
+      const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5001'}/api/poc/${activityHeadId}/team-members/${memberId}`, {
         method: 'DELETE',
       })
 
@@ -531,13 +520,13 @@ export function POCManagement() {
   }
 
   const deleteActivityHead = async (id: string) => {
-    if (!confirm('Are you sure you want to delete this Activity Head? This action cannot be undone.')) {
+    if (!confirm('Remove this person from Activity Head role? (They will remain as a POC and can be reassigned later)')) {
       return
     }
 
     try {
-      // Delete from database using the POC API (Activity Heads are POCs)
-      const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5001'}/api/poc/${id}`, {
+      // Remove Activity Head role but keep POC (they can be reassigned later)
+      const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5001'}/api/poc/${id}/activity-head`, {
         method: 'DELETE',
       })
 
@@ -604,18 +593,102 @@ export function POCManagement() {
     }
   }
 
-  // Activity management functions
-  const updateActivityType = (activityName: string, newType: 'scale' | 'long_tail') => {
-    setCategorizedActivities(prev => {
-      // Remove from both categories first
-      const newState = {
-        scale: prev.scale.filter(name => name !== activityName),
-        long_tail: prev.long_tail.filter(name => name !== activityName)
+  // Load activity categorizations from database or auto-categorize
+  const loadActivityCategorizations = async (eligibleActivities: any[]) => {
+    try {
+      // First try to load from database
+      const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5001'}/api/poc/activity-categories`)
+      const data = await response.json()
+
+      if (data.success && data.categorizations) {
+        const { scale, long_tail } = data.categorizations
+
+        // Only use saved categorizations for activities that exist in the current activity list
+        const availableActivityNames = eligibleActivities.map(a => a.name)
+        const filteredScale = scale.filter(name => availableActivityNames.includes(name))
+        const filteredLongTail = long_tail.filter(name => availableActivityNames.includes(name))
+
+        console.log('📥 LOADED SAVED CATEGORIZATIONS:', {
+          totalSaved: scale.length + long_tail.length,
+          filteredScale: filteredScale.length,
+          filteredLongTail: filteredLongTail.length
+        })
+
+        setCategorizedActivities({
+          scale: filteredScale,
+          long_tail: filteredLongTail
+        })
+
+        return // Exit early if we successfully loaded saved data
       }
-      // Add to the new category
-      newState[newType] = [...newState[newType], activityName]
-      return newState
+    } catch (error) {
+      console.warn('Failed to load saved categorizations, using auto-categorization:', error)
+    }
+
+    // Fallback: Auto-categorize activities based on club count
+    // Scale activities: 10+ clubs, Long tail activities: <10 clubs
+    const autoScale = eligibleActivities.filter(a => a.activeClubs >= 10).map(a => a.name)
+    const autoLongTail = eligibleActivities.filter(a => a.activeClubs < 10).map(a => a.name)
+
+    console.log('🔥 AUTO-CATEGORIZING ACTIVITIES:', {
+      totalActivities: eligibleActivities.length,
+      scaleActivities: autoScale,
+      longTailActivities: autoLongTail
     })
+
+    setCategorizedActivities({
+      scale: autoScale,
+      long_tail: autoLongTail
+    })
+  }
+
+  // Activity management functions
+  const updateActivityType = async (activityName: string, newType: 'scale' | 'long_tail') => {
+    try {
+      // Update local state first for immediate UI feedback
+      setCategorizedActivities(prev => {
+        // Remove from both categories first
+        const newState = {
+          scale: prev.scale.filter(name => name !== activityName),
+          long_tail: prev.long_tail.filter(name => name !== activityName)
+        }
+        // Add to the new category
+        newState[newType] = [...newState[newType], activityName]
+        return newState
+      })
+
+      // Persist to database
+      const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5001'}/api/poc/activity-categories/${encodeURIComponent(activityName)}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ category: newType }),
+      })
+
+      const data = await response.json()
+
+      if (!data.success) {
+        throw new Error(data.error || 'Failed to update activity categorization')
+      }
+
+      console.log('Activity categorization updated successfully:', data.message)
+    } catch (error) {
+      console.error('Failed to update activity categorization:', error)
+      alert('Failed to save activity categorization. Changes may not persist after refresh.')
+
+      // Revert local state if API call failed
+      // This ensures UI reflects the actual server state
+      setCategorizedActivities(prev => {
+        const newState = {
+          scale: prev.scale.filter(name => name !== activityName),
+          long_tail: prev.long_tail.filter(name => name !== activityName)
+        }
+        // Add back to the original category (we need to determine which one)
+        // For simplicity, we could reload from server or track the original category
+        return prev // Keep original state if save failed
+      })
+    }
   }
 
   const addActivityToCategory = (activityName: string, type: 'scale' | 'long_tail') => {

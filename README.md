@@ -92,16 +92,8 @@ This runs both frontend (port 3000) and backend (port 5000) concurrently.
 
 ## Database Connection
 
-### Using Existing Misfits Database
-The system can connect to the existing Misfits database via SSH tunnel:
-
-```bash
-# Establish SSH tunnel (run in separate terminal)
-ssh -i ~/Downloads/claude-control-key -f -N -L 5433:misfits.cgncbvolnhe7.ap-south-1.rds.amazonaws.com:5432 claude-control@15.207.255.212
-
-# Connect to database
-psql -h localhost -p 5433 -U dev misfits
-```
+### Automatic Database Connection
+The system automatically connects to the Misfits production database using on-demand SSH tunnels. No manual setup required - the server establishes tunnels as needed.
 
 ### Database Schema
 The system creates its own tables for operations management:

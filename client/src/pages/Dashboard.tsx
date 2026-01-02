@@ -21,6 +21,7 @@ import { SystemState, TeamPerformance, FilterOptions } from '../types/core';
 import { api } from '../services/api';
 import { healthEngine } from '../services/healthEngine';
 import RealDataService from '../services/realDataService';
+import { LineChart } from '../components/LineChart';
 
 interface DashboardProps {}
 
@@ -107,17 +108,42 @@ export function Dashboard({}: DashboardProps) {
         ...(trendFilters.endDate && { endDate: trendFilters.endDate })
       });
 
+      console.log('Loading trend data from:', API_URL, 'with params:', params.toString());
+
       const [revenueRes, meetupsRes, attendanceRes] = await Promise.all([
         fetch(`${API_URL}/api/trends/revenue?${params}`),
         fetch(`${API_URL}/api/trends/meetups?${params}`),
         fetch(`${API_URL}/api/trends/attendance?${params}`)
       ]);
 
-      const [revenueData, meetupsData, attendanceData] = await Promise.all([
-        revenueRes.json(),
-        meetupsRes.json(),
-        attendanceRes.json()
-      ]);
+      // Handle each response individually
+      let revenueData = { data: [] };
+      let meetupsData = { data: [] };
+      let attendanceData = { data: [] };
+
+      try {
+        revenueData = revenueRes.ok ? await revenueRes.json() : { data: [] };
+      } catch (e) {
+        console.error('Failed to parse revenue data:', e);
+      }
+
+      try {
+        meetupsData = meetupsRes.ok ? await meetupsRes.json() : { data: [] };
+      } catch (e) {
+        console.error('Failed to parse meetups data:', e);
+      }
+
+      try {
+        attendanceData = attendanceRes.ok ? await attendanceRes.json() : { data: [] };
+      } catch (e) {
+        console.error('Failed to parse attendance data:', e);
+      }
+
+      console.log('Loaded trend data:', {
+        revenue: revenueData.data?.length || 0,
+        meetups: meetupsData.data?.length || 0,
+        attendance: attendanceData.data?.length || 0
+      });
 
       setTrendData({
         revenue: revenueData.data || [],
@@ -127,7 +153,7 @@ export function Dashboard({}: DashboardProps) {
 
     } catch (error) {
       console.error('Failed to load trend data:', error);
-      setTrendData({ revenue: [], meetups: [], attendance: [] });
+      // Don't clear existing data on error, just log it
     }
   };
 
@@ -546,21 +572,22 @@ export function Dashboard({}: DashboardProps) {
               <h3 className="text-lg font-semibold text-green-800 mb-4">Revenue Trend</h3>
               <div className="h-48 bg-white rounded-lg p-4 border border-green-200">
                 {trendData.revenue.length > 0 ? (
-                  <div className="h-full flex flex-col justify-between">
-                    <div className="flex justify-between items-center mb-2">
+                  <div>
+                    <div className="flex justify-between items-center mb-4">
                       <span className="text-sm font-medium text-gray-600">Total Revenue</span>
                       <span className="text-lg font-bold text-green-600">
                         {formatRevenue(trendData.revenue.reduce((sum: number, item: any) => sum + (item.revenue_rupees || 0), 0))}
                       </span>
                     </div>
-                    <div className="space-y-2">
-                      {trendData.revenue.slice(-4).map((item: any, index: number) => (
-                        <div key={index} className="flex justify-between text-sm">
-                          <span className="text-gray-600">{new Date(item.period).toLocaleDateString()}</span>
-                          <span className="font-medium">{formatRevenue(item.revenue_rupees || 0)}</span>
-                        </div>
-                      ))}
-                    </div>
+                    <LineChart
+                      data={trendData.revenue.map((item: any) => ({
+                        period: item.period,
+                        value: item.revenue_rupees || 0
+                      }))}
+                      color="#16a34a"
+                      label=""
+                      formatter={formatRevenue}
+                    />
                   </div>
                 ) : (
                   <div className="text-center text-gray-500 mt-16">
@@ -576,21 +603,22 @@ export function Dashboard({}: DashboardProps) {
               <h3 className="text-lg font-semibold text-blue-800 mb-4">Meetup Trend</h3>
               <div className="h-48 bg-white rounded-lg p-4 border border-blue-200">
                 {trendData.meetups.length > 0 ? (
-                  <div className="h-full flex flex-col justify-between">
-                    <div className="flex justify-between items-center mb-2">
+                  <div>
+                    <div className="flex justify-between items-center mb-4">
                       <span className="text-sm font-medium text-gray-600">Total Meetups</span>
                       <span className="text-lg font-bold text-blue-600">
                         {trendData.meetups.reduce((sum: number, item: any) => sum + (item.meetup_count || 0), 0)}
                       </span>
                     </div>
-                    <div className="space-y-2">
-                      {trendData.meetups.slice(-4).map((item: any, index: number) => (
-                        <div key={index} className="flex justify-between text-sm">
-                          <span className="text-gray-600">{new Date(item.period).toLocaleDateString()}</span>
-                          <span className="font-medium">{item.meetup_count || 0} meetups</span>
-                        </div>
-                      ))}
-                    </div>
+                    <LineChart
+                      data={trendData.meetups.map((item: any) => ({
+                        period: item.period,
+                        value: item.meetup_count || 0
+                      }))}
+                      color="#2563eb"
+                      label=""
+                      formatter={(v) => `${v} meetups`}
+                    />
                   </div>
                 ) : (
                   <div className="text-center text-gray-500 mt-16">
@@ -606,21 +634,22 @@ export function Dashboard({}: DashboardProps) {
               <h3 className="text-lg font-semibold text-purple-800 mb-4">Attendance Trend</h3>
               <div className="h-48 bg-white rounded-lg p-4 border border-purple-200">
                 {trendData.attendance.length > 0 ? (
-                  <div className="h-full flex flex-col justify-between">
-                    <div className="flex justify-between items-center mb-2">
+                  <div>
+                    <div className="flex justify-between items-center mb-4">
                       <span className="text-sm font-medium text-gray-600">Total Attendees</span>
                       <span className="text-lg font-bold text-purple-600">
                         {trendData.attendance.reduce((sum: number, item: any) => sum + (item.total_attendees || 0), 0)}
                       </span>
                     </div>
-                    <div className="space-y-2">
-                      {trendData.attendance.slice(-4).map((item: any, index: number) => (
-                        <div key={index} className="flex justify-between text-sm">
-                          <span className="text-gray-600">{new Date(item.period).toLocaleDateString()}</span>
-                          <span className="font-medium">{item.total_attendees || 0} people</span>
-                        </div>
-                      ))}
-                    </div>
+                    <LineChart
+                      data={trendData.attendance.map((item: any) => ({
+                        period: item.period,
+                        value: item.total_attendees || 0
+                      }))}
+                      color="#7c3aed"
+                      label=""
+                      formatter={(v) => `${v} people`}
+                    />
                   </div>
                 ) : (
                   <div className="text-center text-gray-500 mt-16">
