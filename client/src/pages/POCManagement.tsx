@@ -318,60 +318,71 @@ export function POCManagement() {
   const addActivityHead = async () => {
     if (newActivityHead.name && newActivityHead.activities.length > 0) {
       try {
-        // Save to database using the specific Activity Head API endpoint
-        const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5001'}/api/poc/activity-head`, {
-          method: 'POST',
+        console.log('Starting activity head assignment process...')
+        console.log('Form data:', { name: newActivityHead.name, activities: newActivityHead.activities, team: newActivityHead.team })
+
+        // Find the existing POC
+        const selectedPOC = pocs.find(poc => poc.name === newActivityHead.name)
+        if (!selectedPOC) {
+          console.error('Selected POC not found:', newActivityHead.name)
+          alert('Selected POC not found. Please select a valid POC from the list.')
+          return
+        }
+
+        console.log('Found POC:', selectedPOC)
+        const apiUrl = `${import.meta.env.VITE_API_URL || 'http://localhost:5001'}/api/poc/${selectedPOC.id}`
+        console.log('Making PUT request to:', apiUrl)
+
+        const requestBody = {
+          name: newActivityHead.name,
+          team_name: newActivityHead.team,
+          activities: newActivityHead.activities,
+          display_in_activity_heads: true // Make it appear in Activity Heads section
+        }
+        console.log('Request body:', JSON.stringify(requestBody, null, 2))
+
+        // Update the existing POC to assign activities and set it as Activity Head
+        const response = await fetch(apiUrl, {
+          method: 'PUT',
           headers: {
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({
-            name: newActivityHead.name,
-            team: newActivityHead.team,
-            activities: newActivityHead.activities
-          })
+          body: JSON.stringify(requestBody)
         })
 
+        console.log('Response status:', response.status)
+        console.log('Response ok:', response.ok)
+
         if (!response.ok) {
-          throw new Error('Failed to save activity head to database')
+          const errorText = await response.text()
+          console.error('Response error:', errorText)
+          throw new Error(`Failed to update POC with activity assignment: ${response.status} ${errorText}`)
         }
 
-        const result = await response.json()
+        const responseData = await response.json()
+        console.log('Response data:', responseData)
 
-        const newHead: ActivityHead = {
-          id: result.id || Date.now().toString(),
-          name: newActivityHead.name,
-          activities: newActivityHead.activities,
-          team: newActivityHead.team,
-          clubs: 0, // Will be calculated based on activities
-          revenue: 0, // Will be calculated based on activities
-          health: Math.floor(Math.random() * 30) + 70, // 70-100%
-          healthStatus: 'green',
-          teamMembers: []
-        }
-
-        // Update local state
-        setActivityHeads([...activityHeads, newHead])
+        // Reset form
         setNewActivityHead({ name: '', activities: [], team: availableTeams[0] || '' })
 
-        // Refresh teams and POCs data after adding
+        // Reload all data from database to ensure consistency
+        // This will load the updated POC with display_in_activity_heads: true
+        await loadPOCs()
         await loadTeamsAndPOCs()
 
-        // Also add to POC list for consistency
-        const newPOC: POC = {
-          id: result.id || Date.now().toString(),
-          name: newActivityHead.name,
-          teamName: newActivityHead.team,
-          teamMembers: [],
-          activities: newActivityHead.activities
-        }
-        setPocs([...pocs, newPOC])
-
-        console.log('Activity head saved successfully')
+        console.log('POC updated with activity assignment successfully')
+        alert('Activity assignment completed successfully!')
       } catch (error) {
-        console.error('Failed to save activity head:', error)
-        alert('Failed to save activity head. Please try again.')
+        console.error('Failed to assign activities to POC:', error)
+        alert(`Failed to assign activities to POC: ${error.message}`)
       }
       setShowAddActivityHead(false)
+    } else {
+      console.warn('Form validation failed:', {
+        name: newActivityHead.name,
+        activitiesLength: newActivityHead.activities.length
+      })
+      alert('Please select a POC and at least one activity.')
     }
   }
 
@@ -398,6 +409,19 @@ export function POCManagement() {
     })
 
     setActivityHeads(updatedHeads)
+
+    // Also update the POCs state so that the POC table reflects the changes
+    const updatedPocs = pocs.map(poc => {
+      if (poc.id === activityHeadId) {
+        return {
+          ...poc,
+          teamMembers: [...poc.teamMembers, newTeamMember]
+        }
+      }
+      return poc
+    })
+    setPocs(updatedPocs)
+
     setNewMember({ name: '', role: '', email: '', phone: '' })
     setShowAddMember(null)
 
@@ -448,6 +472,18 @@ export function POCManagement() {
       return head
     })
     setActivityHeads(updatedHeads)
+
+    // Also update the POCs state
+    const updatedPocs = pocs.map(poc => {
+      if (poc.id === activityHeadId) {
+        return {
+          ...poc,
+          teamMembers: poc.teamMembers.filter(member => member.id !== memberId)
+        }
+      }
+      return poc
+    })
+    setPocs(updatedPocs)
 
     // Remove from database
     try {
@@ -691,12 +727,41 @@ export function POCManagement() {
     }
   }
 
-  const addActivityToCategory = (activityName: string, type: 'scale' | 'long_tail') => {
-    setCategorizedActivities(prev => ({
-      ...prev,
-      [type]: [...prev[type], activityName]
-    }))
-    setShowActivitySelector(null)
+  const addActivityToCategory = async (activityName: string, type: 'scale' | 'long_tail') => {
+    try {
+      // Update local state first for immediate UI feedback
+      setCategorizedActivities(prev => ({
+        ...prev,
+        [type]: [...prev[type], activityName]
+      }))
+
+      // Persist to database (same as updateActivityType)
+      const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5001'}/api/poc/activity-categories/${encodeURIComponent(activityName)}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ category: type }),
+      })
+
+      const data = await response.json()
+
+      if (!data.success) {
+        throw new Error(data.error || 'Failed to save activity categorization')
+      }
+
+      console.log('Activity categorization saved:', data.message)
+      setShowActivitySelector(null)
+    } catch (error) {
+      console.error('Failed to save activity categorization:', error)
+      alert('Failed to save activity categorization. Changes may not persist after refresh.')
+
+      // Revert local state if API call failed
+      setCategorizedActivities(prev => ({
+        ...prev,
+        [type]: prev[type].filter(name => name !== activityName)
+      }))
+    }
   }
 
   const getUnassignedActivities = () => {
@@ -729,19 +794,15 @@ export function POCManagement() {
 
         const result = await response.json()
 
-        const poc: POC = {
-          id: result.id || Date.now().toString(),
-          name: newPOC.name,
-          teamName: newPOC.teamName,
-          teamMembers: newPOC.teamMembers,
-          activities: newPOC.activities
-        }
+        // Instead of manually adding to state, reload the entire POC list from database
+        // This ensures we have the correct database ID and all data is consistent
+        await loadPOCs()
+        await loadTeamsAndPOCs()
 
-        setPocs([...pocs, poc])
         setNewPOC({ name: '', teamName: '', teamMembers: [], activities: [] })
         setShowAddPOC(false)
 
-        console.log('POC saved successfully')
+        console.log('POC saved successfully:', result.name || newPOC.name)
       } catch (error) {
         console.error('Failed to save POC:', error)
         alert('Failed to save POC. Please try again.')
@@ -1738,9 +1799,6 @@ export function POCManagement() {
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Activities</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Team</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Clubs</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Revenue</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Health</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
                 </tr>
               </thead>
@@ -1845,15 +1903,6 @@ export function POCManagement() {
                           </span>
                         )}
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                        {head.clubs}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                        {formatRevenue(head.revenue)}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        {getHealthBadge(head.health, head.healthStatus)}
-                      </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
                         <div className="flex gap-2">
                           <button
@@ -1881,7 +1930,7 @@ export function POCManagement() {
                     {/* Team Members Section */}
                     {showTeamMembers === head.id && (
                       <tr>
-                        <td colSpan={7} className="px-6 py-4 bg-gray-50">
+                        <td colSpan={4} className="px-6 py-4 bg-gray-50">
                           <div className="space-y-3">
                             <div className="flex items-center justify-between">
                               <h4 className="text-sm font-medium text-gray-900">Team Members</h4>

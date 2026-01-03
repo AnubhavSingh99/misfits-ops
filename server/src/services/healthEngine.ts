@@ -225,18 +225,21 @@ export function calculateClubHealth(clubData: {
     revenue_achievement: 100 // Revenue should never be a factor for health (for any club)
   });
 
-  // Determine health status for UI
+  // Determine health status for UI - dormant takes priority over capacity health
   let healthStatusForUI = 'healthy';
   if (clubData.club_status === 'INACTIVE') {
     healthStatusForUI = 'inactive';
   } else if (clubData.is_dormant) {
-    // Club has had events in the last 2 months but none last week = dormant
+    // Dormant = 1 week no events (but had events 2 weeks ago)
     healthStatusForUI = 'dormant';
-  } else if (overallHealth === 'red' || autoDetectedIssues.length > 0) {
+  } else if (capacityHealth === 'red') {
+    // Critical = Red capacity health OR 2+ weeks without events
     healthStatusForUI = 'critical';
-  } else if (overallHealth === 'yellow') {
+  } else if (capacityHealth === 'yellow') {
+    // At Risk = Yellow capacity health
     healthStatusForUI = 'at_risk';
-  } else if (overallHealth === 'green') {
+  } else if (capacityHealth === 'green') {
+    // Healthy = Green capacity health
     healthStatusForUI = 'healthy';
   }
 

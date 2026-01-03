@@ -335,7 +335,18 @@ router.post('/', async (req, res) => {
 router.put('/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, poc_type, activities = [], cities = [], team_name, email, phone, is_active } = req.body;
+    const {
+      name,
+      poc_type,
+      activities = [],
+      cities = [],
+      team_name,
+      email,
+      phone,
+      is_active,
+      team_members = [],
+      display_in_activity_heads
+    } = req.body;
 
     const result = await query(`
       UPDATE poc_structure
@@ -347,10 +358,12 @@ router.put('/:id', async (req, res) => {
           email = COALESCE($6, email),
           phone = COALESCE($7, phone),
           is_active = COALESCE($8, is_active),
+          team_members = COALESCE($9, team_members),
+          display_in_activity_heads = COALESCE($10, display_in_activity_heads),
           updated_at = CURRENT_TIMESTAMP
-      WHERE id = $9
+      WHERE id = $11
       RETURNING *
-    `, [name, poc_type, activities, cities, team_name, email, phone, is_active, id]);
+    `, [name, poc_type, activities, cities, team_name, email, phone, is_active, JSON.stringify(team_members), display_in_activity_heads, id]);
 
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'POC not found' });
@@ -382,10 +395,12 @@ router.delete('/:id/activity-head', async (req, res) => {
       });
     }
 
-    // Remove from activity heads display (but keep the POC)
+    // Remove from activity heads display and clear activities (but keep the POC)
     const result = await query(`
       UPDATE poc_structure
-      SET display_in_activity_heads = false
+      SET display_in_activity_heads = false,
+          activities = '{}',
+          updated_at = CURRENT_TIMESTAMP
       WHERE id = $1
       RETURNING *
     `, [id]);

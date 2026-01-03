@@ -3,6 +3,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
 import compression from 'compression';
+import rateLimit from 'express-rate-limit';
 import dotenv from 'dotenv';
 import path from 'path';
 import { createServer } from 'http';
@@ -71,6 +72,27 @@ app.use(morgan('combined'));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
+// Rate limiting for API endpoints
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // limit each IP to 100 requests per windowMs
+  message: 'Too many requests from this IP, please try again later',
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// Stricter rate limiting for heavy endpoints
+const heavyEndpointLimiter = rateLimit({
+  windowMs: 5 * 60 * 1000, // 5 minutes
+  max: 20, // limit each IP to 20 requests per windowMs for heavy endpoints
+  message: 'Too many requests to this endpoint, please try again later',
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// Apply rate limiting to API routes
+app.use('/api', apiLimiter);
+
 // Add no-cache headers to all API responses
 app.use('/api', (req, res, next) => {
   res.set({
@@ -97,7 +119,7 @@ app.use('/api/poc', pocRoutes);
 app.use('/api/test', testRoutes);
 app.use('/api/revenue', revenueRoutes);
 app.use('/api/database', databaseRoutes);
-app.use('/api/health', healthRoutes);
+app.use('/api/health', heavyEndpointLimiter, healthRoutes);
 app.use('/api/scaling', scalingRoutes);
 app.use('/api/targets', targetsRoutes);
 app.use('/api/meetups', meetupsRoutes);
@@ -163,6 +185,19 @@ async function startServer() {
       logger.info(`🚀 Misfits Operations Server running on port ${PORT}`);
       logger.info(`📊 Environment: ${process.env.NODE_ENV || 'development'}`);
       logger.info(`🔗 Frontend URL: ${process.env.FRONTEND_URL || 'http://localhost:3000'}`);
+
+      // Memory monitoring - log memory usage every 5 minutes
+      setInterval(() => {
+        const memUsage = process.memoryUsage();
+        const heapUsedMB = Math.round(memUsage.heapUsed / 1024 / 1024);
+        const heapTotalMB = Math.round(memUsage.heapTotal / 1024 / 1024);
+
+        if (heapUsedMB > 500) { // Alert if heap usage > 500MB
+          logger.warn(`High memory usage: ${heapUsedMB}MB heap used (${heapTotalMB}MB total)`);
+        } else {
+          logger.info(`Memory usage: ${heapUsedMB}MB heap used (${heapTotalMB}MB total)`);
+        }
+      }, 5 * 60 * 1000); // 5 minutes
     });
 
     // Graceful shutdown

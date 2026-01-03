@@ -69,8 +69,8 @@ router.get('/clubs', async (req, res) => {
           e.max_people,
           e.created_at
         FROM event e
-        WHERE e.created_at >= DATE_TRUNC('week', CURRENT_DATE - INTERVAL '1 week')
-          AND e.created_at < DATE_TRUNC('week', CURRENT_DATE)
+        WHERE e.created_at >= DATE_TRUNC('week', CURRENT_DATE - INTERVAL '1 week') + INTERVAL '1 day'
+          AND e.created_at < DATE_TRUNC('week', CURRENT_DATE) + INTERVAL '1 day'
       ),
       last_week_bookings AS (
         -- Get bookings from last week events (Claude Control logic)
@@ -194,8 +194,8 @@ router.get('/clubs', async (req, res) => {
           e.max_people,
           e.created_at
         FROM event e
-        WHERE e.created_at >= DATE_TRUNC('week', CURRENT_DATE - INTERVAL '2 weeks')
-          AND e.created_at < DATE_TRUNC('week', CURRENT_DATE - INTERVAL '1 week')
+        WHERE e.created_at >= DATE_TRUNC('week', CURRENT_DATE - INTERVAL '2 weeks') + INTERVAL '1 day'
+          AND e.created_at < DATE_TRUNC('week', CURRENT_DATE - INTERVAL '1 week') + INTERVAL '1 day'
       ),
       two_weeks_ago_bookings AS (
         -- Get bookings from two weeks ago events
@@ -269,7 +269,8 @@ router.get('/clubs', async (req, res) => {
         llwd.last_to_last_week_repeat_rate_percentage,
         llwd.last_to_last_week_avg_rating,
         llwd.last_to_last_week_revenue,
-        MAX(e.created_at) as last_event_date
+        MAX(e.created_at) as last_event_date,
+        (SELECT COUNT(*) FROM last_week_events lwe WHERE lwe.club_id = lwd.club_pk) as last_week_events
       FROM last_week_data lwd
       LEFT JOIN last_to_last_week_data llwd ON lwd.club_pk = llwd.club_pk
       LEFT JOIN event e ON lwd.club_pk = e.club_id
@@ -304,9 +305,13 @@ router.get('/clubs', async (req, res) => {
           last_week_avg_rating: row.last_to_last_week_avg_rating || 0,
           last_week_revenue: row.last_to_last_week_revenue || 0,
           has_recent_historical_events: row.has_recent_historical_events || false,
-          // Override for dormancy detection: if capacity is 0 and has historical events, it's dormant
-          is_dormant: (row.last_week_capacity_percentage || 0) === 0 && (row.has_recent_historical_events === true)
+          // Dormancy logic: 1 week no events = dormant, 2+ weeks no events = critical
+          is_dormant: Number(row.last_week_capacity_percentage || 0) === 0 &&
+                     Number(row.last_to_last_week_capacity_percentage || 0) > 0 &&
+                     (row.has_recent_historical_events === true)
         };
+
+
 
         const healthResult = calculateClubHealth(clubHealthData);
 
