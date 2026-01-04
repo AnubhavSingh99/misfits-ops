@@ -35,6 +35,9 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || (process.env.NODE_ENV === 'production' ? 80 : 5000);
 
+// Trust proxy - required for rate limiting behind Nginx
+app.set('trust proxy', true);
+
 // Security middleware
 app.use(helmet());
 app.use(cors({
@@ -75,7 +78,7 @@ app.use(express.urlencoded({ extended: true }));
 // Rate limiting for API endpoints
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // limit each IP to 100 requests per windowMs
+  max: 1000, // limit each IP to 1000 requests per windowMs
   message: 'Too many requests from this IP, please try again later',
   standardHeaders: true,
   legacyHeaders: false,

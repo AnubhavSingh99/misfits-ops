@@ -99,7 +99,7 @@ export function Dashboard({}: DashboardProps) {
   const loadTrendData = async () => {
     try {
       const API_URL = process.env.NODE_ENV === 'production'
-        ? 'https://misfits-backend-production.up.railway.app'
+        ? 'https://operations.misfits.net.in'
         : 'http://localhost:5001';
 
       const params = new URLSearchParams({
