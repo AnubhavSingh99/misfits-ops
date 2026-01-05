@@ -1,5 +1,5 @@
 import { Client, Pool } from 'pg';
-import { exec } from 'child_process';
+import { exec, spawn, ChildProcess } from 'child_process';
 import { promisify } from 'util';
 import { logger } from '../utils/logger';
 
@@ -22,12 +22,13 @@ let tunnelPool: Pool | null = null;
 let tunnelPort: number | null = null;
 let tunnelEstablished = false;
 let establishingTunnel = false;
+let sshProcess: ChildProcess | null = null;
 
-// Retry configuration
+// Retry configuration - Reduced to prevent SSH tunnel storms
 const RETRY_CONFIG = {
-  maxRetries: 5,
-  baseDelay: 1000, // 1 second
-  maxDelay: 30000, // 30 seconds
+  maxRetries: 2, // Reduced from 5 to 2 (total 3 attempts)
+  baseDelay: 2000, // 2 seconds
+  maxDelay: 10000, // 10 seconds
   backoffMultiplier: 2
 };
 
@@ -85,22 +86,80 @@ async function initializeTunnel(): Promise<void> {
       // Find available port
       tunnelPort = await findAvailablePort();
 
-      // Establish SSH tunnel with retry-friendly options
-      const sshCommand = `ssh -i "${SSH_CONFIG.keyFile}" -o StrictHostKeyChecking=no -o ConnectTimeout=30 -o ServerAliveInterval=60 -o ServerAliveCountMax=3 -f -N -L ${tunnelPort}:${SSH_CONFIG.dbHost}:${SSH_CONFIG.dbPort} ${SSH_CONFIG.sshUser}@${SSH_CONFIG.sshHost}`;
+      // Establish SSH tunnel in foreground (no -f flag)
+      const sshArgs = [
+        '-i', SSH_CONFIG.keyFile,
+        '-o', 'StrictHostKeyChecking=no',  // Accept both new and changed keys
+        '-o', 'UserKnownHostsFile=/home/ec2-user/.ssh/known_hosts',
+        '-o', 'ConnectTimeout=30',
+        '-o', 'ServerAliveInterval=60',
+        '-o', 'ServerAliveCountMax=3',
+        '-N', // No command execution
+        '-L', `${tunnelPort}:${SSH_CONFIG.dbHost}:${SSH_CONFIG.dbPort}`,
+        `${SSH_CONFIG.sshUser}@${SSH_CONFIG.sshHost}`
+      ];
 
       logger.info(`Establishing SSH tunnel on port ${tunnelPort} (attempt ${attempt + 1}/${RETRY_CONFIG.maxRetries + 1})...`);
-      await execAsync(sshCommand);
 
-      // Wait for tunnel to establish with verification
-      await sleep(3000);
+      // Spawn SSH process in foreground
+      await new Promise<void>((resolve, reject) => {
+        sshProcess = spawn('ssh', sshArgs, {
+          stdio: ['ignore', 'pipe', 'pipe']
+        });
 
-      // Verify tunnel is working by testing the port
-      try {
-        await execAsync(`nc -z localhost ${tunnelPort}`);
-        logger.info(`SSH tunnel verified on port ${tunnelPort}`);
-      } catch {
-        throw new Error(`SSH tunnel port ${tunnelPort} not accessible`);
-      }
+        let sshErrorOutput = '';
+        let hostKeyIssue = false;
+
+        sshProcess.stderr?.on('data', (data) => {
+          const message = data.toString();
+          sshErrorOutput += message;
+
+          // Check for host key change errors
+          if (message.includes('REMOTE HOST IDENTIFICATION HAS CHANGED') ||
+              message.includes('Offending') ||
+              message.includes('Host key verification failed')) {
+            hostKeyIssue = true;
+          }
+        });
+
+        sshProcess.on('error', (error) => {
+          reject(new Error(`SSH spawn failed: ${error.message}`));
+        });
+
+        sshProcess.on('exit', (code, signal) => {
+          if (code !== null && code !== 0) {
+            reject(new Error(`SSH exited with code ${code}: ${sshErrorOutput}`));
+          } else if (signal) {
+            reject(new Error(`SSH killed with signal ${signal}`));
+          }
+        });
+
+        // Wait for tunnel to establish
+        setTimeout(async () => {
+          // Check if process is still alive and tunnel is working
+          if (sshProcess && !sshProcess.killed) {
+            try {
+              await execAsync(`nc -z localhost ${tunnelPort}`);
+              logger.info(`SSH tunnel verified on port ${tunnelPort} (PID: ${sshProcess.pid})`);
+              resolve();
+            } catch (ncError) {
+              // If host key issue detected, handle it
+              if (hostKeyIssue) {
+                logger.warn(`Host key changed for ${SSH_CONFIG.sshHost}, removing old key...`);
+                try {
+                  await execAsync(`ssh-keygen -R ${SSH_CONFIG.sshHost} 2>/dev/null || true`);
+                  logger.info('Old host key removed, please retry');
+                } catch (cleanupError) {
+                  logger.warn('Failed to remove old host key:', cleanupError);
+                }
+              }
+              reject(new Error(`SSH tunnel port ${tunnelPort} not accessible: ${sshErrorOutput}`));
+            }
+          } else {
+            reject(new Error(`SSH process died: ${sshErrorOutput}`));
+          }
+        }, 3000);
+      });
 
       // Create connection pool through tunnel
       tunnelPool = new Pool({
@@ -235,7 +294,7 @@ export async function queryProductionWithTunnel(text: string, params?: any[]): P
   }
 }
 
-// Cleanup function with proper pool management
+// Cleanup function with proper pool and process management
 let cleaningUp = false;
 async function cleanup() {
   if (cleaningUp) return; // Prevent multiple cleanup calls
@@ -247,10 +306,12 @@ async function cleanup() {
   // Store current values before nulling
   const currentPool = tunnelPool;
   const currentPort = tunnelPort;
+  const currentSshProcess = sshProcess;
 
   // Null the global references immediately
   tunnelPool = null;
   tunnelPort = null;
+  sshProcess = null;
 
   if (currentPool) {
     try {
@@ -262,13 +323,23 @@ async function cleanup() {
     }
   }
 
-  if (currentPort) {
+  // Kill SSH process directly by reference (foreground approach)
+  if (currentSshProcess && !currentSshProcess.killed) {
     try {
-      await execAsync(`lsof -ti:${currentPort} | xargs kill`);
-      logger.info(`Cleaned up SSH tunnel on port ${currentPort}`);
+      currentSshProcess.kill('SIGTERM');
+      logger.info(`Killed SSH tunnel process (PID: ${currentSshProcess.pid})`);
+
+      // Wait a moment for graceful termination
+      await sleep(1000);
+
+      // Force kill if still alive
+      if (!currentSshProcess.killed) {
+        currentSshProcess.kill('SIGKILL');
+        logger.info('Force killed SSH tunnel process');
+      }
     } catch (error) {
-      // Ignore cleanup errors - tunnel might already be closed
-      logger.debug('SSH tunnel cleanup error (ignored):', error);
+      // Ignore cleanup errors - process might already be dead
+      logger.debug('SSH process cleanup error (ignored):', error);
     }
   }
 
