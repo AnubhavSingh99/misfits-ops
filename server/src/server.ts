@@ -27,6 +27,7 @@ import trendsRoutes from './routes/trends';
 // Import services
 import { initializeDatabase } from './services/database';
 import { initializeRedis } from './services/redis';
+import { cleanupTunnel } from './services/sshTunnel';
 import { logger } from './utils/logger';
 import { errorHandler } from './middleware/errorHandler';
 
@@ -204,12 +205,32 @@ async function startServer() {
     });
 
     // Graceful shutdown
-    process.on('SIGTERM', () => {
-      logger.info('SIGTERM received, shutting down gracefully');
+    const shutdown = async (signal: string) => {
+      logger.info(`${signal} received, shutting down gracefully`);
+
+      // Cleanup SSH tunnel first
+      try {
+        await cleanupTunnel();
+        logger.info('SSH tunnel cleaned up');
+      } catch (error) {
+        logger.error('Error cleaning up SSH tunnel:', error);
+      }
+
+      // Close HTTP server
       server.close(() => {
+        logger.info('HTTP server closed');
         process.exit(0);
       });
-    });
+
+      // Force exit after 10 seconds if graceful shutdown hangs
+      setTimeout(() => {
+        logger.error('Forced shutdown after timeout');
+        process.exit(1);
+      }, 10000);
+    };
+
+    process.on('SIGTERM', () => shutdown('SIGTERM'));
+    process.on('SIGINT', () => shutdown('SIGINT'));
 
   } catch (error) {
     logger.error('Failed to start server:', error);

@@ -104,7 +104,7 @@ async function initializeTunnel(): Promise<void> {
       // Spawn SSH process in foreground
       await new Promise<void>((resolve, reject) => {
         sshProcess = spawn('ssh', sshArgs, {
-          stdio: ['ignore', 'pipe', 'pipe']
+          stdio: ['pipe', 'pipe', 'pipe']  // Changed from 'ignore' to 'pipe' for stdin to allow graceful close
         });
 
         let sshErrorOutput = '';
@@ -326,16 +326,27 @@ async function cleanup() {
   // Kill SSH process directly by reference (foreground approach)
   if (currentSshProcess && !currentSshProcess.killed) {
     try {
-      currentSshProcess.kill('SIGTERM');
-      logger.info(`Killed SSH tunnel process (PID: ${currentSshProcess.pid})`);
+      // First, try graceful termination by closing stdin
+      // This allows SSH to send proper disconnect to remote server
+      if (currentSshProcess.stdin && !currentSshProcess.stdin.destroyed) {
+        currentSshProcess.stdin.end();
+        logger.info(`Closing SSH stdin for graceful disconnect (PID: ${currentSshProcess.pid})`);
+      }
 
-      // Wait a moment for graceful termination
-      await sleep(1000);
+      // Give SSH time to disconnect gracefully
+      await sleep(2000);
+
+      // If still running, send SIGTERM
+      if (!currentSshProcess.killed) {
+        currentSshProcess.kill('SIGTERM');
+        logger.info(`Sent SIGTERM to SSH tunnel process (PID: ${currentSshProcess.pid})`);
+        await sleep(1000);
+      }
 
       // Force kill if still alive
       if (!currentSshProcess.killed) {
         currentSshProcess.kill('SIGKILL');
-        logger.info('Force killed SSH tunnel process');
+        logger.info('Force killed SSH tunnel process with SIGKILL');
       }
     } catch (error) {
       // Ignore cleanup errors - process might already be dead
@@ -346,4 +357,4 @@ async function cleanup() {
   cleaningUp = false;
 }
 
-export { SSH_CONFIG };
+export { SSH_CONFIG, cleanup as cleanupTunnel };
