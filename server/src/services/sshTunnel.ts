@@ -344,8 +344,9 @@ async function cleanup() {
         logger.debug('Control socket exit command error (may be expected):', err.message);
       });
 
-      // Give SSH time to disconnect gracefully
-      await sleep(2000);
+      // Give SSH MORE time to complete disconnect protocol with remote server
+      // SSH needs to send TCP FIN packets and wait for remote acknowledgment
+      await sleep(7000);
 
       // If still running, send SIGTERM as fallback
       if (!currentSshProcess.killed) {

@@ -4,21 +4,16 @@ module.exports = {
     script: 'src/server.ts',
     interpreter: 'tsx',
     cwd: '/home/ec2-user/misfits-ops/server',
+    kill_timeout: 8000, // Wait 8 seconds for graceful shutdown (SSH tunnel cleanup needs ~5s)
     env: {
       NODE_ENV: 'production',
       PORT: 5000,
-      // Production database connection (via SSH tunnel)
-      PROD_DB_HOST: 'localhost',
-      PROD_DB_PORT: 5433,
+      // Production database connection (direct to RDS)
+      PROD_DB_HOST: 'misfits.cgncbvolnhe7.ap-south-1.rds.amazonaws.com',
+      PROD_DB_PORT: 5432,
       PROD_DB_NAME: 'misfits',
       PROD_DB_USER: 'dev',
       PROD_DB_PASSWORD: 'postgres',
-      // SSH tunnel configuration
-      SSH_KEY_PATH: '/home/ec2-user/Downloads/claude-control-key',
-      SSH_HOST: 'grpc-prod.misfits.net.in',
-      SSH_USER: 'claude-control',
-      DB_HOST: 'misfits.cgncbvolnhe7.ap-south-1.rds.amazonaws.com',
-      DB_PORT: '5432',
       // Local database configuration
       LOCAL_DB_HOST: 'localhost',
       LOCAL_DB_PORT: 5432,

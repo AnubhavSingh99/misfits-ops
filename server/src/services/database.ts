@@ -1,14 +1,10 @@
 import { Pool, PoolClient } from 'pg';
 import { logger } from '../utils/logger';
-import { queryProductionWithTunnel } from './sshTunnel';
 
 let pool: Pool; // Local operations database
-let prodPool: Pool; // Production database (read-only)
+let prodPool: Pool; // Production database (read-only, direct connection)
 
 export async function initializeDatabase() {
-  // Always initialize local operations database
-  // Production database is accessed separately via SSH tunnel
-
   // Initialize local operations database
   pool = new Pool({
     host: process.env.LOCAL_DB_HOST || 'localhost',
@@ -36,6 +32,32 @@ export async function initializeDatabase() {
     logger.error('Local operations database connection failed:', error);
     throw error;
   }
+
+  // Initialize production database with direct connection (no SSH tunnel)
+  if (process.env.PROD_DB_HOST) {
+    prodPool = new Pool({
+      host: process.env.PROD_DB_HOST,
+      port: parseInt(process.env.PROD_DB_PORT || '5432'),
+      database: process.env.PROD_DB_NAME || 'misfits',
+      user: process.env.PROD_DB_USER || 'dev',
+      password: process.env.PROD_DB_PASSWORD || 'postgres',
+      max: 20,
+      idleTimeoutMillis: 30000,
+      connectionTimeoutMillis: 10000,
+    });
+
+    try {
+      // Test production database connection
+      const prodClient = await prodPool.connect();
+      await prodClient.query('SELECT NOW()');
+      prodClient.release();
+
+      logger.info('Production database direct connection established');
+    } catch (error) {
+      logger.error('Production database connection failed:', error);
+      // Don't throw - allow server to start without production DB
+    }
+  }
 }
 
 export async function getClient(): Promise<PoolClient> {
@@ -53,16 +75,26 @@ export async function queryLocal(text: string, params?: any[]) {
   }
 }
 
-// Query production database (for clubs, events, payments, etc.)
+// Query production database (for clubs, events, payments, etc.) - direct connection
 export async function queryProduction(text: string, params?: any[]) {
-  return await queryProductionWithTunnel(text, params);
+  if (!prodPool) {
+    throw new Error('Production database not initialized');
+  }
+
+  const client = await prodPool.connect();
+  try {
+    const result = await client.query(text, params);
+    return result;
+  } finally {
+    client.release();
+  }
 }
 
 // Default query function - use production for backwards compatibility
 export async function query(text: string, params?: any[]) {
-  // If production database is configured, use SSH tunnel
-  if (process.env.PROD_DB_HOST) {
-    return await queryProductionWithTunnel(text, params);
+  // If production database is configured, use direct connection
+  if (process.env.PROD_DB_HOST && prodPool) {
+    return await queryProduction(text, params);
   }
 
   // Otherwise use local database
