@@ -23,6 +23,7 @@ let tunnelPort: number | null = null;
 let tunnelEstablished = false;
 let establishingTunnel = false;
 let sshProcess: ChildProcess | null = null;
+let sshControlSocket: string | null = null;
 
 // Retry configuration - Reduced to prevent SSH tunnel storms
 const RETRY_CONFIG = {
@@ -86,7 +87,10 @@ async function initializeTunnel(): Promise<void> {
       // Find available port
       tunnelPort = await findAvailablePort();
 
-      // Establish SSH tunnel in foreground (no -f flag)
+      // Create unique control socket path for this tunnel
+      sshControlSocket = `/tmp/ssh-tunnel-${tunnelPort}-${Date.now()}.sock`;
+
+      // Establish SSH tunnel in foreground with control socket
       const sshArgs = [
         '-i', SSH_CONFIG.keyFile,
         '-o', 'StrictHostKeyChecking=no',  // Accept both new and changed keys
@@ -94,6 +98,8 @@ async function initializeTunnel(): Promise<void> {
         '-o', 'ConnectTimeout=30',
         '-o', 'ServerAliveInterval=60',
         '-o', 'ServerAliveCountMax=3',
+        '-M', // Master mode - enables control socket
+        '-S', sshControlSocket, // Control socket path
         '-N', // No command execution
         '-L', `${tunnelPort}:${SSH_CONFIG.dbHost}:${SSH_CONFIG.dbPort}`,
         `${SSH_CONFIG.sshUser}@${SSH_CONFIG.sshHost}`
@@ -307,11 +313,13 @@ async function cleanup() {
   const currentPool = tunnelPool;
   const currentPort = tunnelPort;
   const currentSshProcess = sshProcess;
+  const currentControlSocket = sshControlSocket;
 
   // Null the global references immediately
   tunnelPool = null;
   tunnelPort = null;
   sshProcess = null;
+  sshControlSocket = null;
 
   if (currentPool) {
     try {
@@ -323,34 +331,58 @@ async function cleanup() {
     }
   }
 
-  // Kill SSH process directly by reference (foreground approach)
-  if (currentSshProcess && !currentSshProcess.killed) {
+  // Disconnect SSH tunnel using control socket for proper remote notification
+  if (currentSshProcess && !currentSshProcess.killed && currentControlSocket) {
     try {
-      // First, try graceful termination by closing stdin
-      // This allows SSH to send proper disconnect to remote server
-      if (currentSshProcess.stdin && !currentSshProcess.stdin.destroyed) {
-        currentSshProcess.stdin.end();
-        logger.info(`Closing SSH stdin for graceful disconnect (PID: ${currentSshProcess.pid})`);
-      }
+      logger.info(`Sending exit command via control socket (PID: ${currentSshProcess.pid})`);
+
+      // Send explicit exit command through control socket
+      // This properly notifies remote sshd to disconnect
+      const exitCommand = `ssh -S ${currentControlSocket} -O exit ${SSH_CONFIG.sshUser}@${SSH_CONFIG.sshHost}`;
+      await execAsync(exitCommand).catch(err => {
+        // Exit command may fail if connection already closed, ignore
+        logger.debug('Control socket exit command error (may be expected):', err.message);
+      });
 
       // Give SSH time to disconnect gracefully
       await sleep(2000);
 
-      // If still running, send SIGTERM
+      // If still running, send SIGTERM as fallback
       if (!currentSshProcess.killed) {
+        logger.warn(`SSH process ${currentSshProcess.pid} still alive after exit command, sending SIGTERM`);
         currentSshProcess.kill('SIGTERM');
-        logger.info(`Sent SIGTERM to SSH tunnel process (PID: ${currentSshProcess.pid})`);
         await sleep(1000);
       }
 
       // Force kill if still alive
       if (!currentSshProcess.killed) {
+        logger.warn(`Force killing SSH process ${currentSshProcess.pid} with SIGKILL`);
         currentSshProcess.kill('SIGKILL');
-        logger.info('Force killed SSH tunnel process with SIGKILL');
+      } else {
+        logger.info(`SSH tunnel disconnected gracefully via control socket`);
+      }
+
+      // Clean up control socket file
+      try {
+        await execAsync(`rm -f ${currentControlSocket}`);
+      } catch (err) {
+        // Ignore cleanup errors
       }
     } catch (error) {
       // Ignore cleanup errors - process might already be dead
       logger.debug('SSH process cleanup error (ignored):', error);
+    }
+  } else if (currentSshProcess && !currentSshProcess.killed) {
+    // Fallback if no control socket (shouldn't happen with new code)
+    logger.warn('No control socket available, falling back to SIGTERM');
+    try {
+      currentSshProcess.kill('SIGTERM');
+      await sleep(2000);
+      if (!currentSshProcess.killed) {
+        currentSshProcess.kill('SIGKILL');
+      }
+    } catch (error) {
+      logger.debug('SSH process kill error (ignored):', error);
     }
   }
 
