@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { logger } from '../utils/logger';
-import { queryProductionWithTunnel } from '../services/sshTunnel';
+import { queryProduction } from '../services/database';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -21,7 +21,7 @@ router.get('/cities', async (req, res) => {
       ORDER BY c.name
     `;
 
-    const result = await queryProductionWithTunnel(citiesQuery);
+    const result = await queryProduction(citiesQuery);
 
     if (result.rows && result.rows.length > 0) {
       const cities = result.rows.map(row => ({
@@ -49,7 +49,7 @@ router.get('/cities', async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Failed to fetch cities data from database',
-      message: 'Database connection failed. SSH tunnel service unable to connect.',
+      message: 'Database connection failed. RDS connection unavailable.',
       details: error instanceof Error ? error.message : 'Unknown error'
     });
   }
@@ -83,7 +83,7 @@ router.get('/areas/:cityId', async (req, res) => {
       ORDER BY a.name
     `;
 
-    const result = await queryProductionWithTunnel(areasQuery, [cityId]);
+    const result = await queryProduction(areasQuery, [cityId]);
 
     if (result.rows && result.rows.length > 0) {
       const areas = result.rows.map(row => ({
@@ -125,7 +125,7 @@ router.get('/areas/:cityId', async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Failed to fetch areas data from database',
-      message: 'Database connection failed. SSH tunnel service unable to connect.',
+      message: 'Database connection failed. RDS connection unavailable.',
       details: error instanceof Error ? error.message : 'Unknown error'
     });
   }
@@ -152,7 +152,7 @@ router.get('/areas', async (req, res) => {
       ORDER BY c.name, a.name
     `;
 
-    const result = await queryProductionWithTunnel(areasQuery);
+    const result = await queryProduction(areasQuery);
 
     if (result.rows && result.rows.length > 0) {
       const areas = result.rows.map(row => ({
@@ -212,7 +212,7 @@ router.get('/areas', async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Failed to fetch areas data from database',
-      message: 'Database connection failed. SSH tunnel service unable to connect.',
+      message: 'Database connection failed. RDS connection unavailable.',
       details: error instanceof Error ? error.message : 'Unknown error'
     });
   }
@@ -297,7 +297,7 @@ router.get('/clubs', async (req, res) => {
       ORDER BY current_revenue DESC, total_events DESC
     `;
 
-    const result = await queryProductionWithTunnel(clubsQuery);
+    const result = await queryProduction(clubsQuery);
 
     if (result.rows && result.rows.length > 0) {
       // Process the results
@@ -370,7 +370,7 @@ router.get('/clubs', async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Failed to fetch clubs data from database',
-      message: 'Database connection failed. SSH tunnel service unable to connect.',
+      message: 'Database connection failed. RDS connection unavailable.',
       details: error instanceof Error ? error.message : 'Unknown error'
     });
   }
@@ -472,7 +472,7 @@ router.get('/activities', async (req, res) => {
       ORDER BY active_clubs DESC, club_count DESC
     `;
 
-    const result = await queryProductionWithTunnel(activitiesQuery);
+    const result = await queryProduction(activitiesQuery);
 
     const activities = result.rows.map(row => ({
       id: row.id,
@@ -553,9 +553,9 @@ router.get('/data', async (req, res) => {
     `;
 
     const [activityTargets, existingClubsSummary, newClubsSummary] = await Promise.all([
-      queryProductionWithTunnel(activityTargetsQuery),
-      queryProductionWithTunnel(existingClubsQuery),
-      queryProductionWithTunnel(newClubsQuery)
+      queryProduction(activityTargetsQuery),
+      queryProduction(existingClubsQuery),
+      queryProduction(newClubsQuery)
     ]);
 
     // Calculate overall summary
@@ -619,9 +619,9 @@ router.get('/activity/:activityName', async (req, res) => {
     `;
 
     const [activityData, existingClubs, newClubLaunches] = await Promise.all([
-      queryProductionWithTunnel(activityQuery, [activityName]),
-      queryProductionWithTunnel(existingClubsQuery, [activityName]),
-      queryProductionWithTunnel(newClubLaunchesQuery, [activityName])
+      queryProduction(activityQuery, [activityName]),
+      queryProduction(existingClubsQuery, [activityName]),
+      queryProduction(newClubLaunchesQuery, [activityName])
     ]);
 
     if (activityData.rows.length === 0) {
@@ -677,7 +677,7 @@ router.put('/activity/:activityName/targets', async (req, res) => {
       RETURNING *
     `;
 
-    const result = await queryProductionWithTunnel(upsertActivityQuery, [
+    const result = await queryProduction(upsertActivityQuery, [
       activityName,
       target_meetups_existing || 0,
       target_meetups_new || 0,
@@ -721,7 +721,7 @@ router.put('/club/:clubId/targets', async (req, res) => {
       RETURNING *
     `;
 
-    const result = await queryProductionWithTunnel(upsertClubQuery, [
+    const result = await queryProduction(upsertClubQuery, [
       clubId,
       activity_name,
       target_meetups || 0,
@@ -769,7 +769,7 @@ router.post('/new-club-launch', async (req, res) => {
       RETURNING *
     `;
 
-    const result = await queryProductionWithTunnel(insertQuery, [
+    const result = await queryProduction(insertQuery, [
       activity_name,
       planned_clubs_count || 1,
       target_meetups_per_club || 0,
@@ -836,9 +836,9 @@ router.post('/transition-club', async (req, res) => {
       VALUES ($1, $2, $3, $4, $5)
     `;
 
-    await queryProductionWithTunnel(updateLaunchStatusQuery, [new_club_launch_id]);
-    const clubResult = await queryProductionWithTunnel(insertClubTargetQuery, [club_id, activity_name, target_meetups, target_revenue]);
-    await queryProductionWithTunnel(insertTransitionQuery, [new_club_launch_id, club_id, activity_name, target_meetups, target_revenue]);
+    await queryProduction(updateLaunchStatusQuery, [new_club_launch_id]);
+    const clubResult = await queryProduction(insertClubTargetQuery, [club_id, activity_name, target_meetups, target_revenue]);
+    await queryProduction(insertTransitionQuery, [new_club_launch_id, club_id, activity_name, target_meetups, target_revenue]);
 
     res.json({
       success: true,
@@ -1287,7 +1287,7 @@ router.get('/launch-tracking/:activityName', async (req, res) => {
       ORDER BY c.created_at DESC
     `;
 
-    const actualClubs = await queryProductionWithTunnel(matchingClubsQuery, [activityName]);
+    const actualClubs = await queryProduction(matchingClubsQuery, [activityName]);
 
     // Auto-match logic: For each planned launch, find matching actual clubs
     const matchedResults = plannedLaunches.map(plannedLaunch => {

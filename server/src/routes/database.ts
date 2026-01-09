@@ -1,14 +1,14 @@
 import express from 'express';
 import { logger } from '../utils/logger';
-import { queryProductionWithTunnel } from '../services/sshTunnel';
+import { queryProduction } from '../services/database';
 
 const router = express.Router();
 
 /**
- * Execute query on Misfits database using centralized SSH tunnel service
+ * Execute query on Misfits database using direct RDS connection
  */
 async function queryMisfits(text: string, params?: any[]) {
-  return await queryProductionWithTunnel(text, params);
+  return await queryProduction(text, params);
 }
 
 /**
@@ -302,7 +302,7 @@ router.get('/connection-status', async (req, res) => {
     res.json({
       success: true,
       status: 'connected',
-      message: 'Database connection is active via SSH tunnel'
+      message: 'Database connection to RDS is active'
     });
   } catch (error) {
     logger.error('Connection status check failed:', error);

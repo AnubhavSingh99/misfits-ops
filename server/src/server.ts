@@ -27,7 +27,6 @@ import trendsRoutes from './routes/trends';
 // Import services
 import { initializeDatabase } from './services/database';
 import { initializeRedis } from './services/redis';
-import { cleanupTunnel } from './services/sshTunnel';
 import { logger } from './utils/logger';
 import { errorHandler } from './middleware/errorHandler';
 
@@ -207,14 +206,6 @@ async function startServer() {
     // Graceful shutdown
     const shutdown = async (signal: string) => {
       logger.info(`${signal} received, shutting down gracefully`);
-
-      // Cleanup SSH tunnel first
-      try {
-        await cleanupTunnel();
-        logger.info('SSH tunnel cleaned up');
-      } catch (error) {
-        logger.error('Error cleaning up SSH tunnel:', error);
-      }
 
       // Close HTTP server
       server.close(() => {

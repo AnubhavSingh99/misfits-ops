@@ -1,7 +1,7 @@
 import express from 'express';
 import { logger } from '../utils/logger';
 import { calculateClubHealth, calculateSystemHealth } from '../services/healthEngine';
-import { queryProductionWithTunnel } from '../services/sshTunnel';
+import { queryProduction } from '../services/database';
 
 const router = express.Router();
 
@@ -33,12 +33,12 @@ router.get('/', async (req, res) => {
 });
 
 /**
- * Execute query against Misfits database using centralized SSH tunnel service
+ * Execute query against Misfits database using direct RDS connection
  */
 async function queryMisfits(text: string, params?: any[]): Promise<any> {
   try {
-    logger.info('Executing query against production database using centralized SSH tunnel...');
-    const result = await queryProductionWithTunnel(text, params);
+    logger.info('Executing query against production RDS database...');
+    const result = await queryProduction(text, params);
     return result;
   } catch (error) {
     logger.error('Failed to query Misfits database:', error);

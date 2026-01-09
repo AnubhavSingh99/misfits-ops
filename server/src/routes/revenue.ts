@@ -1,5 +1,5 @@
 import express from 'express';
-import { queryProduction } from '../services/database';
+import { query, queryProduction } from '../services/database';
 import { logger } from '../utils/logger';
 
 const router = express.Router();
@@ -7,9 +7,6 @@ const router = express.Router();
 // GET /api/revenue - Basic revenue summary
 router.get('/', async (req, res) => {
   try {
-    // Import the real revenue calculation logic from database.ts
-    const { queryProductionWithTunnel } = await import('../services/sshTunnel');
-
     const revenueQuery = `
       SELECT
         DATE_TRUNC('month', p.created_at) as month,
@@ -27,7 +24,7 @@ router.get('/', async (req, res) => {
       LIMIT 4;
     `;
 
-    const result = await queryProductionWithTunnel(revenueQuery);
+    const result = await queryProduction(revenueQuery);
 
     // Get current month revenue (January 2026)
     const currentMonthData = result.rows.find(row =>

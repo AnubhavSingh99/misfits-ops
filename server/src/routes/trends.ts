@@ -1,5 +1,6 @@
 import express from 'express';
 import { logger } from '../utils/logger';
+import { queryProduction } from '../services/database';
 
 const router = express.Router();
 
@@ -7,7 +8,6 @@ const router = express.Router();
 router.get('/revenue', async (req, res) => {
   try {
     const { period, startDate, endDate } = req.query;
-    const { queryProductionWithTunnel } = await import('../services/sshTunnel');
 
     let dateGrouping = '';
     let timeInterval = '';
@@ -51,7 +51,7 @@ router.get('/revenue', async (req, res) => {
       ORDER BY period ASC;
     `;
 
-    const result = await queryProductionWithTunnel(revenueQuery);
+    const result = await queryProduction(revenueQuery);
     const data = result.rows?.map((row: any) => ({
       ...row,
       revenue_rupees: parseFloat(row.revenue_rupees) || 0
@@ -72,7 +72,6 @@ router.get('/revenue', async (req, res) => {
 router.get('/meetups', async (req, res) => {
   try {
     const { period, startDate, endDate } = req.query;
-    const { queryProductionWithTunnel } = await import('../services/sshTunnel');
 
     let dateGrouping = '';
     let timeInterval = '';
@@ -113,7 +112,7 @@ router.get('/meetups', async (req, res) => {
       ORDER BY period ASC;
     `;
 
-    const result = await queryProductionWithTunnel(meetupsQuery);
+    const result = await queryProduction(meetupsQuery);
     const data = result.rows?.map((row: any) => ({
       ...row,
       meetup_count: parseInt(row.meetup_count) || 0
@@ -134,7 +133,6 @@ router.get('/meetups', async (req, res) => {
 router.get('/attendance', async (req, res) => {
   try {
     const { period, startDate, endDate } = req.query;
-    const { queryProductionWithTunnel } = await import('../services/sshTunnel');
 
     let dateGrouping = '';
     let timeInterval = '';
@@ -177,7 +175,7 @@ router.get('/attendance', async (req, res) => {
       ORDER BY period ASC;
     `;
 
-    const result = await queryProductionWithTunnel(attendanceQuery);
+    const result = await queryProduction(attendanceQuery);
     const data = result.rows?.map((row: any) => ({
       ...row,
       total_attendees: parseInt(row.total_attendees) || 0

@@ -93,7 +93,7 @@ This runs both frontend (port 3000) and backend (port 5000) concurrently.
 ## Database Connection
 
 ### Automatic Database Connection
-The system automatically connects to the Misfits production database using on-demand SSH tunnels. No manual setup required - the server establishes tunnels as needed.
+The system automatically connects directly to the Misfits production RDS database using the credentials configured in your environment. No SSH tunnels are required.
 
 ### Database Schema
 The system creates its own tables for operations management:

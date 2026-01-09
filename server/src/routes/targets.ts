@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { Pool } from 'pg';
 import { logger } from '../utils/logger';
-import { queryProductionWithTunnel } from '../services/sshTunnel';
+import { queryProduction } from '../services/database';
 
 const router = Router();
 
@@ -93,7 +93,7 @@ async function getCurrentMetrics() {
   `;
 
   try {
-    const result = await queryProductionWithTunnel(currentMetricsQuery);
+    const result = await queryProduction(currentMetricsQuery);
     return result.rows;
   } catch (error) {
     logger.error('Failed to fetch current metrics from production:', error);
@@ -313,7 +313,7 @@ router.get('/activities/:activityName/clubs', async (req, res) => {
       ORDER BY current_meetups DESC, total_events DESC, c.name
     `;
 
-    const clubsResult = await queryProductionWithTunnel(clubsQuery, [activityName]);
+    const clubsResult = await queryProduction(clubsQuery, [activityName]);
 
     // Get club targets from local database
     const targetQuery = `
@@ -571,9 +571,9 @@ router.get('/filter-options', async (req, res) => {
 
     // Query production data (except POCs which are in local db)
     const [activitiesResult, areasResult, citiesResult, pocsResult] = await Promise.all([
-      queryProductionWithTunnel(filterQueries.activities),
-      queryProductionWithTunnel(filterQueries.areas),
-      queryProductionWithTunnel(filterQueries.cities),
+      queryProduction(filterQueries.activities),
+      queryProduction(filterQueries.areas),
+      queryProduction(filterQueries.cities),
       queryLocal(filterQueries.pocs) // POCs are in local operations database
     ]);
 
@@ -603,7 +603,7 @@ router.get('/filter-options', async (req, res) => {
 // GET /api/targets/cities - Get all active cities
 router.get('/cities', async (req, res) => {
   try {
-    const cities = await queryProductionWithTunnel(`
+    const cities = await queryProduction(`
       SELECT id, name, state
       FROM city
       WHERE is_active = true
@@ -622,7 +622,7 @@ router.get('/areas/:cityId', async (req, res) => {
   try {
     const { cityId } = req.params;
 
-    const areas = await queryProductionWithTunnel(`
+    const areas = await queryProduction(`
       SELECT id, name, lat, lng
       FROM area
       WHERE city_id = $1

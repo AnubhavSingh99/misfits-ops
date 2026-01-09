@@ -1,16 +1,16 @@
 import { Router } from 'express';
 import { logger } from '../utils/logger';
-import { queryProductionWithTunnel } from '../services/sshTunnel';
+import { queryProduction } from '../services/database';
 
 const router = Router();
 
-// Using centralized SSH tunnel service for all database queries
+// Uses direct RDS connection for all production database queries
 
 // Get activities with club counts and revenue
 router.get('/activities', async (req, res) => {
   try {
     // Try to fetch from real database first
-    const result = await queryProductionWithTunnel(`
+    const result = await queryProduction(`
       SELECT
         a.name as activity,
         COUNT(DISTINCT c.id) as club_count,
@@ -60,7 +60,7 @@ router.get('/activities', async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Failed to fetch activities from database',
-      message: 'Database connection required. Please ensure SSH tunnel is established.',
+      message: 'Database connection required. Please verify RDS credentials and network access.',
       details: error.message
     });
   }
@@ -115,7 +115,7 @@ router.get('/', async (req, res) => {
     if (city && city !== 'all') {
     }
 
-    const result = await queryProductionWithTunnel(`
+    const result = await queryProduction(`
       WITH club_metrics AS (
         SELECT
           c.pk as club_id,
@@ -255,7 +255,7 @@ router.get('/:id', async (req, res) => {
   try {
     const { id } = req.params;
 
-    const result = await queryProductionWithTunnel(`
+    const result = await queryProduction(`
       WITH monthly_data AS (
         SELECT
           c.pk as club_id,
