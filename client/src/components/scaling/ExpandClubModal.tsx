@@ -62,10 +62,11 @@ export function ExpandClubModal({ isOpen, onClose, onSave, context }: ExpandClub
   const [clubs, setClubs] = useState<ClubOption[]>([])
   const [dayTypes, setDayTypes] = useState<DayType[]>([])
 
-  // Selected values - use optional chaining to avoid crash if context is undefined
+  // Selected values - these are dim_* IDs, NOT production IDs
+  // Production IDs from context are resolved after fetching dimensions
   const [selectedActivityId, setSelectedActivityId] = useState<number | undefined>(context?.activity_id)
-  const [selectedCityId, setSelectedCityId] = useState<number | undefined>(context?.city_id)
-  const [selectedAreaId, setSelectedAreaId] = useState<number | undefined>(context?.area_id)
+  const [selectedCityId, setSelectedCityId] = useState<number | undefined>(undefined)  // Resolved after city fetch
+  const [selectedAreaId, setSelectedAreaId] = useState<number | undefined>(undefined)   // Resolved after area fetch
   const [selectedClubId, setSelectedClubId] = useState<number | undefined>(context?.club_id)
 
   // Form fields
@@ -146,10 +147,20 @@ export function ExpandClubModal({ isOpen, onClose, onSave, context }: ExpandClub
         const res = await fetch(`${API_BASE}/targets/dimensions/city`)
         const data = await res.json()
         if (data.success && data.values) {
-          setCities(data.values.map((c: any) => ({
+          const cityList = data.values.map((c: any) => ({
             id: c.id,
-            name: c.name || c.city_name
-          })).sort((a: FilterOption, b: FilterOption) => a.name.localeCompare(b.name)))
+            name: c.name || c.city_name,
+            production_city_id: c.production_city_id
+          })).sort((a: FilterOption, b: FilterOption) => a.name.localeCompare(b.name))
+          setCities(cityList)
+
+          // If context has city_id (production ID), find matching dim_cities.id
+          if (context?.city_id && !selectedCityId) {
+            const matchingCity = cityList.find((c: any) => c.production_city_id === context.city_id)
+            if (matchingCity) {
+              setSelectedCityId(matchingCity.id)
+            }
+          }
         }
       } catch (err) {
         console.error('Failed to fetch cities:', err)
@@ -159,7 +170,7 @@ export function ExpandClubModal({ isOpen, onClose, onSave, context }: ExpandClub
     }
 
     fetchCities()
-  }, [isOpen])
+  }, [isOpen, context?.city_id])
 
   // Fetch areas when city changes
   useEffect(() => {
@@ -176,10 +187,20 @@ export function ExpandClubModal({ isOpen, onClose, onSave, context }: ExpandClub
         const res = await fetch(`${API_BASE}/targets/dimensions/area?city_id=${selectedCityId}`)
         const data = await res.json()
         if (data.success && data.values) {
-          setAreas(data.values.map((a: any) => ({
+          const areaList = data.values.map((a: any) => ({
             id: a.id,
-            name: a.name || a.area_name
-          })))
+            name: a.name || a.area_name,
+            production_area_id: a.production_area_id
+          }))
+          setAreas(areaList)
+
+          // If context has area_id (production ID), find matching dim_areas.id
+          if (context?.area_id && !selectedAreaId) {
+            const matchingArea = areaList.find((a: any) => a.production_area_id === context.area_id)
+            if (matchingArea) {
+              setSelectedAreaId(matchingArea.id)
+            }
+          }
         }
       } catch (err) {
         console.error('Failed to fetch areas:', err)

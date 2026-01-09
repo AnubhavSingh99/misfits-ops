@@ -120,10 +120,23 @@ router.get('/dimensions/:type', async (req, res) => {
     switch (type) {
       case 'area':
         if (city_id) {
-          values = await getAreasByCity(parseInt(city_id as string));
+          // Check if city_id is a production ID (lookup by production_city_id first)
+          const cityLookup = await queryLocal(
+            `SELECT id FROM dim_cities WHERE production_city_id = $1`,
+            [parseInt(city_id as string)]
+          );
+          const dimCityId = cityLookup.rows[0]?.id || parseInt(city_id as string);
+
+          const areaResult = await queryLocal(`
+            SELECT id, area_name as name, city_id, production_area_id, is_custom
+            FROM dim_areas
+            WHERE city_id = $1 AND is_active = TRUE
+            ORDER BY area_name
+          `, [dimCityId]);
+          values = areaResult.rows;
         } else {
           const result = await queryLocal(`
-            SELECT da.id, da.area_name as name, da.city_id, dc.city_name, da.is_custom
+            SELECT da.id, da.area_name as name, da.city_id, dc.city_name, da.production_area_id, da.is_custom
             FROM dim_areas da
             LEFT JOIN dim_cities dc ON da.city_id = dc.id
             WHERE da.is_active = TRUE
@@ -135,7 +148,7 @@ router.get('/dimensions/:type', async (req, res) => {
 
       case 'city':
         const cityResult = await queryLocal(`
-          SELECT id, city_name as name, state
+          SELECT id, city_name as name, state, production_city_id
           FROM dim_cities
           WHERE is_active = TRUE
           ORDER BY city_name
@@ -375,10 +388,19 @@ router.post('/clubs/:clubId/dimensional', async (req, res) => {
       });
     }
 
-    // Ensure area exists in dim_areas (auto-create from production if needed)
-    const areaExists = await queryLocal(`SELECT id FROM dim_areas WHERE id = $1`, [area_id]);
-    if (areaExists.rows.length === 0) {
-      // Fetch area info from production database
+    // Resolve area_id: The frontend passes production_area_id, but we need dim_areas.id
+    // First check if this area already exists in dim_areas by production_area_id
+    let resolvedAreaId = area_id;
+    const areaByProdId = await queryLocal(
+      `SELECT id FROM dim_areas WHERE production_area_id = $1`,
+      [area_id]
+    );
+
+    if (areaByProdId.rows.length > 0) {
+      // Area exists - use its dim_areas.id
+      resolvedAreaId = areaByProdId.rows[0].id;
+    } else {
+      // Area doesn't exist - fetch from production and create it
       const prodAreaResult = await queryProduction(`
         SELECT ar.id, ar.name as area_name, ci.id as city_id, ci.name as city_name
         FROM area ar
@@ -389,22 +411,40 @@ router.post('/clubs/:clubId/dimensional', async (req, res) => {
       if (prodAreaResult.rows.length > 0) {
         const prodArea = prodAreaResult.rows[0];
 
-        // Ensure city exists first
-        const cityExists = await queryLocal(`SELECT id FROM dim_cities WHERE id = $1`, [prodArea.city_id]);
-        if (cityExists.rows.length === 0) {
-          await queryLocal(
-            `INSERT INTO dim_cities (id, city_name) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING`,
-            [prodArea.city_id, prodArea.city_name]
+        // Ensure city exists first (by production_city_id)
+        const cityByProdId = await queryLocal(
+          `SELECT id FROM dim_cities WHERE production_city_id = $1`,
+          [prodArea.city_id]
+        );
+
+        let dimCityId: number;
+        if (cityByProdId.rows.length > 0) {
+          dimCityId = cityByProdId.rows[0].id;
+        } else {
+          // Create city
+          const newCity = await queryLocal(
+            `INSERT INTO dim_cities (city_name, production_city_id) VALUES ($1, $2)
+             ON CONFLICT (city_name) DO UPDATE SET production_city_id = $2
+             RETURNING id`,
+            [prodArea.city_name, prodArea.city_id]
           );
+          dimCityId = newCity.rows[0].id;
         }
 
-        // Create area (set production_area_id = id for production-sourced areas)
-        await queryLocal(
-          `INSERT INTO dim_areas (id, area_name, city_id, production_area_id) VALUES ($1, $2, $3, $1) ON CONFLICT (id) DO NOTHING`,
-          [area_id, prodArea.area_name, prodArea.city_id]
+        // Create area with production_area_id reference
+        const newArea = await queryLocal(
+          `INSERT INTO dim_areas (area_name, city_id, production_area_id, is_custom, is_active)
+           VALUES ($1, $2, $3, FALSE, TRUE)
+           ON CONFLICT (area_name, city_id) DO UPDATE SET production_area_id = $3
+           RETURNING id`,
+          [prodArea.area_name, dimCityId, area_id]
         );
+        resolvedAreaId = newArea.rows[0].id;
       }
     }
+
+    // Use resolvedAreaId from here on
+    const area_id_for_target = resolvedAreaId;
 
     // Check for existing target first - uniqueness based on dimensions + cost + capacity
     const existingCheck = await queryLocal(`
@@ -415,7 +455,7 @@ router.post('/clubs/:clubId/dimensional', async (req, res) => {
         AND COALESCE(format_id, -1) = COALESCE($4, -1)
         AND COALESCE(meetup_cost, -1) = COALESCE($5, -1)
         AND COALESCE(meetup_capacity, -1) = COALESCE($6, -1)
-    `, [clubId, area_id || null, day_type_id || null, format_id || null, meetup_cost || null, meetup_capacity || null]);
+    `, [clubId, area_id_for_target || null, day_type_id || null, format_id || null, meetup_cost || null, meetup_capacity || null]);
 
     let result;
     if (existingCheck.rows.length > 0) {
@@ -458,7 +498,7 @@ router.post('/clubs/:clubId/dimensional', async (req, res) => {
         clubId,
         activity_id || null,
         club_name || null,
-        area_id || null,
+        area_id_for_target || null,  // Use resolved dim_areas.id, not production area_id
         day_type_id || null,
         format_id || null,
         target_meetups || 0,
@@ -678,6 +718,55 @@ router.post('/launches/:launchId/dimensional', async (req, res) => {
       });
     }
 
+    // Resolve area_id: Frontend passes production_area_id, we need dim_areas.id
+    let resolvedAreaId = area_id;
+    const areaByProdId = await queryLocal(
+      `SELECT id FROM dim_areas WHERE production_area_id = $1`,
+      [area_id]
+    );
+
+    if (areaByProdId.rows.length > 0) {
+      resolvedAreaId = areaByProdId.rows[0].id;
+    } else {
+      // Area doesn't exist - fetch from production and create it
+      const prodAreaResult = await queryProduction(`
+        SELECT ar.id, ar.name as area_name, ci.id as city_id, ci.name as city_name
+        FROM area ar
+        JOIN city ci ON ar.city_id = ci.id
+        WHERE ar.id = $1
+      `, [area_id]);
+
+      if (prodAreaResult.rows.length > 0) {
+        const prodArea = prodAreaResult.rows[0];
+        const cityByProdId = await queryLocal(
+          `SELECT id FROM dim_cities WHERE production_city_id = $1`,
+          [prodArea.city_id]
+        );
+
+        let dimCityId: number;
+        if (cityByProdId.rows.length > 0) {
+          dimCityId = cityByProdId.rows[0].id;
+        } else {
+          const newCity = await queryLocal(
+            `INSERT INTO dim_cities (city_name, production_city_id) VALUES ($1, $2)
+             ON CONFLICT (city_name) DO UPDATE SET production_city_id = $2
+             RETURNING id`,
+            [prodArea.city_name, prodArea.city_id]
+          );
+          dimCityId = newCity.rows[0].id;
+        }
+
+        const newArea = await queryLocal(
+          `INSERT INTO dim_areas (area_name, city_id, production_area_id, is_custom, is_active)
+           VALUES ($1, $2, $3, FALSE, TRUE)
+           ON CONFLICT (area_name, city_id) DO UPDATE SET production_area_id = $3
+           RETURNING id`,
+          [prodArea.area_name, dimCityId, area_id]
+        );
+        resolvedAreaId = newArea.rows[0].id;
+      }
+    }
+
     const insertQuery = `
       INSERT INTO launch_dimensional_targets (
         launch_id, activity_name,
@@ -696,7 +785,7 @@ router.post('/launches/:launchId/dimensional', async (req, res) => {
     const result = await queryLocal(insertQuery, [
       launchId,
       activity_name || null,
-      area_id || null,
+      resolvedAreaId || null,
       day_type_id || null,
       format_id || null,
       target_meetups || 0,
@@ -2757,9 +2846,12 @@ router.post('/v2/launches', async (req, res) => {
     let cityName = planned_city;
     let areaName = planned_area;
 
+    // Resolve area_id: Frontend passes production_area_id, we need dim_areas.id
+    let resolvedAreaId: number | null = null;
+
     if (area_id) {
       const areaResult = await queryProduction(`
-        SELECT ar.name as area_name, ci.name as city_name
+        SELECT ar.name as area_name, ci.name as city_name, ci.id as city_id
         FROM area ar
         JOIN city ci ON ar.city_id = ci.id
         WHERE ar.id = $1
@@ -2768,27 +2860,44 @@ router.post('/v2/launches', async (req, res) => {
       if (areaResult.rows.length > 0) {
         areaName = areaResult.rows[0].area_name;
         cityName = areaResult.rows[0].city_name;
-      }
+        const prodCityId = areaResult.rows[0].city_id;
 
-      // Ensure area exists in dim_areas
-      const areaExists = await queryLocal(`SELECT id FROM dim_areas WHERE id = $1`, [area_id]);
-      if (areaExists.rows.length === 0 && areaResult.rows.length > 0) {
-        const prodArea = areaResult.rows[0];
-        // Get city_id from production
-        const cityResult = await queryProduction(`SELECT id FROM city WHERE name = $1`, [cityName]);
-        const cityId = cityResult.rows[0]?.id;
+        // Look up dim_areas by production_area_id (not by id)
+        const areaByProdId = await queryLocal(
+          `SELECT id FROM dim_areas WHERE production_area_id = $1`,
+          [area_id]
+        );
 
-        if (cityId) {
-          // Ensure city exists
-          await queryLocal(
-            `INSERT INTO dim_cities (id, city_name) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING`,
-            [cityId, cityName]
+        if (areaByProdId.rows.length > 0) {
+          resolvedAreaId = areaByProdId.rows[0].id;
+        } else {
+          // Area doesn't exist - create it
+          const cityByProdId = await queryLocal(
+            `SELECT id FROM dim_cities WHERE production_city_id = $1`,
+            [prodCityId]
           );
-          // Create area (set production_area_id = id for production-sourced areas)
-          await queryLocal(
-            `INSERT INTO dim_areas (id, area_name, city_id, production_area_id) VALUES ($1, $2, $3, $1) ON CONFLICT (id) DO NOTHING`,
-            [area_id, areaName, cityId]
+
+          let dimCityId: number;
+          if (cityByProdId.rows.length > 0) {
+            dimCityId = cityByProdId.rows[0].id;
+          } else {
+            const newCity = await queryLocal(
+              `INSERT INTO dim_cities (city_name, production_city_id) VALUES ($1, $2)
+               ON CONFLICT (city_name) DO UPDATE SET production_city_id = $2
+               RETURNING id`,
+              [cityName, prodCityId]
+            );
+            dimCityId = newCity.rows[0].id;
+          }
+
+          const newArea = await queryLocal(
+            `INSERT INTO dim_areas (area_name, city_id, production_area_id, is_custom, is_active)
+             VALUES ($1, $2, $3, FALSE, TRUE)
+             ON CONFLICT (area_name, city_id) DO UPDATE SET production_area_id = $3
+             RETURNING id`,
+            [areaName, dimCityId, area_id]
           );
+          resolvedAreaId = newArea.rows[0].id;
         }
       }
     }
@@ -2813,7 +2922,7 @@ router.post('/v2/launches', async (req, res) => {
     const launchId = launchResult.rows[0].id;
 
     // If target_meetups or dimensions provided, create launch_dimensional_target
-    if (target_meetups || area_id || day_type_id || format_id) {
+    if (target_meetups || resolvedAreaId || day_type_id || format_id) {
       // Set initial progress with all target_meetups in "not_picked" stage
       const initialProgress = {
         not_picked: target_meetups || 0,
@@ -2835,7 +2944,7 @@ router.post('/v2/launches', async (req, res) => {
       `, [
         launchId,
         activity_name,
-        area_id || null,
+        resolvedAreaId || null,  // Use resolved dim_areas.id, not production area_id
         day_type_id || null,
         format_id || null,
         target_meetups || 0,

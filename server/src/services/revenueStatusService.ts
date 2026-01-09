@@ -234,12 +234,12 @@ export function rollupRevenueStatuses(statuses: RevenueStatus[]): RevenueStatus 
     result.s4 += status.s4 || 0;
     result.realised_target += status.realised_target || 0;
     result.realised_actual += status.realised_actual || 0;
+    result.realisation_gap += status.realisation_gap || 0;  // Sum gaps from children (don't recalculate)
     result.unattributed += status.unattributed || 0;
     result.total_target += status.total_target || 0;
   }
 
-  // Recalculate gap and pipeline after aggregation
-  result.realisation_gap = Math.max(0, result.realised_target - result.realised_actual);
+  // Calculate pipeline (sum of all stage revenues)
   result.total_pipeline = result.np + result.st + result.s1 + result.s2 + result.s3 + result.s4;
 
   return result;

@@ -77,6 +77,23 @@ export function computeRolledUpSummary(
     return cache.get(node.id)!;
   }
 
+  // Target nodes don't have direct tasks - they only aggregate from children
+  // Tasks are created at club/area/city/activity level, not at target level
+  // Without this check, target nodes would match their parent club's task key
+  // and cause duplicate counting (1 task counted for club + each target child)
+  if (node.type === 'target') {
+    // Targets just pass through children's summaries (if any)
+    let summary = { ...EMPTY_SUMMARY };
+    if (node.children && node.children.length > 0) {
+      for (const child of node.children) {
+        const childSummary = computeRolledUpSummary(child, directSummaries, cache);
+        summary = mergeSummaries(summary, childSummary);
+      }
+    }
+    cache.set(node.id, summary);
+    return summary;
+  }
+
   // Build key for this node to look up direct tasks
   const nodeKey = buildSummaryKey(
     node.activity_name || (node.type === 'activity' ? node.name : undefined),
