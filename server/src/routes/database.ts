@@ -60,28 +60,36 @@ router.post('/query', async (req, res) => {
  */
 router.get('/health', async (req, res) => {
   try {
-    // Using the exact health calculation methodology from your script
+    // OPTIMIZED: Using exact health calculation methodology from your script
+    // Fixed N+1 subquery for city by using window function
     const healthQuery = `
       WITH week_boundaries AS (
         SELECT
           (DATE_TRUNC('week', (NOW() AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Kolkata' - INTERVAL '1 week') AT TIME ZONE 'Asia/Kolkata') AT TIME ZONE 'UTC' as last_week_start_utc,
           (DATE_TRUNC('week', (NOW() AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Kolkata') AT TIME ZONE 'Asia/Kolkata') AT TIME ZONE 'UTC' - INTERVAL '1 second' as last_week_end_utc
       ),
+      -- Pre-compute club locations (replaces N subqueries with 1 scan)
+      club_locations AS (
+        SELECT DISTINCT ON (e.club_id)
+          e.club_id,
+          city.name as city_name
+        FROM event e
+        JOIN location loc ON e.location_id = loc.id
+        JOIN area a ON loc.area_id = a.id
+        JOIN city ON a.city_id = city.id
+        WHERE e.state = 'CREATED'
+        ORDER BY e.club_id, e.start_time DESC
+      ),
       active_clubs AS (
         SELECT DISTINCT
           c.pk as club_id,
           c.name as club_name,
           a.name as activity,
-          (SELECT city2.name
-           FROM event e2
-           LEFT JOIN location loc2 ON e2.location_id = loc2.id
-           LEFT JOIN area a2 ON loc2.area_id = a2.id
-           LEFT JOIN city city2 ON a2.city_id = city2.id
-           WHERE e2.club_id = c.pk AND e2.state = 'CREATED'
-           ORDER BY e2.start_time DESC LIMIT 1) as city_name
+          COALESCE(cl.city_name, 'Unknown') as city_name
         FROM club c
         LEFT JOIN activity a ON c.activity_id = a.id
         JOIN event e ON c.pk = e.club_id
+        LEFT JOIN club_locations cl ON c.pk = cl.club_id
         CROSS JOIN week_boundaries wb
         WHERE c.status = 'ACTIVE'
           AND c.name NOT LIKE '%test%'

@@ -45,6 +45,8 @@ router.get('/', async (req, res) => {
 
     const whereClause = whereConditions.length > 0 ? `WHERE ${whereConditions.join(' AND ')}` : '';
 
+    // OPTIMIZED: Use LEFT JOIN with GROUP BY instead of subquery per row
+    // This eliminates N+1 query for comment counts
     const result = await query(`
       SELECT
         t.*,
@@ -52,11 +54,16 @@ router.get('/', async (req, res) => {
         p.poc_type,
         u.name as assigned_user_name,
         c.name as club_name,
-        (SELECT COUNT(*) FROM task_comments tc WHERE tc.task_id = t.id) as comments_count
+        COALESCE(cc.comments_count, 0) as comments_count
       FROM operations_tasks t
       LEFT JOIN poc_structure p ON t.assigned_to_poc_id = p.id
       LEFT JOIN users u ON t.assigned_to_user_id = u.id
       LEFT JOIN clubs c ON t.club_id = c.id
+      LEFT JOIN (
+        SELECT task_id, COUNT(*) as comments_count
+        FROM task_comments
+        GROUP BY task_id
+      ) cc ON t.id = cc.task_id
       ${whereClause}
       ORDER BY
         CASE t.priority

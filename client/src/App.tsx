@@ -9,6 +9,11 @@ import { POCManagement } from './pages/POCManagement'
 import { ScalingPlanner } from './pages/ScalingPlanner'
 import { WoWTrackingPage } from './pages/WoWTracking'
 import { HealthDashboard } from './pages/HealthDashboard'
+import DimensionalDashboard from './pages/DimensionalDashboard'
+import ScalingTargets from './components/ScalingTargets'
+import ScalingPlannerV2 from './pages/ScalingPlannerV2'
+import LeaderRequirementsDashboard from './pages/LeaderRequirementsDashboard'
+import VenueRequirementsDashboard from './pages/VenueRequirementsDashboard'
 
 function App() {
   return (
@@ -23,6 +28,11 @@ function App() {
         <Route path="/scaling-planner" element={<ScalingPlanner />} />
         <Route path="/wow-tracking" element={<WoWTrackingPage />} />
         <Route path="/health-dashboard" element={<HealthDashboard />} />
+        <Route path="/scaling-targets" element={<ScalingTargets />} />
+        <Route path="/dimensional-dashboard" element={<DimensionalDashboard />} />
+        <Route path="/scaling-planner-v2" element={<ScalingPlannerV2 />} />
+        <Route path="/leader-requirements" element={<LeaderRequirementsDashboard />} />
+        <Route path="/venue-requirements" element={<VenueRequirementsDashboard />} />
       </Routes>
     </Layout>
   )

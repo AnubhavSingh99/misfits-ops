@@ -16,7 +16,11 @@ import {
 } from '../types/core';
 
 // Base API Configuration
-const API_BASE_URL = import.meta.env.VITE_API_URL || '/api';
+// When VITE_API_URL is set, append /api to it for direct API calls
+// When not set, use '/api' which relies on vite proxy
+const API_BASE_URL = import.meta.env.VITE_API_URL
+  ? `${import.meta.env.VITE_API_URL}/api`
+  : '/api';
 
 class ApiError extends Error {
   constructor(public status: number, message: string, public data?: any) {
@@ -476,6 +480,406 @@ export class ScalingPlannerService {
   }
 }
 
+// Dimensional Targets Service (Multi-dimensional target system)
+export class DimensionalTargetsService {
+  // ===== DIMENSION MANAGEMENT =====
+
+  // Get all dimension types with their values
+  static async getAllDimensions(): Promise<{
+    success: boolean;
+    dimensions: {
+      city: { values: any[]; allowCustom: boolean };
+      area: { values: any[]; allowCustom: boolean };
+      day_type: { values: any[]; allowCustom: boolean };
+      format: { values: any[]; allowCustom: boolean };
+    };
+  }> {
+    return apiRequest('/targets/dimensions');
+  }
+
+  // Get values for a specific dimension type
+  static async getDimensionValues(dimensionType: 'area' | 'day_type' | 'format'): Promise<{
+    success: boolean;
+    dimension: string;
+    values: any[];
+    allowCustom: boolean;
+  }> {
+    return apiRequest(`/targets/dimensions/${dimensionType}`);
+  }
+
+  // Add a custom dimension value
+  static async addCustomDimensionValue(
+    dimensionType: 'area' | 'day_type' | 'format',
+    value: string,
+    cityId?: number
+  ): Promise<{
+    success: boolean;
+    value: { id: number; name: string };
+  }> {
+    return apiRequest(`/targets/dimensions/${dimensionType}`, {
+      method: 'POST',
+      body: JSON.stringify({ value, city_id: cityId }),
+    });
+  }
+
+  // Sync dimensions from production database
+  static async syncDimensions(): Promise<{
+    success: boolean;
+    cities_synced: number;
+    areas_synced: number;
+    errors: string[];
+  }> {
+    return apiRequest('/targets/dimensions/sync', {
+      method: 'POST',
+    });
+  }
+
+  // Get cities with areas
+  static async getCities(): Promise<{
+    success: boolean;
+    cities: Array<{
+      id: number;
+      city_name: string;
+      state?: string;
+      production_city_id?: number;
+      is_active: boolean;
+    }>;
+  }> {
+    return apiRequest('/targets/cities');
+  }
+
+  // Get areas for a specific city
+  static async getAreasByCity(cityId: number): Promise<{
+    success: boolean;
+    city_id: number;
+    areas: Array<{
+      id: number;
+      name: string;
+      is_custom: boolean;
+    }>;
+  }> {
+    return apiRequest(`/targets/areas/${cityId}`);
+  }
+
+  // ===== CLUB DIMENSIONAL TARGETS =====
+
+  // Get dimensional targets for a club
+  static async getClubDimensionalTargets(clubId: number): Promise<{
+    success: boolean;
+    club_id: number;
+    club_name: string;
+    activity_name?: string;
+    dimensional_targets: any[];
+    totals: {
+      total_target_meetups: number;
+      total_target_revenue: number;
+    };
+  }> {
+    return apiRequest(`/targets/clubs/${clubId}/dimensional`);
+  }
+
+  // Create a dimensional target for a club
+  static async createClubDimensionalTarget(
+    clubId: number,
+    target: {
+      area_id?: number | null;
+      day_type_id?: number | null;
+      format_id?: number | null;
+      target_meetups: number;
+      target_revenue?: number;
+    }
+  ): Promise<{
+    success: boolean;
+    target: any;
+  }> {
+    return apiRequest(`/targets/clubs/${clubId}/dimensional`, {
+      method: 'POST',
+      body: JSON.stringify(target),
+    });
+  }
+
+  // Update a dimensional target for a club
+  static async updateClubDimensionalTarget(
+    clubId: number,
+    targetId: number,
+    target: {
+      area_id?: number | null;
+      day_type_id?: number | null;
+      format_id?: number | null;
+      target_meetups?: number;
+      target_revenue?: number;
+    }
+  ): Promise<{
+    success: boolean;
+    target: any;
+  }> {
+    return apiRequest(`/targets/clubs/${clubId}/dimensional/${targetId}`, {
+      method: 'PUT',
+      body: JSON.stringify(target),
+    });
+  }
+
+  // Delete a dimensional target for a club
+  static async deleteClubDimensionalTarget(
+    clubId: number,
+    targetId: number
+  ): Promise<{
+    success: boolean;
+    message: string;
+  }> {
+    return apiRequest(`/targets/clubs/${clubId}/dimensional/${targetId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  // ===== LAUNCH DIMENSIONAL TARGETS =====
+
+  // Get dimensional targets for a new club launch
+  static async getLaunchDimensionalTargets(launchId: number): Promise<{
+    success: boolean;
+    launch_id: number;
+    planned_club_name?: string;
+    activity_name?: string;
+    dimensional_targets: any[];
+    totals: {
+      total_target_meetups: number;
+      total_target_revenue: number;
+    };
+  }> {
+    return apiRequest(`/targets/launches/${launchId}/dimensional`);
+  }
+
+  // Create a dimensional target for a launch
+  static async createLaunchDimensionalTarget(
+    launchId: number,
+    target: {
+      area_id?: number | null;
+      day_type_id?: number | null;
+      format_id?: number | null;
+      target_meetups: number;
+      target_revenue?: number;
+    }
+  ): Promise<{
+    success: boolean;
+    target: any;
+  }> {
+    return apiRequest(`/targets/launches/${launchId}/dimensional`, {
+      method: 'POST',
+      body: JSON.stringify(target),
+    });
+  }
+
+  // Update a dimensional target for a launch
+  static async updateLaunchDimensionalTarget(
+    launchId: number,
+    targetId: number,
+    target: {
+      area_id?: number | null;
+      day_type_id?: number | null;
+      format_id?: number | null;
+      target_meetups?: number;
+      target_revenue?: number;
+    }
+  ): Promise<{
+    success: boolean;
+    target: any;
+  }> {
+    return apiRequest(`/targets/launches/${launchId}/dimensional/${targetId}`, {
+      method: 'PUT',
+      body: JSON.stringify(target),
+    });
+  }
+
+  // Delete a dimensional target for a launch
+  static async deleteLaunchDimensionalTarget(
+    launchId: number,
+    targetId: number
+  ): Promise<{
+    success: boolean;
+    message: string;
+  }> {
+    return apiRequest(`/targets/launches/${launchId}/dimensional/${targetId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  // ===== DASHBOARD / AGGREGATION =====
+
+  // Get targets aggregated by area
+  static async getDashboardByArea(): Promise<{
+    success: boolean;
+    aggregation: 'area';
+    data: Array<{
+      area_id: number;
+      area_name: string;
+      city_id: number;
+      city_name: string;
+      total_target_meetups: number;
+      total_target_revenue: number;
+      club_count: number;
+    }>;
+    grand_total: {
+      total_target_meetups: number;
+      total_target_revenue: number;
+      area_count: number;
+    };
+  }> {
+    return apiRequest('/targets/dashboard/by-area');
+  }
+
+  // Get targets aggregated by city (rollup from areas)
+  static async getDashboardByCity(): Promise<{
+    success: boolean;
+    aggregation: 'city';
+    data: Array<{
+      city_id: number;
+      city_name: string;
+      state?: string;
+      total_target_meetups: number;
+      total_target_revenue: number;
+      club_count: number;
+      area_count: number;
+      areas?: any[];
+    }>;
+    grand_total: {
+      total_target_meetups: number;
+      total_target_revenue: number;
+      city_count: number;
+    };
+  }> {
+    return apiRequest('/targets/dashboard/by-city');
+  }
+
+  // Get targets aggregated by day type
+  static async getDashboardByDayType(): Promise<{
+    success: boolean;
+    aggregation: 'day_type';
+    data: Array<{
+      day_type_id: number;
+      day_type: string;
+      total_target_meetups: number;
+      total_target_revenue: number;
+      club_count: number;
+    }>;
+    grand_total: {
+      total_target_meetups: number;
+      total_target_revenue: number;
+    };
+  }> {
+    return apiRequest('/targets/dashboard/by-day-type');
+  }
+
+  // Get targets aggregated by format
+  static async getDashboardByFormat(): Promise<{
+    success: boolean;
+    aggregation: 'format';
+    data: Array<{
+      format_id: number;
+      format_name: string;
+      total_target_meetups: number;
+      total_target_revenue: number;
+      club_count: number;
+    }>;
+    grand_total: {
+      total_target_meetups: number;
+      total_target_revenue: number;
+    };
+  }> {
+    return apiRequest('/targets/dashboard/by-format');
+  }
+
+  // Get targets aggregated by activity
+  static async getDashboardByActivity(): Promise<{
+    success: boolean;
+    aggregation: 'activity';
+    data: Array<{
+      activity_id: number;
+      activity_name?: string;
+      total_target_meetups: number;
+      total_target_revenue: number;
+      club_count: number;
+    }>;
+    grand_total: {
+      total_target_meetups: number;
+      total_target_revenue: number;
+      activity_count: number;
+    };
+  }> {
+    return apiRequest('/targets/dashboard/by-activity');
+  }
+
+  // Get combined dashboard summary
+  static async getDashboardSummary(): Promise<{
+    success: boolean;
+    summary: {
+      total_clubs_with_targets: number;
+      total_launches_with_targets: number;
+      total_target_meetups: number;
+      total_target_revenue: number;
+      by_city: any[];
+      by_day_type: any[];
+      by_format: any[];
+    };
+  }> {
+    return apiRequest('/targets/dashboard/summary');
+  }
+
+  // ===== ACTIVITY / CLUB LISTS =====
+
+  // Get all activities with club counts
+  static async getActivities(): Promise<{
+    success: boolean;
+    activities: Array<{
+      activity_id: number;
+      activity_name: string;
+      club_count: number;
+      active_club_count: number;
+    }>;
+  }> {
+    return apiRequest('/targets/activities');
+  }
+
+  // Get clubs for a specific activity
+  static async getActivityClubs(activityName: string): Promise<{
+    success: boolean;
+    activity_name: string;
+    clubs: Array<{
+      pk: number;
+      name: string;
+      city_name?: string;
+      area_name?: string;
+      status: string;
+    }>;
+  }> {
+    return apiRequest(`/targets/activities/${encodeURIComponent(activityName)}/clubs`);
+  }
+
+  // Get new club launches
+  static async getNewClubLaunches(): Promise<{
+    success: boolean;
+    launches: Array<{
+      id: number;
+      activity_name: string;
+      planned_club_name?: string;
+      planned_city?: string;
+      planned_area?: string;
+      planned_launch_date?: string;
+      launch_status: string;
+    }>;
+  }> {
+    return apiRequest('/targets/launches');
+  }
+
+  // Get filter options for dropdowns
+  static async getFilterOptions(): Promise<{
+    success: boolean;
+    activities: Array<{ activity_id: number; activity_name: string }>;
+    cities: Array<{ city_id: number; city_name: string }>;
+  }> {
+    return apiRequest('/targets/filter-options');
+  }
+}
+
 // Additional helper functions for POC Management
 export async function getActivities(): Promise<Array<{
   id: string;
@@ -536,6 +940,7 @@ export const api = {
   poc: POCService,
   teams: TeamPerformanceService,
   scaling: ScalingPlannerService,
+  dimensionalTargets: DimensionalTargetsService,
 };
 
 export default api;

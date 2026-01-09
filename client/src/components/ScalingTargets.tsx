@@ -544,6 +544,9 @@ export default function ScalingTargets() {
         return
       }
 
+      // Save scroll position before refresh
+      const scrollY = window.scrollY
+
       // Create new planned launch via API
       const payload = {
         activity_name: newLaunchForm.activity_name,
@@ -572,14 +575,7 @@ export default function ScalingTargets() {
       if (data.success) {
         console.log('New launch created successfully:', data.launch)
 
-        // Reload planned launches if we're viewing an activity, or all launches
-        if (selectedActivity) {
-          await loadPlannedLaunches(selectedActivity)
-        } else {
-          await loadPlannedLaunches()
-        }
-
-        // Reset form and close modal
+        // Reset form and close modal first (before async refresh)
         setNewLaunchForm({
           activity_name: '',
           planned_city_id: '',
@@ -592,6 +588,17 @@ export default function ScalingTargets() {
         })
         setAreas([])
         setShowNewLaunchModal(false)
+
+        // Reload all data to update totals - activities + planned launches
+        await Promise.all([
+          loadActivities(),
+          selectedActivity ? loadPlannedLaunches(selectedActivity) : loadPlannedLaunches()
+        ])
+
+        // Restore scroll position after refresh
+        requestAnimationFrame(() => {
+          window.scrollTo(0, scrollY)
+        })
 
         console.log(`Created new club launch plan for ${newLaunchForm.activity_name} in ${newLaunchForm.planned_city_name}`)
       } else {
@@ -620,6 +627,9 @@ export default function ScalingTargets() {
 
   const handleEditLaunchSubmit = async () => {
     if (!editingLaunch) return
+
+    // Save scroll position before refresh
+    const scrollY = window.scrollY
 
     try {
       // Find all launches in the same batch (same city, area, and activity)
@@ -693,10 +703,17 @@ export default function ScalingTargets() {
           launch_status: 'not_picked',
           notes: ''
         })
-        // Reload planned launches
-        if (selectedActivity) {
-          await loadPlannedLaunches(selectedActivity)
-        }
+        // Reload all data to update totals - activities + planned launches
+        await Promise.all([
+          loadActivities(),
+          selectedActivity ? loadPlannedLaunches(selectedActivity) : loadPlannedLaunches()
+        ])
+
+        // Restore scroll position after refresh
+        requestAnimationFrame(() => {
+          window.scrollTo(0, scrollY)
+        })
+
         console.log(`Successfully updated ${batchLaunches.length} launches in batch`)
       } else {
         throw new Error('Failed to update some launches in the batch')

@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import ScalingPlanner from '../components/ScalingPlanner';
 import { API_URL } from '../config/api';
+import { getTeamForClub, TEAMS, TeamKey } from '../../../shared/teamConfig';
 
 interface ClubHealth {
   id: number;
@@ -91,6 +92,7 @@ export function HealthDashboard() {
   const [selectedActivity, setSelectedActivity] = useState<string>('all');
   const [selectedHealthStatus, setSelectedHealthStatus] = useState<string>('all');
   const [selectedClubStatus, setSelectedClubStatus] = useState<string>('all');
+  const [selectedTeam, setSelectedTeam] = useState<string>('all');
   const [sortBy, setSortBy] = useState<string>('health_score');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
   const [showTrends, setShowTrends] = useState(false);
@@ -197,6 +199,7 @@ export function HealthDashboard() {
     .filter(club => selectedCity === 'all' || club.city === selectedCity)
     .filter(club => selectedActivity === 'all' || club.activity === selectedActivity)
     .filter(club => selectedHealthStatus === 'all' || club.health_status === selectedHealthStatus)
+    .filter(club => selectedTeam === 'all' || getTeamForClub(club.activity, club.city) === selectedTeam)
     .sort((a, b) => {
       let aValue = a[sortBy as keyof ClubHealth];
       let bValue = b[sortBy as keyof ClubHealth];
@@ -248,11 +251,31 @@ export function HealthDashboard() {
           </button>
         </div>
 
+        {/* Show filters even when no data */}
+        <div className="bg-white p-4 rounded-lg shadow-sm border">
+          <div className="flex flex-wrap gap-4 items-center">
+            <div className="flex items-center space-x-2">
+              <Filter className="h-4 w-4 text-gray-500" />
+              <span className="text-sm font-medium text-gray-700">Filters:</span>
+            </div>
+
+            <select
+              value={selectedClubStatus}
+              onChange={(e) => setSelectedClubStatus(e.target.value)}
+              className="px-3 py-1 border border-gray-300 rounded text-sm"
+            >
+              <option value="all">All Club Status</option>
+              <option value="active">Active</option>
+              <option value="inactive">Inactive</option>
+            </select>
+          </div>
+        </div>
+
         <div className="text-center py-12">
           <Activity className="mx-auto h-12 w-12 text-gray-400" />
-          <h3 className="mt-2 text-sm font-medium text-gray-900">No Health Data Available</h3>
+          <h3 className="mt-2 text-sm font-medium text-gray-900">No Clubs Found</h3>
           <p className="mt-1 text-sm text-gray-500">
-            Unable to connect to database. Please try refreshing or contact support if the issue persists.
+            No clubs match the selected filters. Try changing the club status filter above.
           </p>
         </div>
       </div>
@@ -407,6 +430,17 @@ export function HealthDashboard() {
             <Filter className="h-4 w-4 text-gray-500" />
             <span className="text-sm font-medium text-gray-700">Filters:</span>
           </div>
+
+          <select
+            value={selectedTeam}
+            onChange={(e) => setSelectedTeam(e.target.value)}
+            className="px-3 py-1 border border-gray-300 rounded text-sm"
+          >
+            <option value="all">All Teams</option>
+            <option value="blue">🔵 Blue (Shashwat)</option>
+            <option value="yellow">🟡 Yellow (CD)</option>
+            <option value="green">🟢 Green (Saurabh)</option>
+          </select>
 
           <select
             value={selectedCity}

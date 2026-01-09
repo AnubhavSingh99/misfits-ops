@@ -9,12 +9,15 @@ build/
 client/dist/
 client/build/
 
-# Environment files
+# Environment files (NEVER commit these - contain secrets)
 .env
 .env.local
 .env.development.local
 .env.test.local
 .env.production.local
+.env.production
+server/.env.production
+client/.env.production
 
 # Database
 *.db
@@ -147,7 +150,7 @@ ecosystem.config.js
 *.temp
 
 # User specific files
-CLAUDE.md
+# CLAUDE.md - Now tracked in repo for shared documentation
 
 # Backup files
 *.backup

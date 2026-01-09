@@ -321,7 +321,37 @@ router.get('/attribution', async (req, res) => {
   try {
     const { start_date, end_date, activity, city } = req.query;
 
-    const attributionData = await query(`
+    // SECURITY: Build parameterized query to prevent SQL injection
+    const queryParams: any[] = [];
+    const conditions: string[] = ['m.actual_revenue > 0'];
+    let paramIndex = 1;
+
+    // Validate and add date filters with parameters
+    const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+    if (start_date && dateRegex.test(String(start_date))) {
+      conditions.push(`m.created_at >= $${paramIndex}`);
+      queryParams.push(start_date);
+      paramIndex++;
+    }
+    if (end_date && dateRegex.test(String(end_date))) {
+      conditions.push(`m.created_at <= $${paramIndex}`);
+      queryParams.push(end_date);
+      paramIndex++;
+    }
+    if (activity && activity !== 'All') {
+      conditions.push(`m.activity = $${paramIndex}`);
+      queryParams.push(activity);
+      paramIndex++;
+    }
+    if (city && city !== 'All') {
+      conditions.push(`m.city = $${paramIndex}`);
+      queryParams.push(city);
+      paramIndex++;
+    }
+
+    const whereClause = conditions.join(' AND ');
+
+    const attributionData = await queryProduction(`
       WITH club_ages AS (
         SELECT
           m.*,
@@ -332,11 +362,7 @@ router.get('/attribution', async (req, res) => {
             ELSE 'established'
           END as club_maturity
         FROM meetups m
-        WHERE m.actual_revenue > 0
-        ${start_date ? `AND m.created_at >= '${start_date}'` : ''}
-        ${end_date ? `AND m.created_at <= '${end_date}'` : ''}
-        ${activity && activity !== 'All' ? `AND m.activity = '${activity}'` : ''}
-        ${city && city !== 'All' ? `AND m.city = '${city}'` : ''}
+        WHERE ${whereClause}
       )
       SELECT
         club_maturity,
@@ -347,7 +373,7 @@ router.get('/attribution', async (req, res) => {
       FROM club_ages
       GROUP BY club_maturity
       ORDER BY total_revenue DESC
-    `);
+    `, queryParams.length > 0 ? queryParams : undefined);
 
     res.json({
       success: true,

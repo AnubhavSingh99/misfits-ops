@@ -1,5 +1,7 @@
 import { Pool, PoolClient } from 'pg';
 import { logger } from '../utils/logger';
+import * as fs from 'fs';
+import * as path from 'path';
 
 let pool: Pool; // Local operations database
 let prodPool: Pool; // Production database (read-only, direct connection)
@@ -438,10 +440,151 @@ async function runMigrations() {
     // Create index for activity categorization table
     await queryLocal('CREATE INDEX IF NOT EXISTS idx_activity_categorizations_category ON activity_categorizations(category);');
 
+    // Run dimensional targets schema migration
+    await runDimensionalTargetsMigration();
+
+    // Run all migrations from migrations folder
+    await runMigrationFiles();
+
     logger.info('Database migrations completed');
   } catch (error) {
     logger.error('Migration failed:', error);
     throw error;
+  }
+}
+
+// Run the dimensional targets schema migration
+async function runDimensionalTargetsMigration() {
+  try {
+    // Check if dimensional tables already exist
+    const checkResult = await queryLocal(`
+      SELECT EXISTS (
+        SELECT FROM information_schema.tables
+        WHERE table_schema = 'public'
+        AND table_name = 'dim_cities'
+      );
+    `);
+
+    if (checkResult.rows[0].exists) {
+      logger.info('Dimensional targets tables already exist, skipping migration');
+      return;
+    }
+
+    logger.info('Running dimensional targets schema migration...');
+
+    // Read and execute the schema file
+    const schemaPath = path.join(__dirname, '../../database/dimensional_targets_schema.sql');
+
+    if (!fs.existsSync(schemaPath)) {
+      logger.warn('Dimensional targets schema file not found at:', schemaPath);
+      return;
+    }
+
+    const schemaSql = fs.readFileSync(schemaPath, 'utf8');
+
+    // Split by semicolons and execute each statement
+    const statements = schemaSql
+      .split(';')
+      .map(s => s.trim())
+      .filter(s => s.length > 0 && !s.startsWith('--'));
+
+    for (const statement of statements) {
+      if (statement.trim()) {
+        try {
+          await queryLocal(statement);
+        } catch (err: any) {
+          // Ignore errors for DROP IF EXISTS and similar
+          if (!err.message.includes('does not exist') &&
+              !err.message.includes('already exists')) {
+            logger.warn('Statement warning:', err.message);
+          }
+        }
+      }
+    }
+
+    logger.info('Dimensional targets schema migration completed');
+  } catch (error) {
+    logger.error('Dimensional targets migration failed:', error);
+    // Don't throw - allow server to start even if migration fails
+  }
+}
+
+// Run all migration files from the migrations folder
+async function runMigrationFiles() {
+  try {
+    // Create schema_migrations table to track executed migrations
+    await queryLocal(`
+      CREATE TABLE IF NOT EXISTS schema_migrations (
+        id SERIAL PRIMARY KEY,
+        filename VARCHAR(255) UNIQUE NOT NULL,
+        executed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    const migrationsPath = path.join(__dirname, '../../database/migrations');
+
+    if (!fs.existsSync(migrationsPath)) {
+      logger.info('No migrations folder found, skipping');
+      return;
+    }
+
+    // Get all .sql files and sort them
+    const files = fs.readdirSync(migrationsPath)
+      .filter(f => f.endsWith('.sql'))
+      .sort();
+
+    if (files.length === 0) {
+      logger.info('No migration files found');
+      return;
+    }
+
+    // Get already executed migrations
+    const executed = await queryLocal('SELECT filename FROM schema_migrations');
+    const executedSet = new Set(executed.rows.map((r: any) => r.filename));
+
+    // Run pending migrations
+    for (const file of files) {
+      if (executedSet.has(file)) {
+        continue; // Already executed
+      }
+
+      logger.info(`Running migration: ${file}`);
+
+      const filePath = path.join(migrationsPath, file);
+      const sql = fs.readFileSync(filePath, 'utf8');
+
+      // Split by semicolons and execute each statement
+      const statements = sql
+        .split(';')
+        .map(s => s.trim())
+        .filter(s => s.length > 0 && !s.startsWith('--'));
+
+      for (const statement of statements) {
+        if (statement.trim()) {
+          try {
+            await queryLocal(statement);
+          } catch (err: any) {
+            // Ignore errors for IF EXISTS/IF NOT EXISTS statements
+            if (!err.message.includes('does not exist') &&
+                !err.message.includes('already exists')) {
+              logger.error(`Migration ${file} failed at statement:`, statement.substring(0, 100));
+              throw err;
+            }
+          }
+        }
+      }
+
+      // Record successful migration
+      await queryLocal(
+        'INSERT INTO schema_migrations (filename) VALUES ($1) ON CONFLICT (filename) DO NOTHING',
+        [file]
+      );
+
+      logger.info(`Migration completed: ${file}`);
+    }
+  } catch (error) {
+    logger.error('Migration files execution failed:', error);
+    // Don't throw - allow server to start even if migration fails
   }
 }
 

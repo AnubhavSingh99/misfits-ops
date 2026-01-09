@@ -223,78 +223,74 @@ router.get('/clubs', async (req, res) => {
   try {
     logger.info('Fetching real clubs data for scaling planner...');
 
-    // Query to get real club data with calculated metrics
+    // OPTIMIZED QUERY: Eliminated N+1 subqueries by using CTEs
+    // Key optimizations:
+    // 1. City/Area: Pre-computed in club_locations CTE (was: 2 subqueries per row)
+    // 2. Revenue: Pre-computed in recent_events CTE (was: subquery per row)
+    // Expected speedup: 5-20x depending on number of clubs
     const clubsQuery = `
+      WITH
+      -- Pre-compute most recent location for each club (replaces N subqueries with 1 scan)
+      club_locations AS (
+        SELECT DISTINCT ON (e.club_id)
+          e.club_id,
+          ci.name as city_name,
+          ar.name as area_name
+        FROM event e
+        JOIN location l ON e.location_id = l.id
+        JOIN area ar ON l.area_id = ar.id
+        JOIN city ci ON ar.city_id = ci.id
+        ORDER BY e.club_id, e.start_time DESC
+      ),
+      -- Pre-compute recent event counts for revenue calculation
+      recent_events AS (
+        SELECT
+          club_id,
+          COUNT(*) * 300 as estimated_revenue  -- events * avg price
+        FROM event
+        WHERE created_at >= CURRENT_DATE - INTERVAL '30 days'
+        GROUP BY club_id
+      ),
+      -- Main club aggregations
+      club_metrics AS (
+        SELECT
+          c.pk,
+          c.id as club_id,
+          c.name as club_name,
+          a.name as activity,
+          c.status,
+          c.created_at as club_created_at,
+          COUNT(DISTINCT CASE WHEN e.created_at >= CURRENT_DATE - INTERVAL '7 days' THEN e.pk END) as current_meetups,
+          COUNT(DISTINCT e.pk) as total_events,
+          MAX(e.created_at) as last_event_date
+        FROM club c
+        LEFT JOIN activity a ON c.activity_id = a.id
+        LEFT JOIN event e ON c.pk = e.club_id
+        WHERE c.status = 'ACTIVE'
+          AND c.is_private = false
+          AND a.name != 'Test'
+        GROUP BY c.pk, c.id, c.name, a.name, c.status, c.created_at
+        HAVING COUNT(DISTINCT e.pk) > 0 OR c.created_at >= CURRENT_DATE - INTERVAL '30 days'
+      )
       SELECT
-        c.id as club_id,
-        c.name as club_name,
-        a.name as activity,
-        c.status,
-
-        -- Get most recent city/area from events
-        (
-          SELECT ci.name
-          FROM event e2
-          LEFT JOIN location l2 ON e2.location_id = l2.id
-          LEFT JOIN area ar2 ON l2.area_id = ar2.id
-          LEFT JOIN city ci ON ar2.city_id = ci.id
-          WHERE e2.club_id = c.pk
-          ORDER BY e2.start_time DESC
-          LIMIT 1
-        ) as city_name,
-        (
-          SELECT ar2.name
-          FROM event e2
-          LEFT JOIN location l2 ON e2.location_id = l2.id
-          LEFT JOIN area ar2 ON l2.area_id = ar2.id
-          WHERE e2.club_id = c.pk
-          ORDER BY e2.start_time DESC
-          LIMIT 1
-        ) as area_name,
-
-        -- Current meetups: Count of events in last 7 days (last week)
-        COUNT(DISTINCT CASE
-          WHEN e.created_at >= CURRENT_DATE - INTERVAL '7 days'
-          THEN e.pk
-          ELSE NULL
-        END) as current_meetups,
-
-        -- Total events (all time)
-        COUNT(DISTINCT e.pk) as total_events,
-
-        -- Current revenue: Temporarily using a fallback calculation while investigating schema
-        -- TODO: Fix with correct payment linkage once schema is confirmed
-        COALESCE((
-          SELECT COUNT(e2.pk) * 300  -- Temporary: events * avg price (300 rupees per event)
-          FROM event e2
-          WHERE e2.club_id = c.pk
-            AND e2.created_at >= CURRENT_DATE - INTERVAL '30 days'
-        ), 0) as current_revenue,
-
-        -- Capacity utilization: Average booking fill rate (simplified)
+        cm.club_id,
+        cm.club_name,
+        cm.activity,
+        cm.status,
+        COALESCE(cl.city_name, 'Unknown') as city_name,
+        COALESCE(cl.area_name, 'Unknown') as area_name,
+        cm.current_meetups,
+        cm.total_events,
+        COALESCE(re.estimated_revenue, 0) as current_revenue,
         0 as capacity_utilization,
-
-        -- Unique attendees (simplified)
         0 as unique_attendees,
-
-        -- Average rating (simplified)
         0 as avg_rating,
-
-        -- Last event date
-        MAX(e.created_at) as last_event_date,
-
-        -- Club creation date
-        c.created_at as club_created_at
-
-      FROM club c
-      LEFT JOIN activity a ON c.activity_id = a.id
-      LEFT JOIN event e ON c.pk = e.club_id
-      WHERE c.status = 'ACTIVE'
-        AND c.is_private = false
-        AND a.name != 'Test'
-      GROUP BY c.pk, c.id, c.name, a.name, c.status, c.created_at
-      HAVING COUNT(DISTINCT e.pk) > 0 OR c.created_at >= CURRENT_DATE - INTERVAL '30 days'
-      ORDER BY current_revenue DESC, total_events DESC
+        cm.last_event_date,
+        cm.club_created_at
+      FROM club_metrics cm
+      LEFT JOIN club_locations cl ON cm.pk = cl.club_id
+      LEFT JOIN recent_events re ON cm.pk = re.club_id
+      ORDER BY COALESCE(re.estimated_revenue, 0) DESC, cm.total_events DESC
     `;
 
     const result = await queryProduction(clubsQuery);

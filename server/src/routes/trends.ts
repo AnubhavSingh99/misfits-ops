@@ -12,6 +12,7 @@ router.get('/revenue', async (req, res) => {
     let dateGrouping = '';
     let timeInterval = '';
 
+    // Whitelist valid periods to prevent injection
     switch (period) {
       case 'wow':
         dateGrouping = "DATE_TRUNC('week', p.created_at)";
@@ -30,9 +31,16 @@ router.get('/revenue', async (req, res) => {
         timeInterval = "INTERVAL '8 weeks'";
     }
 
+    // SECURITY: Use parameterized queries instead of string interpolation
+    const queryParams: any[] = [];
     let dateFilter = `p.created_at >= CURRENT_DATE - ${timeInterval}`;
     if (startDate && endDate) {
-      dateFilter = `p.created_at >= '${startDate}' AND p.created_at <= '${endDate}'`;
+      // Validate date format (YYYY-MM-DD)
+      const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+      if (dateRegex.test(String(startDate)) && dateRegex.test(String(endDate))) {
+        queryParams.push(startDate, endDate);
+        dateFilter = `p.created_at >= $1 AND p.created_at <= $2`;
+      }
     }
 
     const revenueQuery = `
@@ -51,7 +59,7 @@ router.get('/revenue', async (req, res) => {
       ORDER BY period ASC;
     `;
 
-    const result = await queryProduction(revenueQuery);
+    const result = await queryProduction(revenueQuery, queryParams.length > 0 ? queryParams : undefined);
     const data = result.rows?.map((row: any) => ({
       ...row,
       revenue_rupees: parseFloat(row.revenue_rupees) || 0
@@ -76,6 +84,7 @@ router.get('/meetups', async (req, res) => {
     let dateGrouping = '';
     let timeInterval = '';
 
+    // Whitelist valid periods to prevent injection
     switch (period) {
       case 'wow':
         dateGrouping = "DATE_TRUNC('week', e.created_at)";
@@ -94,9 +103,16 @@ router.get('/meetups', async (req, res) => {
         timeInterval = "INTERVAL '8 weeks'";
     }
 
+    // SECURITY: Use parameterized queries instead of string interpolation
+    const queryParams: any[] = [];
     let dateFilter = `e.created_at >= CURRENT_DATE - ${timeInterval}`;
     if (startDate && endDate) {
-      dateFilter = `e.created_at >= '${startDate}' AND e.created_at <= '${endDate}'`;
+      // Validate date format (YYYY-MM-DD)
+      const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+      if (dateRegex.test(String(startDate)) && dateRegex.test(String(endDate))) {
+        queryParams.push(startDate, endDate);
+        dateFilter = `e.created_at >= $1 AND e.created_at <= $2`;
+      }
     }
 
     const meetupsQuery = `
@@ -112,7 +128,7 @@ router.get('/meetups', async (req, res) => {
       ORDER BY period ASC;
     `;
 
-    const result = await queryProduction(meetupsQuery);
+    const result = await queryProduction(meetupsQuery, queryParams.length > 0 ? queryParams : undefined);
     const data = result.rows?.map((row: any) => ({
       ...row,
       meetup_count: parseInt(row.meetup_count) || 0
@@ -137,6 +153,7 @@ router.get('/attendance', async (req, res) => {
     let dateGrouping = '';
     let timeInterval = '';
 
+    // Whitelist valid periods to prevent injection
     switch (period) {
       case 'wow':
         dateGrouping = "DATE_TRUNC('week', e.created_at)";
@@ -155,9 +172,16 @@ router.get('/attendance', async (req, res) => {
         timeInterval = "INTERVAL '8 weeks'";
     }
 
+    // SECURITY: Use parameterized queries instead of string interpolation
+    const queryParams: any[] = [];
     let dateFilter = `e.created_at >= CURRENT_DATE - ${timeInterval}`;
     if (startDate && endDate) {
-      dateFilter = `e.created_at >= '${startDate}' AND e.created_at <= '${endDate}'`;
+      // Validate date format (YYYY-MM-DD)
+      const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+      if (dateRegex.test(String(startDate)) && dateRegex.test(String(endDate))) {
+        queryParams.push(startDate, endDate);
+        dateFilter = `e.created_at >= $1 AND e.created_at <= $2`;
+      }
     }
 
     const attendanceQuery = `
@@ -175,7 +199,7 @@ router.get('/attendance', async (req, res) => {
       ORDER BY period ASC;
     `;
 
-    const result = await queryProduction(attendanceQuery);
+    const result = await queryProduction(attendanceQuery, queryParams.length > 0 ? queryParams : undefined);
     const data = result.rows?.map((row: any) => ({
       ...row,
       total_attendees: parseInt(row.total_attendees) || 0

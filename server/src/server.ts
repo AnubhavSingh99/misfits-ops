@@ -23,10 +23,14 @@ import scalingRoutes from './routes/scaling';
 import targetsRoutes from './routes/targets';
 import meetupsRoutes from './routes/meetups';
 import trendsRoutes from './routes/trends';
+import scalingTasksRoutes from './routes/scalingTasks';
+import requirementsRoutes from './routes/requirements';
+import configRoutes from './routes/config';
 
 // Import services
 import { initializeDatabase } from './services/database';
 import { initializeRedis } from './services/redis';
+import { initializeDimensions } from './services/dimensionSync';
 import { logger } from './utils/logger';
 import { errorHandler } from './middleware/errorHandler';
 
@@ -45,8 +49,10 @@ app.use(cors({
     process.env.FRONTEND_URL || 'http://localhost:3000',
     'http://localhost:3000',
     'http://localhost:3001',
+    'http://localhost:3002',
     'http://127.0.0.1:3000',
-    'http://127.0.0.1:3001'
+    'http://127.0.0.1:3001',
+    'http://127.0.0.1:3002'
   ],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
@@ -61,8 +67,10 @@ app.options('*', cors({
     process.env.FRONTEND_URL || 'http://localhost:3000',
     'http://localhost:3000',
     'http://localhost:3001',
+    'http://localhost:3002',
     'http://127.0.0.1:3000',
-    'http://127.0.0.1:3001'
+    'http://127.0.0.1:3001',
+    'http://127.0.0.1:3002'
   ],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
@@ -127,6 +135,9 @@ app.use('/api/scaling', scalingRoutes);
 app.use('/api/targets', targetsRoutes);
 app.use('/api/meetups', meetupsRoutes);
 app.use('/api/trends', trendsRoutes);
+app.use('/api/scaling-tasks', scalingTasksRoutes);
+app.use('/api/requirements', requirementsRoutes);
+app.use('/api/config', configRoutes);
 app.use('/api', revenueRoutes); // Also handle direct /api/revenue-growth
 
 // Teams endpoints (simple fallback)
@@ -169,6 +180,10 @@ async function startServer() {
     try {
       await initializeDatabase();
       logger.info('Database initialized');
+
+      // Initialize dimension tables (sync from production)
+      await initializeDimensions();
+      logger.info('Dimension tables initialized');
     } catch (dbError) {
       logger.warn('Database initialization failed, continuing without database:', dbError.message);
     }
