@@ -62,11 +62,10 @@ export function ExpandClubModal({ isOpen, onClose, onSave, context }: ExpandClub
   const [clubs, setClubs] = useState<ClubOption[]>([])
   const [dayTypes, setDayTypes] = useState<DayType[]>([])
 
-  // Selected values - these are dim_* IDs, NOT production IDs
-  // Production IDs from context are resolved after fetching dimensions
+  // Selected values - these are production IDs (using scaling-tasks/filters API)
   const [selectedActivityId, setSelectedActivityId] = useState<number | undefined>(context?.activity_id)
-  const [selectedCityId, setSelectedCityId] = useState<number | undefined>(undefined)  // Resolved after city fetch
-  const [selectedAreaId, setSelectedAreaId] = useState<number | undefined>(undefined)   // Resolved after area fetch
+  const [selectedCityId, setSelectedCityId] = useState<number | undefined>(context?.city_id)
+  const [selectedAreaId, setSelectedAreaId] = useState<number | undefined>(context?.area_id)
   const [selectedClubId, setSelectedClubId] = useState<number | undefined>(context?.club_id)
 
   // Form fields
@@ -137,30 +136,18 @@ export function ExpandClubModal({ isOpen, onClose, onSave, context }: ExpandClub
     fetchDayTypes()
   }, [isOpen])
 
-  // Fetch all cities on mount (not filtered by activity)
+  // Fetch cities (filtered by activity if selected) - uses production IDs
   useEffect(() => {
     if (!isOpen) return
 
     const fetchCities = async () => {
       setLoadingCities(true)
       try {
-        const res = await fetch(`${API_BASE}/targets/dimensions/city`)
+        const params = selectedActivityId ? `?activity_ids=${selectedActivityId}` : ''
+        const res = await fetch(`${API_BASE}/scaling-tasks/filters/cities${params}`)
         const data = await res.json()
-        if (data.success && data.values) {
-          const cityList = data.values.map((c: any) => ({
-            id: c.id,
-            name: c.name || c.city_name,
-            production_city_id: c.production_city_id
-          })).sort((a: FilterOption, b: FilterOption) => a.name.localeCompare(b.name))
-          setCities(cityList)
-
-          // If context has city_id (production ID), find matching dim_cities.id
-          if (context?.city_id && !selectedCityId) {
-            const matchingCity = cityList.find((c: any) => c.production_city_id === context.city_id)
-            if (matchingCity) {
-              setSelectedCityId(matchingCity.id)
-            }
-          }
+        if (data.success && data.options) {
+          setCities(data.options)
         }
       } catch (err) {
         console.error('Failed to fetch cities:', err)
@@ -170,13 +157,13 @@ export function ExpandClubModal({ isOpen, onClose, onSave, context }: ExpandClub
     }
 
     fetchCities()
-  }, [isOpen, context?.city_id])
+  }, [isOpen, selectedActivityId])
 
-  // Fetch areas when city changes
+  // Fetch areas (filtered by activity and city) - uses production IDs
   useEffect(() => {
     if (!isOpen) return
 
-    if (!selectedCityId) {
+    if (!selectedActivityId || !selectedCityId) {
       setAreas([])
       return
     }
@@ -184,23 +171,10 @@ export function ExpandClubModal({ isOpen, onClose, onSave, context }: ExpandClub
     const fetchAreas = async () => {
       setLoadingAreas(true)
       try {
-        const res = await fetch(`${API_BASE}/targets/dimensions/area?city_id=${selectedCityId}`)
+        const res = await fetch(`${API_BASE}/scaling-tasks/filters/areas?activity_ids=${selectedActivityId}&city_ids=${selectedCityId}`)
         const data = await res.json()
-        if (data.success && data.values) {
-          const areaList = data.values.map((a: any) => ({
-            id: a.id,
-            name: a.name || a.area_name,
-            production_area_id: a.production_area_id
-          }))
-          setAreas(areaList)
-
-          // If context has area_id (production ID), find matching dim_areas.id
-          if (context?.area_id && !selectedAreaId) {
-            const matchingArea = areaList.find((a: any) => a.production_area_id === context.area_id)
-            if (matchingArea) {
-              setSelectedAreaId(matchingArea.id)
-            }
-          }
+        if (data.success && data.options) {
+          setAreas(data.options)
         }
       } catch (err) {
         console.error('Failed to fetch areas:', err)
@@ -210,24 +184,39 @@ export function ExpandClubModal({ isOpen, onClose, onSave, context }: ExpandClub
     }
 
     fetchAreas()
-  }, [isOpen, selectedCityId])
+  }, [isOpen, selectedActivityId, selectedCityId])
 
-  // Fetch clubs when activity or city changes
+  // Fetch clubs (filtered by activity, city, and optionally area) - uses production IDs
   useEffect(() => {
     if (!isOpen) return
+
+    if (!selectedActivityId) {
+      setClubs([])
+      return
+    }
 
     const fetchClubs = async () => {
       setLoadingClubs(true)
       try {
-        let url = `${API_BASE}/targets/picker/clubs?`
-        const params: string[] = []
-        if (selectedActivityId) params.push(`activity_id=${selectedActivityId}`)
-        if (selectedCityId) params.push(`city_id=${selectedCityId}`)
+        const params = new URLSearchParams()
+        params.append('activity_ids', String(selectedActivityId))
+        if (selectedCityId) params.append('city_ids', String(selectedCityId))
+        if (selectedAreaId) params.append('area_ids', String(selectedAreaId))
 
-        const res = await fetch(url + params.join('&'))
+        const res = await fetch(`${API_BASE}/scaling-tasks/filters/clubs?${params}`)
         const data = await res.json()
-        if (data.success && data.clubs) {
-          setClubs(data.clubs)
+        if (data.success && data.options) {
+          // Map to ClubOption format
+          setClubs(data.options.map((c: any) => ({
+            club_pk: c.id,
+            club_name: c.name,
+            activity_id: selectedActivityId,
+            activity_name: '',
+            city_id: selectedCityId || 0,
+            city_name: '',
+            area_id: selectedAreaId || 0,
+            area_name: ''
+          })))
         }
       } catch (err) {
         console.error('Failed to fetch clubs:', err)
@@ -237,7 +226,7 @@ export function ExpandClubModal({ isOpen, onClose, onSave, context }: ExpandClub
     }
 
     fetchClubs()
-  }, [isOpen, selectedActivityId, selectedCityId])
+  }, [isOpen, selectedActivityId, selectedCityId, selectedAreaId])
 
   // Fetch meetup defaults when club changes
   useEffect(() => {
@@ -267,16 +256,16 @@ export function ExpandClubModal({ isOpen, onClose, onSave, context }: ExpandClub
     fetchDefaults()
   }, [selectedClub])
 
-  // Initialize from context when modal opens
-  // NOTE: Do NOT set selectedCityId/selectedAreaId here - they use production IDs
-  // which need to be resolved to dim_* IDs by the fetch effects
+  // Initialize when modal opens - directly from context (no resolution needed)
   useEffect(() => {
     if (isOpen && context) {
+      // Set selections directly from context (using production IDs)
       setSelectedActivityId(context.activity_id)
-      // Reset city/area to undefined so fetch effects can re-resolve from production IDs
-      setSelectedCityId(undefined)
-      setSelectedAreaId(undefined)
+      setSelectedCityId(context.city_id)
+      setSelectedAreaId(context.area_id)
       setSelectedClubId(context.club_id)
+
+      // Reset form fields
       setTargetMeetups(4)
       setMeetupCost(200)
       setMeetupCapacity(15)
@@ -284,27 +273,19 @@ export function ExpandClubModal({ isOpen, onClose, onSave, context }: ExpandClub
       setSelectedDayTypeId(null)
       setError(null)
     }
-    // Only run when isOpen changes to true - context is stable reference
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen])
+  }, [isOpen, context])
 
   // Handlers for cascading changes
   const handleActivityChange = (id: number | undefined) => {
     setSelectedActivityId(id)
-    // Don't reset city/area if they were provided in context
-    if (!context?.city_id) {
-      setSelectedCityId(undefined)
-      setSelectedAreaId(undefined)
-    }
+    setSelectedCityId(undefined)
+    setSelectedAreaId(undefined)
     setSelectedClubId(undefined)
   }
 
   const handleCityChange = (id: number | undefined) => {
     setSelectedCityId(id)
-    // Don't reset area if it was provided in context
-    if (!context?.area_id) {
-      setSelectedAreaId(undefined)
-    }
+    setSelectedAreaId(undefined)
     setSelectedClubId(undefined)
   }
 
