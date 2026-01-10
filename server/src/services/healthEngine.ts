@@ -19,9 +19,9 @@ export const HEALTH_THRESHOLDS = {
     // <50% = red
   },
   avg_rating: {
-    green: 4.0, // >=4.0 rating = green (average of total ratings in last week)
-    yellow: 3.5, // 3.5-3.9 = yellow
-    // <3.5 = red
+    green: 4.7, // >=4.7 rating = green
+    yellow: 4.4, // 4.4-4.69 = yellow
+    // <4.4 = red
   },
   revenue_achievement: {
     green: 90, // 90%+ of revenue target = green
@@ -43,8 +43,8 @@ export const ISSUE_PATTERNS = {
     message: 'Low repeat rate - member experience needs improvement'
   },
   poor_rating: {
-    condition: (metrics: any) => metrics.avg_rating < 3.0,
-    message: 'Poor ratings - leader or content quality issues'
+    condition: (metrics: any) => metrics.avg_rating < 4.2,
+    message: 'Low ratings - leader or content quality needs improvement'
   },
   revenue_miss: {
     condition: (metrics: any) => metrics.revenue_achievement < 50,
