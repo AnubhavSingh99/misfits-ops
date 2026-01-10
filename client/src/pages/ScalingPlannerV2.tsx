@@ -23,7 +23,10 @@ import {
   Rocket,
   ToggleLeft,
   ToggleRight,
-  Trash2
+  Trash2,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown
 } from 'lucide-react'
 import type {
   HierarchyNode,
@@ -45,6 +48,111 @@ function formatLocalDate(date: Date): string {
   const month = String(date.getMonth() + 1).padStart(2, '0')
   const day = String(date.getDate()).padStart(2, '0')
   return `${year}-${month}-${day}`
+}
+
+// =====================================================
+// SORTABLE TABLE HEADER CONFIGURATION
+// =====================================================
+type SortColumn = 'name' | 'target_meetups' | 'current_meetups' | 'gap_meetups' | 'l4w_revenue'
+type SortDirection = 'asc' | 'desc' | null
+
+interface SortState {
+  column: SortColumn | null
+  direction: SortDirection
+}
+
+interface SortableHeaderProps {
+  label: string
+  column: SortColumn
+  currentSort: SortState
+  onSort: (column: SortColumn) => void
+  align?: 'left' | 'right' | 'center'
+}
+
+function SortableHeader({ label, column, currentSort, onSort, align = 'left' }: SortableHeaderProps) {
+  const isActive = currentSort.column === column
+  const direction = isActive ? currentSort.direction : null
+
+  return (
+    <th
+      className={`py-3 px-4 text-xs font-semibold uppercase tracking-wider
+        cursor-pointer select-none group
+        transition-all duration-200
+        ${align === 'right' ? 'text-right' : align === 'center' ? 'text-center' : 'text-left'}
+        ${isActive ? 'text-indigo-700 bg-indigo-50/50' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100/50'}`}
+      onClick={() => onSort(column)}
+    >
+      <div className={`flex items-center gap-1.5 ${align === 'right' ? 'justify-end' : align === 'center' ? 'justify-center' : ''}`}>
+        <span className="transition-colors duration-200">{label}</span>
+        <div className={`
+          flex items-center justify-center w-4 h-4 rounded
+          transition-all duration-200 ease-out
+          ${isActive
+            ? 'bg-indigo-100 text-indigo-600'
+            : 'text-gray-300 group-hover:text-gray-500 group-hover:bg-gray-100'
+          }
+        `}>
+          {direction === 'asc' ? (
+            <ArrowUp size={12} className="transition-transform duration-200" />
+          ) : direction === 'desc' ? (
+            <ArrowDown size={12} className="transition-transform duration-200" />
+          ) : (
+            <ArrowUpDown size={10} className="opacity-60 group-hover:opacity-100 transition-opacity duration-200" />
+          )}
+        </div>
+      </div>
+    </th>
+  )
+}
+
+// Sort hierarchy nodes within each level (preserves tree structure)
+function sortHierarchy(nodes: HierarchyNode[], sortState: SortState): HierarchyNode[] {
+  if (!sortState.column || !sortState.direction) return nodes
+
+  const { column, direction } = sortState
+  const multiplier = direction === 'asc' ? 1 : -1
+
+  const sortNodes = (items: HierarchyNode[]): HierarchyNode[] => {
+    const sorted = [...items].sort((a, b) => {
+      let aVal: number | string
+      let bVal: number | string
+
+      switch (column) {
+        case 'name':
+          aVal = a.name.toLowerCase()
+          bVal = b.name.toLowerCase()
+          return multiplier * aVal.localeCompare(bVal)
+        case 'target_meetups':
+          aVal = a.target_meetups ?? 0
+          bVal = b.target_meetups ?? 0
+          break
+        case 'current_meetups':
+          aVal = a.current_meetups ?? 0
+          bVal = b.current_meetups ?? 0
+          break
+        case 'gap_meetups':
+          aVal = a.gap_meetups ?? 0
+          bVal = b.gap_meetups ?? 0
+          break
+        case 'l4w_revenue':
+          aVal = a.last_4w_revenue_total ?? 0
+          bVal = b.last_4w_revenue_total ?? 0
+          break
+        default:
+          return 0
+      }
+
+      return multiplier * ((aVal as number) - (bVal as number))
+    })
+
+    // Recursively sort children
+    return sorted.map(node => ({
+      ...node,
+      children: node.children ? sortNodes(node.children) : undefined
+    }))
+  }
+
+  return sortNodes(nodes)
 }
 
 // =====================================================
@@ -2112,6 +2220,9 @@ export default function ScalingPlannerV2() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
+  // Sort state - persists across filter changes
+  const [sortState, setSortState] = useState<SortState>({ column: null, direction: null })
+
   // Always include launches in hierarchy
   const includeLaunches = true
 
@@ -2891,6 +3002,26 @@ export default function ScalingPlannerV2() {
     return filterNodes(hierarchy)
   }, [hierarchy, filters])
 
+  // Apply sorting to filtered hierarchy
+  const sortedHierarchy = useMemo(() => {
+    return sortHierarchy(filteredHierarchy, sortState)
+  }, [filteredHierarchy, sortState])
+
+  // Sort handler - cycles: null → asc → desc → null
+  const handleSort = useCallback((column: SortColumn) => {
+    setSortState(prev => {
+      if (prev.column !== column) {
+        // New column - start with ascending
+        return { column, direction: 'asc' }
+      }
+      if (prev.direction === 'asc') {
+        return { column, direction: 'desc' }
+      }
+      // Reset to no sort
+      return { column: null, direction: null }
+    })
+  }, [])
+
   // Count visible items for rollup header
   const visibleCounts = useMemo(() => {
     let activities = 0, cities = 0, areas = 0, clubs = 0
@@ -3050,7 +3181,7 @@ export default function ScalingPlannerV2() {
     }
   }, [hasActiveFilters, rollupFilterContext, filteredTotals, visibleCounts, filteredHierarchy])
 
-  // Flatten hierarchy for table rendering
+  // Flatten hierarchy for table rendering (uses sorted hierarchy)
   const flattenedRows = useMemo(() => {
     const rows: { node: HierarchyNode; level: number; expanded: boolean }[] = []
 
@@ -3067,9 +3198,9 @@ export default function ScalingPlannerV2() {
       }
     }
 
-    traverse(filteredHierarchy, 0, true)
+    traverse(sortedHierarchy, 0, true)
     return rows
-  }, [filteredHierarchy, expandedNodes])
+  }, [sortedHierarchy, expandedNodes])
 
   // Calculate completion percentage
   const completionPercent = useMemo(() => {
@@ -3174,23 +3305,43 @@ export default function ScalingPlannerV2() {
         <div className="bg-white rounded-lg shadow border border-gray-200 overflow-hidden">
           <div ref={tableContainerRef} className="overflow-x-auto">
             <table className="w-full">
-              <thead className="bg-gray-50">
+              <thead className="bg-gray-50 sticky top-0 z-10">
                 <tr className="bg-gray-50 border-b border-gray-200">
-                  <th className="text-left py-3 px-4 text-xs font-semibold text-gray-600 uppercase tracking-wider">
-                    Hierarchy
-                  </th>
-                  <th className="text-right py-3 px-4 text-xs font-semibold text-gray-600 uppercase tracking-wider">
-                    Target
-                  </th>
-                  <th className="text-right py-3 px-4 text-xs font-semibold text-gray-600 uppercase tracking-wider">
-                    Current
-                  </th>
-                  <th className="text-right py-3 px-4 text-xs font-semibold text-gray-600 uppercase tracking-wider">
-                    Gap
-                  </th>
-                  <th className="text-right py-3 px-4 text-xs font-semibold text-gray-600 uppercase tracking-wider">
-                    L4W Revenue
-                  </th>
+                  <SortableHeader
+                    label="Hierarchy"
+                    column="name"
+                    currentSort={sortState}
+                    onSort={handleSort}
+                    align="left"
+                  />
+                  <SortableHeader
+                    label="Target"
+                    column="target_meetups"
+                    currentSort={sortState}
+                    onSort={handleSort}
+                    align="right"
+                  />
+                  <SortableHeader
+                    label="Current"
+                    column="current_meetups"
+                    currentSort={sortState}
+                    onSort={handleSort}
+                    align="right"
+                  />
+                  <SortableHeader
+                    label="Gap"
+                    column="gap_meetups"
+                    currentSort={sortState}
+                    onSort={handleSort}
+                    align="right"
+                  />
+                  <SortableHeader
+                    label="L4W Revenue"
+                    column="l4w_revenue"
+                    currentSort={sortState}
+                    onSort={handleSort}
+                    align="right"
+                  />
                   <th className="text-left py-3 px-4 text-xs font-semibold text-gray-600 uppercase tracking-wider">
                     <div className="flex items-center gap-1">
                       Meetup Stage
