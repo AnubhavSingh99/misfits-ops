@@ -37,7 +37,7 @@ import type {
   ValidationStatus,
   ScalingTaskSummary
 } from '../../shared/types'
-import { SprintViewModal, TaskSummaryCell, ScalingTaskCreateModal, SummaryTiles, HierarchyFilterBar, HierarchyRollupHeader, RevenueStatusPills, DayTypeTags, StageInfoModal, InfoIconButton, buildRolledUpSummaryMap, buildSummaryKey, type HierarchyFilters, type HierarchyLevel, MeetupDetailsTooltip, ExpandClubModal, AddChoiceModal, type ExpandClubTargetData, WeekSelector, getWeekBounds, formatWeekLabel, type WeekOption, HealthDot, HealthDistributionBar, HealthInfoModal, type HealthStatus, TaskListTooltip } from '../components/scaling'
+import { SprintViewModal, TaskSummaryCell, ScalingTaskCreateModal, SummaryTiles, HierarchyFilterBar, HierarchyRollupHeader, RevenueStatusPills, DayTypeTags, StageInfoModal, InfoIconButton, buildRolledUpSummaryMap, buildSummaryKey, type HierarchyFilters, type HierarchyLevel, type HealthFilter, MeetupDetailsTooltip, ExpandClubModal, AddChoiceModal, type ExpandClubTargetData, WeekSelector, getWeekBounds, formatWeekLabel, type WeekOption, HealthDot, HealthDistributionBar, HealthInfoModal, type HealthStatus, TaskListTooltip } from '../components/scaling'
 import { getTeamForClub, type TeamKey } from '../../shared/teamConfig'
 import { DimensionalTargetsService } from '../services/api'
 import FeedbackModal from '../components/FeedbackModal'
@@ -2043,30 +2043,42 @@ function HierarchyRow({ node, level, expanded, onToggle, onEditTarget, onDeleteT
         </div>
       </td>
 
-      {/* Health column */}
+      {/* Health column - show single health dot for all levels */}
+      {/* For clubs/launches, clicking opens the meetup details tooltip with health section */}
       <td className="py-3 px-3 text-center">
         {isTarget ? (
           <div className="text-gray-400 text-xs">-</div>
-        ) : (node.type === 'club' || node.type === 'launch') ? (
-          // Show health dot for clubs/launches
-          node.health_status ? (
-            <div className="flex justify-center">
+        ) : (node.type === 'club' || node.type === 'launch') && node.club_id && node.health_status ? (
+          // Club/launch level: health dot triggers tooltip with health details
+          <MeetupDetailsTooltip
+            clubId={node.club_id}
+            clubName={node.name}
+            currentMeetups={node.current_meetups}
+            currentRevenue={node.current_revenue}
+            weekLabel={formatWeekLabel(weekBounds.start, weekBounds.end)}
+            weekStart={formatLocalDate(weekBounds.start)}
+            weekEnd={formatLocalDate(weekBounds.end)}
+          >
+            <div className="flex justify-center cursor-pointer">
               <HealthDot
                 status={node.health_status as HealthStatus}
                 score={node.health_score}
                 size="md"
+                showTooltip={false}
               />
             </div>
-          ) : (
-            <div className="text-gray-400 text-xs">-</div>
-          )
+          </MeetupDetailsTooltip>
+        ) : node.health_status ? (
+          // Roll-up level: just show health dot with built-in tooltip
+          <div className="flex justify-center">
+            <HealthDot
+              status={node.health_status as HealthStatus}
+              score={node.health_score}
+              size="md"
+            />
+          </div>
         ) : (
-          // Show distribution bar for rollup nodes (activity, city, area)
-          node.health_distribution ? (
-            <HealthDistributionBar distribution={node.health_distribution} />
-          ) : (
-            <div className="text-gray-400 text-xs">-</div>
-          )
+          <div className="text-gray-400 text-xs">-</div>
         )}
       </td>
 
@@ -2939,7 +2951,8 @@ export default function ScalingPlannerV2() {
       filters.cities.length > 0 ||
       filters.areas.length > 0 ||
       filters.clubs.length > 0 ||
-      filters.teams.length > 0
+      filters.teams.length > 0 ||
+      (filters.health && filters.health.length > 0)
 
     if (!hasFilters) return hierarchy
 
@@ -2999,6 +3012,17 @@ export default function ScalingPlannerV2() {
           if (node.type === 'club' || node.type === 'launch') {
             const nodeTeam = node.team as TeamKey | undefined
             if (!nodeTeam || !filters.teams.includes(nodeTeam)) {
+              matches = false
+            }
+          }
+          // For parent nodes, we'll check if any children match
+        }
+
+        // Health filter - check club/launch nodes by health_status
+        if (filters.health && filters.health.length > 0) {
+          if (node.type === 'club' || node.type === 'launch') {
+            const nodeHealth = node.health_status as HealthFilter | undefined
+            if (!nodeHealth || !filters.health.includes(nodeHealth)) {
               matches = false
             }
           }
@@ -3148,7 +3172,8 @@ export default function ScalingPlannerV2() {
       filters.cities.length > 0 ||
       filters.areas.length > 0 ||
       filters.clubs.length > 0 ||
-      filters.teams.length > 0
+      filters.teams.length > 0 ||
+      (filters.health && filters.health.length > 0)
   }, [filters])
 
   // Build filter context for rollup header (determines the hierarchy level for sprint/task)

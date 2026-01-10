@@ -147,31 +147,36 @@ export function TaskListTooltip({ node, taskSummary, children, onRefreshTasks }:
 
     try {
       // Build query params based on node type
+      // Pass the full hierarchy context to get tasks at this level and below
       const params = new URLSearchParams();
 
-      if (node.type === 'activity' && node.activity_id) {
+      // For hierarchical matching: pass all available hierarchy IDs
+      // The API will filter to tasks that match the given hierarchy context
+      if (node.activity_id) {
         params.append('activity_id', node.activity_id.toString());
-      } else if (node.type === 'city' && node.city_id) {
+      }
+      if (node.city_id) {
         params.append('city_id', node.city_id.toString());
-      } else if (node.type === 'area' && node.area_id) {
+      }
+      if (node.area_id) {
         params.append('area_id', node.area_id.toString());
-      } else if ((node.type === 'club' || node.type === 'launch') && node.club_id) {
+      }
+      if ((node.type === 'club' || node.type === 'launch') && node.club_id) {
         params.append('club_id', node.club_id.toString());
       }
 
-      // Exclude cancelled tasks
-      params.append('exclude_cancelled', 'true');
+      // Include completed tasks since summary counts them
+      params.append('include_completed', 'true');
 
       const response = await fetch(`${API_BASE}/scaling-tasks?${params}`);
       const data = await response.json();
 
       if (data.success) {
-        // Flatten weeks into tasks list
-        const allTasks: ScalingTask[] = [];
-        data.weeks?.forEach((week: { tasks: ScalingTask[] }) => {
-          allTasks.push(...(week.tasks || []));
-        });
-        setTasks(allTasks.slice(0, 6)); // Limit to 6 tasks
+        // API returns tasks directly, filter out cancelled
+        const allTasks: ScalingTask[] = (data.tasks || [])
+          .filter((t: ScalingTask) => t.status !== 'cancelled')
+          .slice(0, 6); // Limit to 6 tasks
+        setTasks(allTasks);
       } else {
         setError(data.error || 'Failed to load tasks');
       }

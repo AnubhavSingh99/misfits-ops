@@ -74,10 +74,15 @@ function getMetricHealth(value: number, thresholds: { green: number; yellow: num
 }
 
 /**
- * Calculate rolled-up health for parent nodes (weighted average of children)
+ * Calculate rolled-up health for parent nodes (weighted average by activity)
+ * Weight = average meetups per week in last 4 weeks (more active clubs matter more)
  * Excludes launches from calculation
  */
-function rollupHealth(children: Array<{ health_score?: number; is_launch?: boolean }>): {
+function rollupHealth(children: Array<{
+  health_score?: number;
+  is_launch?: boolean;
+  l4w_avg_meetups_per_week?: number;
+}>): {
   health_score: number;
   health_status: 'green' | 'yellow' | 'red' | 'gray';
   health_distribution: { green: number; yellow: number; red: number; gray: number };
@@ -93,9 +98,18 @@ function rollupHealth(children: Array<{ health_score?: number; is_launch?: boole
     };
   }
 
-  // Calculate average health score
-  const totalScore = clubChildren.reduce((sum, c) => sum + (c.health_score || 0), 0);
-  const avgScore = Math.round(totalScore / clubChildren.length);
+  // Calculate weighted average health score
+  // Weight = l4w_avg_meetups_per_week (min weight of 0.5 for clubs with 0 meetups to still count)
+  let totalWeightedScore = 0;
+  let totalWeight = 0;
+
+  for (const child of clubChildren) {
+    const weight = Math.max(0.5, child.l4w_avg_meetups_per_week || 0.5);
+    totalWeightedScore += (child.health_score || 0) * weight;
+    totalWeight += weight;
+  }
+
+  const avgScore = totalWeight > 0 ? Math.round(totalWeightedScore / totalWeight) : 0;
 
   // Count distribution
   const distribution = { green: 0, yellow: 0, red: 0, gray: 0 };
@@ -2082,13 +2096,14 @@ router.get('/v2/hierarchy', async (req, res) => {
 
     const clubsResult = await queryProduction(clubsQuery);
 
-    // Get last 4 weeks revenue per club from production (event-based)
+    // Get last 4 weeks revenue and meetup count per club from production (event-based)
     const last4WeeksRevenueQuery = `
       SELECT
         c.pk as club_id,
         COALESCE(SUM(
           CASE WHEN p.state = 'COMPLETED' THEN p.amount / 100.0 ELSE 0 END
         ), 0) as total_revenue,
+        COUNT(DISTINCT e.pk) as total_meetups,
         COUNT(DISTINCT DATE_TRUNC('week', e.start_time)) as weeks_with_data
       FROM club c
       LEFT JOIN event e ON c.pk = e.club_id
@@ -2106,6 +2121,7 @@ router.get('/v2/hierarchy', async (req, res) => {
       parseInt(r.club_id),
       {
         total: parseFloat(r.total_revenue) || 0,
+        meetups: parseInt(r.total_meetups) || 0,
         weeks: parseInt(r.weeks_with_data) || 0
       }
     ]));
@@ -2428,9 +2444,10 @@ router.get('/v2/hierarchy', async (req, res) => {
         const gapMeetups = Math.max(0, targetMeetups - currentMeetups);
         const gapRevenue = Math.max(0, targetRevenue - currentRevenue);
 
-        const clubLast4w = last4WeeksMap.get(clubId) || { total: 0, weeks: 0 };
+        const clubLast4w = last4WeeksMap.get(clubId) || { total: 0, meetups: 0, weeks: 0 };
         const last4wTotal = clubLast4w.total;
         const last4wAvg = clubLast4w.weeks > 0 ? last4wTotal / 4 : 0;
+        const l4wAvgMeetupsPerWeek = clubLast4w.meetups / 4; // Always divide by 4 for consistent weekly avg
 
         // Health metrics calculation for this club
         const healthMetrics = healthMetricsMap.get(clubId) || {
@@ -2543,6 +2560,7 @@ router.get('/v2/hierarchy', async (req, res) => {
           is_launch: false,
           last_4w_revenue_total: last4wTotal,
           last_4w_revenue_avg: last4wAvg,
+          l4w_avg_meetups_per_week: l4wAvgMeetupsPerWeek,
           team: team,
           target_count: targets.length,
           day_type_id: dayTypeId,
@@ -2943,10 +2961,11 @@ router.get('/v2/hierarchy', async (req, res) => {
       const gapMeetups = Math.max(0, targetMeetups - currentMeetups);
       const gapRevenue = Math.max(0, targetRevenue - currentRevenue);
 
-      // Get last 4 weeks revenue for this club
-      const clubLast4w = last4WeeksMap.get(clubId) || { total: 0, weeks: 0 };
+      // Get last 4 weeks revenue and meetups for this club
+      const clubLast4w = last4WeeksMap.get(clubId) || { total: 0, meetups: 0, weeks: 0 };
       const last4wTotal = clubLast4w.total;
       const last4wAvg = clubLast4w.weeks > 0 ? last4wTotal / 4 : 0; // Always divide by 4 for consistent avg
+      const l4wAvgMeetupsPerWeek = clubLast4w.meetups / 4; // Avg meetups per week
 
       // Health metrics calculation for this club
       const healthMetrics = healthMetricsMap.get(clubId) || {
@@ -3178,6 +3197,7 @@ router.get('/v2/hierarchy', async (req, res) => {
         is_launch: false,
         last_4w_revenue_total: last4wTotal,
         last_4w_revenue_avg: last4wAvg,
+        l4w_avg_meetups_per_week: l4wAvgMeetupsPerWeek,
         team: team,
         target_count: targets.length, // Number of targets for this club
         day_type_id: dayTypeId,
@@ -4596,7 +4616,7 @@ router.get('/clubs/:clubId/meetup-details', async (req, res) => {
       }
     }
 
-    // Fetch additional meetup details (capacity, price, bookings, waitlist)
+    // Fetch additional meetup details (capacity, price, bookings, waitlist, no-shows, pending payments)
     const meetupsQuery = `
       SELECT
         e.pk as event_id,
@@ -4606,7 +4626,11 @@ router.get('/clubs/:clubId/meetup-details', async (req, res) => {
         e.ticket_price as price,
         COUNT(DISTINCT CASE WHEN b.booking_status NOT IN ('DEREGISTERED', 'INITIATED') THEN b.id END) as total_bookings,
         COUNT(DISTINCT CASE WHEN b.booking_status = 'WAITLISTED' THEN b.id END) as waitlist_count,
-        COALESCE(SUM(CASE WHEN p.state = 'COMPLETED' THEN p.amount / 100.0 ELSE 0 END), 0) as revenue
+        COUNT(DISTINCT CASE WHEN b.booking_status = 'NO_SHOW' THEN b.id END) as no_show_count,
+        COALESCE(SUM(CASE WHEN p.state = 'COMPLETED' THEN p.amount / 100.0 ELSE 0 END), 0) as revenue,
+        COALESCE(SUM(CASE WHEN p.state = 'PENDING' OR p.state IS NULL THEN
+          CASE WHEN b.booking_status IN ('CONFIRMED', 'CHECKED_IN') THEN e.ticket_price / 100.0 ELSE 0 END
+        ELSE 0 END), 0) as pending_payment
       FROM event e
       LEFT JOIN booking b ON b.event_id = e.pk AND b.booking_status NOT IN ('DEREGISTERED', 'INITIATED')
       LEFT JOIN transaction t ON t.entity_id = b.id AND t.entity_type = 'BOOKING'
@@ -4634,7 +4658,9 @@ router.get('/clubs/:clubId/meetup-details', async (req, res) => {
         price: parseInt(row.price) || 0,
         total_bookings: parseInt(row.total_bookings) || 0,
         waitlist_count: parseInt(row.waitlist_count) || 0,
+        no_show_count: parseInt(row.no_show_count) || 0,
         revenue: parseFloat(row.revenue) || 0,
+        pending_payment: parseFloat(row.pending_payment) || 0,
         matched_target: matchedTarget
       };
     });
@@ -4816,13 +4842,90 @@ router.get('/clubs/:clubId/meetup-details', async (req, res) => {
     const repeatHealth = isNewClub ? 'green' : getMetricHealth(repeatRatePct, HEALTH_THRESHOLDS.repeat_rate);
     const ratingHealth = getMetricHealth(avgRating, HEALTH_THRESHOLDS.avg_rating);
 
+    // Fetch previous week totals for WoW comparison
+    const prevWeekTotalsQuery = `
+      SELECT
+        COUNT(DISTINCT e.pk) as meetup_count,
+        COUNT(DISTINCT CASE WHEN b.booking_status NOT IN ('DEREGISTERED', 'INITIATED') THEN b.id END) as booking_count,
+        COUNT(DISTINCT CASE WHEN b.booking_status = 'NO_SHOW' THEN b.id END) as no_show_count,
+        COALESCE(SUM(CASE WHEN p.state = 'COMPLETED' THEN p.amount / 100.0 ELSE 0 END), 0) as revenue,
+        COALESCE(SUM(CASE WHEN p.state = 'PENDING' OR p.state IS NULL THEN
+          CASE WHEN b.booking_status IN ('CONFIRMED', 'CHECKED_IN') THEN e.ticket_price / 100.0 ELSE 0 END
+        ELSE 0 END), 0) as pending_payment
+      FROM event e
+      LEFT JOIN booking b ON b.event_id = e.pk AND b.booking_status NOT IN ('DEREGISTERED', 'INITIATED')
+      LEFT JOIN transaction t ON t.entity_id = b.id AND t.entity_type = 'BOOKING'
+      LEFT JOIN payment p ON p.pk = t.payment_id
+      WHERE e.club_id = $1
+        AND e.start_time >= ${prevWeekStartSQL}
+        AND e.start_time < ${prevWeekEndSQL}
+        AND e.state = 'CREATED'
+    `;
+
+    const prevWeekTotalsResult = await queryProduction(prevWeekTotalsQuery, [clubId]);
+    const prevWeekTotals = prevWeekTotalsResult.rows[0] || {};
+
+    // Calculate current week totals
+    const currentTotals = {
+      meetups: meetups.length,
+      bookings: meetups.reduce((sum: number, m: any) => sum + m.total_bookings, 0),
+      no_shows: meetups.reduce((sum: number, m: any) => sum + m.no_show_count, 0),
+      revenue: meetups.reduce((sum: number, m: any) => sum + m.revenue, 0),
+      pending: meetups.reduce((sum: number, m: any) => sum + m.pending_payment, 0),
+      waitlist: meetups.reduce((sum: number, m: any) => sum + m.waitlist_count, 0)
+    };
+
+    const prevTotals = {
+      meetups: parseInt(prevWeekTotals.meetup_count) || 0,
+      bookings: parseInt(prevWeekTotals.booking_count) || 0,
+      no_shows: parseInt(prevWeekTotals.no_show_count) || 0,
+      revenue: parseFloat(prevWeekTotals.revenue) || 0,
+      pending: parseFloat(prevWeekTotals.pending_payment) || 0
+    };
+
+    // Calculate no-show percentage
+    const currentNoShowPct = currentTotals.bookings > 0
+      ? Math.round((currentTotals.no_shows / currentTotals.bookings) * 1000) / 10
+      : 0;
+    const prevNoShowPct = prevTotals.bookings > 0
+      ? Math.round((prevTotals.no_shows / prevTotals.bookings) * 1000) / 10
+      : 0;
+
     res.json({
       success: true,
       club_id: clubId,
       meetups,
+      // Summary metrics with WoW comparison
+      summary: {
+        current: {
+          meetups: currentTotals.meetups,
+          bookings: currentTotals.bookings,
+          no_show_pct: currentNoShowPct,
+          revenue: currentTotals.revenue,
+          pending: currentTotals.pending,
+          rating: avgRating
+        },
+        previous: {
+          meetups: prevTotals.meetups,
+          bookings: prevTotals.bookings,
+          no_show_pct: prevNoShowPct,
+          revenue: prevTotals.revenue,
+          pending: prevTotals.pending,
+          rating: prevAvgRating
+        },
+        change: {
+          meetups: currentTotals.meetups - prevTotals.meetups,
+          bookings: currentTotals.bookings - prevTotals.bookings,
+          no_show_pct: Math.round((currentNoShowPct - prevNoShowPct) * 10) / 10,
+          revenue: currentTotals.revenue - prevTotals.revenue,
+          pending: currentTotals.pending - prevTotals.pending,
+          rating: Math.round((avgRating - prevAvgRating) * 100) / 100
+        }
+      },
+      // Legacy fields for backwards compatibility
       total_meetups: meetups.length,
-      total_revenue: meetups.reduce((sum: number, m: any) => sum + m.revenue, 0),
-      total_waitlist: meetups.reduce((sum: number, m: any) => sum + m.waitlist_count, 0),
+      total_revenue: currentTotals.revenue,
+      total_waitlist: currentTotals.waitlist,
       // Health metrics for tooltip
       health: {
         score: healthScore,

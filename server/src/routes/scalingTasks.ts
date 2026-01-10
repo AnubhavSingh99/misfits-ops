@@ -66,7 +66,10 @@ router.get('/', async (req, res) => {
       params.push(week_start);
     }
 
-    // Filter by hierarchy
+    // Filter by hierarchy - hierarchical matching
+    // When activity_id is passed without city_id, we want tasks at activity level
+    // AND all tasks at city/area/club levels under that activity
+    // This supports tooltip rollup views
     if (activity_id) {
       whereConditions.push(`st.activity_id = $${paramIndex++}`);
       params.push(parseInt(activity_id as string));

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Activity, Building2, MapPin, Home, Users, X, Layers, GripVertical, Check } from 'lucide-react';
+import { Activity, Building2, MapPin, Home, Users, X, Layers, GripVertical, Check, Heart } from 'lucide-react';
 import { MultiSelectDropdown } from '../ui/MultiSelectDropdown';
 import { TEAMS, TEAM_KEYS, type TeamKey } from '../../../../shared/teamConfig';
 
@@ -8,12 +8,22 @@ interface FilterOption {
   name: string;
 }
 
+export type HealthFilter = 'green' | 'yellow' | 'red' | 'gray';
+
+const HEALTH_OPTIONS: { key: HealthFilter; label: string; color: string; bg: string; border: string }[] = [
+  { key: 'green', label: 'Healthy', color: '#10b981', bg: 'bg-emerald-50', border: 'border-emerald-200' },
+  { key: 'yellow', label: 'At Risk', color: '#f59e0b', bg: 'bg-amber-50', border: 'border-amber-200' },
+  { key: 'red', label: 'Critical', color: '#ef4444', bg: 'bg-red-50', border: 'border-red-200' },
+  { key: 'gray', label: 'Dormant', color: '#9ca3af', bg: 'bg-gray-100', border: 'border-gray-300' },
+];
+
 export interface HierarchyFilters {
   activities: number[];
   cities: number[];
   areas: number[];
   clubs: number[];
   teams: TeamKey[];
+  health: HealthFilter[];
 }
 
 export type HierarchyLevel = 'activity' | 'city' | 'area';
@@ -60,7 +70,8 @@ export function HierarchyFilterBar({
     filters.cities.length > 0 ||
     filters.areas.length > 0 ||
     filters.clubs.length > 0 ||
-    filters.teams.length > 0;
+    filters.teams.length > 0 ||
+    (filters.health && filters.health.length > 0);
 
   const clearAllFilters = () => {
     onFiltersChange({
@@ -68,7 +79,8 @@ export function HierarchyFilterBar({
       cities: [],
       areas: [],
       clubs: [],
-      teams: []
+      teams: [],
+      health: []
     });
   };
 
@@ -87,6 +99,13 @@ export function HierarchyFilterBar({
       ? filters.teams.filter(t => t !== teamKey)
       : [...filters.teams, teamKey];
     updateFilter('teams', newTeams);
+  };
+
+  const toggleHealth = (healthKey: HealthFilter) => {
+    const newHealth = filters.health.includes(healthKey)
+      ? filters.health.filter(h => h !== healthKey)
+      : [...filters.health, healthKey];
+    updateFilter('health', newHealth);
   };
 
   return (
@@ -153,6 +172,41 @@ export function HierarchyFilterBar({
                   style={isActive ? { backgroundColor: team.color.accent } : undefined}
                 >
                   {team.name}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Divider */}
+        <div className="h-6 w-px bg-gray-200" />
+
+        {/* Health Filter - Pill Buttons with colored dots */}
+        <div className="flex items-center gap-2">
+          <Heart size={14} className="text-gray-400" />
+          <div className="flex items-center gap-1">
+            {HEALTH_OPTIONS.map(option => {
+              const isActive = filters.health.includes(option.key);
+              return (
+                <button
+                  key={option.key}
+                  onClick={() => toggleHealth(option.key)}
+                  className={`
+                    flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-full
+                    transition-all duration-150
+                    ${isActive
+                      ? `${option.bg} ${option.border} border shadow-sm`
+                      : 'bg-white text-gray-600 hover:bg-gray-50 border border-gray-200'
+                    }
+                  `}
+                >
+                  <span
+                    className="w-2 h-2 rounded-full"
+                    style={{ backgroundColor: option.color }}
+                  />
+                  <span className={isActive ? '' : 'text-gray-500'}>
+                    {option.label}
+                  </span>
                 </button>
               );
             })}
@@ -338,6 +392,22 @@ export function HierarchyFilterBar({
             {filters.teams.length > 0 && (
               <span className="px-2 py-0.5 bg-gray-100 text-gray-700 rounded">
                 {filters.teams.map(t => TEAMS[t].name).join(', ')}
+              </span>
+            )}
+            {filters.health && filters.health.length > 0 && (
+              <span className="flex items-center gap-1 px-2 py-0.5 bg-gray-50 text-gray-700 rounded">
+                {filters.health.map(h => {
+                  const option = HEALTH_OPTIONS.find(o => o.key === h);
+                  return (
+                    <span key={h} className="flex items-center gap-1">
+                      <span
+                        className="w-1.5 h-1.5 rounded-full"
+                        style={{ backgroundColor: option?.color }}
+                      />
+                      <span>{option?.label}</span>
+                    </span>
+                  );
+                })}
               </span>
             )}
           </div>

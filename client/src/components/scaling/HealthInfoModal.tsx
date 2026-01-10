@@ -145,10 +145,14 @@ export function HealthInfoModal({ isOpen, onClose }: HealthInfoModalProps) {
             <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wider mb-3">
               Roll-up Logic
             </h3>
-            <div className="bg-gray-50 rounded-xl p-4 space-y-2 text-xs text-gray-600">
+            <div className="bg-gray-50 rounded-xl p-4 space-y-3 text-xs text-gray-600">
               <p>
-                <span className="font-medium text-gray-700">Parent score</span> = Average of all children's health scores
+                <span className="font-medium text-gray-700">Parent score</span> = Weighted average of children's health scores
               </p>
+              <div className="bg-white rounded-lg px-3 py-2 border border-gray-200">
+                <span className="font-medium text-gray-700">Weight</span> = Club's avg meetups/week over last 4 weeks
+                <p className="text-[10px] text-gray-500 mt-1">More active clubs have greater influence on roll-up health</p>
+              </div>
               <p>
                 <span className="font-medium text-gray-700">New club launches</span> are excluded from health calculations
               </p>
