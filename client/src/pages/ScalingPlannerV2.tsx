@@ -3137,9 +3137,9 @@ export default function ScalingPlannerV2() {
 
         {/* Hierarchy Table */}
         <div className="bg-white rounded-lg shadow border border-gray-200 overflow-hidden">
-          <div ref={tableContainerRef} className="overflow-x-auto max-h-[calc(100vh-280px)] overflow-y-auto">
+          <div ref={tableContainerRef} className="overflow-x-auto">
             <table className="w-full">
-              <thead className="sticky top-0 z-20 bg-gray-50">
+              <thead className="bg-gray-50">
                 <tr className="bg-gray-50 border-b border-gray-200">
                   <th className="text-left py-3 px-4 text-xs font-semibold text-gray-600 uppercase tracking-wider">
                     Hierarchy
