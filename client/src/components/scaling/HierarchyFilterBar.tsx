@@ -168,24 +168,27 @@ export function HierarchyFilterBar({
                 <Layers size={14} />
                 <span className="text-xs font-medium">Order:</span>
               </div>
-              <div className="flex items-center gap-1">
-                {hierarchyOrder.hierarchyLevels.map((level) => {
+              <div className="flex items-center gap-1.5">
+                {hierarchyOrder.hierarchyLevels.map((level, index) => {
                   const isEnabled = hierarchyOrder.enabledLevels.has(level);
+                  const isDragging = hierarchyOrder.draggingLevel === level;
+                  const isDragTarget = hierarchyOrder.draggingLevel && hierarchyOrder.draggingLevel !== level;
                   const config = levelConfig[level];
                   const Icon = config.icon;
 
+                  // Enhanced color styles with better transitions
                   const colorStyles = {
                     purple: {
-                      enabled: 'bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-100',
-                      disabled: 'bg-gray-100 text-gray-400 border-gray-200 hover:bg-gray-150'
+                      enabled: 'bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-100 hover:border-purple-300 hover:shadow-purple-100',
+                      disabled: 'bg-gray-50 text-gray-400 border-gray-200 hover:bg-gray-100 hover:border-gray-300'
                     },
                     blue: {
-                      enabled: 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100',
-                      disabled: 'bg-gray-100 text-gray-400 border-gray-200 hover:bg-gray-150'
+                      enabled: 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100 hover:border-blue-300 hover:shadow-blue-100',
+                      disabled: 'bg-gray-50 text-gray-400 border-gray-200 hover:bg-gray-100 hover:border-gray-300'
                     },
                     emerald: {
-                      enabled: 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100',
-                      disabled: 'bg-gray-100 text-gray-400 border-gray-200 hover:bg-gray-150'
+                      enabled: 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100 hover:border-emerald-300 hover:shadow-emerald-100',
+                      disabled: 'bg-gray-50 text-gray-400 border-gray-200 hover:bg-gray-100 hover:border-gray-300'
                     }
                   };
                   const style = colorStyles[config.color as keyof typeof colorStyles];
@@ -194,33 +197,81 @@ export function HierarchyFilterBar({
                     <div
                       key={level}
                       draggable
-                      onDragStart={() => hierarchyOrder.onDragStart(level)}
+                      onDragStart={(e) => {
+                        e.dataTransfer.effectAllowed = 'move';
+                        hierarchyOrder.onDragStart(level);
+                      }}
                       onDragEnd={hierarchyOrder.onDragEnd}
-                      onDragOver={hierarchyOrder.onDragOver}
+                      onDragOver={(e) => {
+                        e.preventDefault();
+                        e.dataTransfer.dropEffect = 'move';
+                      }}
                       onDrop={() => hierarchyOrder.onDrop(level)}
+                      style={{
+                        transitionDelay: `${index * 20}ms`,
+                        transform: isDragging
+                          ? 'scale(1.05) rotate(-2deg)'
+                          : isDragTarget
+                            ? 'scale(0.98)'
+                            : 'scale(1) rotate(0deg)',
+                        opacity: isDragging ? 0.7 : 1,
+                        boxShadow: isDragging
+                          ? '0 8px 20px -4px rgba(0,0,0,0.15), 0 4px 8px -2px rgba(0,0,0,0.1)'
+                          : 'none'
+                      }}
                       className={`
-                        flex items-center gap-1 px-2 py-1 rounded-md cursor-grab transition-all border text-xs font-medium
-                        ${hierarchyOrder.draggingLevel === level ? 'opacity-50 scale-95' : ''}
+                        flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg cursor-grab active:cursor-grabbing
+                        border text-xs font-medium select-none
+                        transition-all duration-200 ease-out
+                        hover:shadow-md hover:-translate-y-0.5
                         ${isEnabled ? style.enabled : style.disabled}
                       `}
                     >
-                      <GripVertical size={10} className="opacity-40" />
-                      <Icon size={10} />
-                      <span>{config.label}</span>
+                      <GripVertical
+                        size={12}
+                        className={`
+                          transition-all duration-200
+                          ${isDragging ? 'opacity-70 scale-110' : 'opacity-30 group-hover:opacity-50'}
+                        `}
+                      />
+                      <Icon
+                        size={12}
+                        className={`
+                          transition-transform duration-200
+                          ${isEnabled ? '' : 'opacity-50'}
+                        `}
+                      />
+                      <span className={`transition-opacity duration-200 ${isEnabled ? '' : 'opacity-60'}`}>
+                        {config.label}
+                      </span>
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
+                          e.preventDefault();
                           hierarchyOrder.onToggleLevel(level);
                         }}
-                        className={`ml-0.5 p-0.5 rounded transition-colors ${
-                          isEnabled ? 'hover:bg-white/50' : 'hover:bg-gray-200'
-                        }`}
+                        className={`
+                          ml-1 p-1 rounded-full
+                          transition-all duration-200 ease-out
+                          hover:scale-110 active:scale-95
+                          ${isEnabled
+                            ? 'bg-green-100/80 hover:bg-green-200 text-green-600'
+                            : 'bg-gray-200/80 hover:bg-gray-300 text-gray-400'
+                          }
+                        `}
                       >
-                        {isEnabled ? (
-                          <Check size={8} className="text-green-600" />
-                        ) : (
-                          <X size={8} className="text-gray-400" />
-                        )}
+                        <div
+                          className="transition-transform duration-200"
+                          style={{
+                            transform: isEnabled ? 'rotate(0deg) scale(1)' : 'rotate(180deg) scale(0.9)'
+                          }}
+                        >
+                          {isEnabled ? (
+                            <Check size={10} strokeWidth={3} />
+                          ) : (
+                            <X size={10} strokeWidth={2.5} />
+                          )}
+                        </div>
                       </button>
                     </div>
                   );
@@ -229,7 +280,13 @@ export function HierarchyFilterBar({
               {hierarchyOrder.isCustomHierarchy && (
                 <button
                   onClick={hierarchyOrder.onReset}
-                  className="text-xs text-gray-500 hover:text-gray-700 hover:underline"
+                  className="
+                    text-xs text-gray-400 hover:text-gray-600
+                    px-2 py-1 rounded-md
+                    transition-all duration-200 ease-out
+                    hover:bg-gray-100 hover:shadow-sm
+                    active:scale-95
+                  "
                 >
                   Reset
                 </button>
