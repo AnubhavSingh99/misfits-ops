@@ -1987,12 +1987,13 @@ router.get('/v2/hierarchy', async (req, res) => {
       : null;
 
     // SQL date expressions - use provided dates or default to last completed week
+    // Use IST timezone (Asia/Kolkata) for date calculations
     const weekStartSQL = weekStartDate
-      ? `'${weekStartDate.toISOString().split('T')[0]}'::date`
-      : `DATE_TRUNC('week', CURRENT_DATE)::date - 7`;
+      ? `'${weekStartDate.toISOString().split('T')[0]} 00:00:00+05:30'::timestamptz`
+      : `DATE_TRUNC('week', CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata') AT TIME ZONE 'Asia/Kolkata' - INTERVAL '7 days'`;
     const weekEndSQL = weekEndDate
-      ? `'${weekEndDate.toISOString().split('T')[0]}'::date`
-      : `DATE_TRUNC('week', CURRENT_DATE)::date`;
+      ? `'${weekEndDate.toISOString().split('T')[0]} 00:00:00+05:30'::timestamptz`
+      : `DATE_TRUNC('week', CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata') AT TIME ZONE 'Asia/Kolkata'`;
 
     logger.info(`V2 Hierarchy request with week: ${weekStartDate?.toISOString() || 'default'} to ${weekEndDate?.toISOString() || 'default'}`);
 
@@ -2097,6 +2098,7 @@ router.get('/v2/hierarchy', async (req, res) => {
     const clubsResult = await queryProduction(clubsQuery);
 
     // Get last 4 weeks revenue and meetup count per club from production (event-based)
+    // Use IST timezone (Asia/Kolkata) for date calculations
     const last4WeeksRevenueQuery = `
       SELECT
         c.pk as club_id,
@@ -2104,11 +2106,11 @@ router.get('/v2/hierarchy', async (req, res) => {
           CASE WHEN p.state = 'COMPLETED' THEN p.amount / 100.0 ELSE 0 END
         ), 0) as total_revenue,
         COUNT(DISTINCT e.pk) as total_meetups,
-        COUNT(DISTINCT DATE_TRUNC('week', e.start_time)) as weeks_with_data
+        COUNT(DISTINCT DATE_TRUNC('week', e.start_time AT TIME ZONE 'Asia/Kolkata')) as weeks_with_data
       FROM club c
       LEFT JOIN event e ON c.pk = e.club_id
-        AND e.start_time >= CURRENT_DATE - INTERVAL '4 weeks'
-        AND e.start_time < CURRENT_DATE
+        AND e.start_time >= (CURRENT_DATE AT TIME ZONE 'Asia/Kolkata') - INTERVAL '4 weeks'
+        AND e.start_time < (CURRENT_DATE AT TIME ZONE 'Asia/Kolkata')
         AND e.state = 'CREATED'
       LEFT JOIN booking b ON b.event_id = e.pk
       LEFT JOIN transaction t ON t.entity_id = b.id AND t.entity_type = 'BOOKING'
@@ -2249,19 +2251,20 @@ router.get('/v2/hierarchy', async (req, res) => {
     ]));
 
     // Get monthly revenue from Sep 2025 to Mar 2026
+    // Use IST timezone (Asia/Kolkata) for accurate date boundaries
     const monthlyRevenueQuery = `
       WITH month_series AS (
         SELECT generate_series(
-          '2025-09-01'::date,
-          '2026-03-01'::date,
+          '2025-09-01 00:00:00+05:30'::timestamptz,
+          '2026-03-01 00:00:00+05:30'::timestamptz,
           '1 month'::interval
-        )::date as month_start
+        ) as month_start
       )
       SELECT
         ms.month_start,
-        TO_CHAR(ms.month_start, 'Mon') as month_label,
-        EXTRACT(MONTH FROM ms.month_start) as month_num,
-        EXTRACT(YEAR FROM ms.month_start) as year,
+        TO_CHAR(ms.month_start AT TIME ZONE 'Asia/Kolkata', 'Mon') as month_label,
+        EXTRACT(MONTH FROM ms.month_start AT TIME ZONE 'Asia/Kolkata') as month_num,
+        EXTRACT(YEAR FROM ms.month_start AT TIME ZONE 'Asia/Kolkata') as year,
         COALESCE(SUM(
           CASE WHEN p.state = 'COMPLETED' THEN p.amount / 100.0 ELSE 0 END
         ), 0) as total_revenue
@@ -4565,12 +4568,13 @@ router.get('/clubs/:clubId/meetup-details', async (req, res) => {
       : undefined;
 
     // SQL date expressions for the query
+    // Use IST timezone (Asia/Kolkata) for date calculations
     const weekStartSQL = weekStartDate
-      ? `'${weekStartDate.toISOString().split('T')[0]}'::date`
-      : `DATE_TRUNC('week', CURRENT_DATE)::date - 7`;
+      ? `'${weekStartDate.toISOString().split('T')[0]} 00:00:00+05:30'::timestamptz`
+      : `DATE_TRUNC('week', CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata') AT TIME ZONE 'Asia/Kolkata' - INTERVAL '7 days'`;
     const weekEndSQL = weekEndDate
-      ? `'${weekEndDate.toISOString().split('T')[0]}'::date`
-      : `DATE_TRUNC('week', CURRENT_DATE)::date`;
+      ? `'${weekEndDate.toISOString().split('T')[0]} 00:00:00+05:30'::timestamptz`
+      : `DATE_TRUNC('week', CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata') AT TIME ZONE 'Asia/Kolkata'`;
 
     // Use the matching service - same logic as the main dashboard
     const matchResult = await matchClubMeetups(clubId, '', weekStartDate, weekEndDate);
