@@ -37,6 +37,16 @@ import { SprintViewModal, TaskSummaryCell, ScalingTaskCreateModal, SummaryTiles,
 import { getTeamForClub, type TeamKey } from '../../shared/teamConfig'
 import { DimensionalTargetsService } from '../services/api'
 
+// Format date as YYYY-MM-DD in LOCAL timezone (IST)
+// IMPORTANT: Do NOT use toISOString() as it converts to UTC,
+// which shifts dates back by 5:30 hours for IST timezone
+function formatLocalDate(date: Date): string {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
 // =====================================================
 // MEETUP STAGE CONFIGURATION - SINGLE SOURCE OF TRUTH
 // Keys match database schema (progress JSONB column)
@@ -1935,8 +1945,8 @@ function HierarchyRow({ node, level, expanded, onToggle, onEditTarget, onDeleteT
             currentMeetups={node.current_meetups}
             currentRevenue={node.current_revenue}
             weekLabel={formatWeekLabel(weekBounds.start, weekBounds.end)}
-            weekStart={weekBounds.start.toISOString().split('T')[0]}
-            weekEnd={weekBounds.end.toISOString().split('T')[0]}
+            weekStart={formatLocalDate(weekBounds.start)}
+            weekEnd={formatLocalDate(weekBounds.end)}
           >
             <div className="hover:bg-gray-100 rounded px-1 -mx-1 transition-colors">
               <div className="text-gray-800 font-mono">{node.current_meetups}</div>
@@ -2265,9 +2275,9 @@ export default function ScalingPlannerV2() {
       if (enabledHierarchyOrder.length > 0) {
         hierarchyParams.append('hierarchy_order', enabledHierarchyOrder.join(','))
       }
-      // Add week params
-      hierarchyParams.append('week_start', weekBounds.start.toISOString().split('T')[0])
-      hierarchyParams.append('week_end', weekBounds.end.toISOString().split('T')[0])
+      // Add week params (use local date formatting to preserve IST timezone)
+      hierarchyParams.append('week_start', formatLocalDate(weekBounds.start))
+      hierarchyParams.append('week_end', formatLocalDate(weekBounds.end))
 
       const [hierarchyRes, trendsRes] = await Promise.all([
         fetch(`/api/targets/v2/hierarchy?${hierarchyParams}`),
