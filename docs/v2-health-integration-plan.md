@@ -322,9 +322,13 @@ const parentStatus = parentScore >= 70 ? 'green' : parentScore >= 50 ? 'yellow' 
 - [x] `HealthDistributionBar.tsx` - Roll-up bar showing distribution (in HealthDot.tsx)
 - [x] `HealthInfoModal.tsx` - Logic explanation modal with thresholds table
 
-**Not implementing (scope reduction):**
-- `ClubHealthTooltip.tsx` - Using existing MeetupDetailsTooltip instead
-- `HealthRollupTooltip.tsx` - Using simple distribution bar instead
+**Implemented:**
+- Club health section integrated into `MeetupDetailsTooltip.tsx` with:
+  - Health score display with status indicator
+  - 3 metric cards (Capacity, Repeat Rate, Rating) with WoW comparison
+  - Trending arrows and percentage changes
+  - Warning banner for declining metrics
+- Roll-up nodes use `HealthDistributionBar` as indicator (no tooltip)
 
 ### Phase 4: Table Integration (ScalingPlannerV2.tsx) ✅ COMPLETED
 - [x] Add Health column after Hierarchy
@@ -356,15 +360,14 @@ const parentStatus = parentScore >= 70 ? 'green' : parentScore >= 50 ? 'yellow' 
 
 | File | Action | Status | Description |
 |------|--------|--------|-------------|
-| `server/src/routes/targets.ts` | Modify | ✅ Done | Add health calculation |
+| `server/src/routes/targets.ts` | Modify | ✅ Done | Add health calculation + WoW metrics in meetup-details |
 | `shared/types.ts` | Modify | ✅ Done | Extend HierarchyNode |
-| `client/src/components/scaling/ClubHealthTooltip.tsx` | Create | ⏳ TODO | Club tooltip |
-| `client/src/components/scaling/HealthRollupTooltip.tsx` | Create | ⏳ TODO | Roll-up tooltip |
-| `client/src/components/scaling/HealthInfoModal.tsx` | Create | ⏳ TODO | Info modal |
-| `client/src/components/scaling/HealthDot.tsx` | Create | ⏳ TODO | Dot component |
-| `client/src/components/scaling/HierarchyFilterBar.tsx` | Modify | ⏳ TODO | Add health filter |
-| `client/src/components/scaling/index.ts` | Modify | ⏳ TODO | Export new components |
-| `client/src/pages/ScalingPlannerV2.tsx` | Modify | ⏳ TODO | Add Health column |
+| `client/src/components/scaling/MeetupDetailsTooltip.tsx` | Modify | ✅ Done | Integrated health section with WoW comparison |
+| `client/src/components/scaling/HealthInfoModal.tsx` | Create | ✅ Done | Info modal |
+| `client/src/components/scaling/HealthDot.tsx` | Create | ✅ Done | Dot + distribution bar component |
+| `client/src/components/scaling/HierarchyFilterBar.tsx` | Modify | ⏳ Deferred | Add health filter |
+| `client/src/components/scaling/index.ts` | Modify | ✅ Done | Export new components |
+| `client/src/pages/ScalingPlannerV2.tsx` | Modify | ✅ Done | Add Health column |
 
 ---
 
