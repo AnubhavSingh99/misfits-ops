@@ -66,12 +66,43 @@ const formatLocalDate = (date: Date): string => {
   return `${year}-${month}-${day}`;
 };
 
-// Week options for dropdown
-const weekOptions: Array<{ value: WeekOption; label: string }> = [
+// Week options for dropdown (extended for tooltip)
+type ExtendedWeekOption = WeekOption | 'three_weeks_ago' | 'four_weeks_ago';
+
+const weekOptions: Array<{ value: ExtendedWeekOption; label: string }> = [
   { value: 'last_completed', label: 'Last Week' },
   { value: 'current', label: 'This Week' },
   { value: 'two_weeks_ago', label: '2 Wks Ago' },
+  { value: 'three_weeks_ago', label: '3 Wks Ago' },
+  { value: 'four_weeks_ago', label: '4 Wks Ago' },
 ];
+
+// Extended getWeekBounds for tooltip (includes 3 and 4 weeks ago)
+function getExtendedWeekBounds(option: ExtendedWeekOption): { start: Date; end: Date } {
+  if (option === 'three_weeks_ago' || option === 'four_weeks_ago') {
+    const now = new Date();
+    const day = now.getDay();
+    const diff = now.getDate() - day + (day === 0 ? -6 : 1);
+    const currentWeekStart = new Date(now);
+    currentWeekStart.setDate(diff);
+    currentWeekStart.setHours(0, 0, 0, 0);
+
+    if (option === 'three_weeks_ago') {
+      const start = new Date(currentWeekStart);
+      start.setDate(start.getDate() - 21);
+      const end = new Date(currentWeekStart);
+      end.setDate(end.getDate() - 14);
+      return { start, end };
+    } else {
+      const start = new Date(currentWeekStart);
+      start.setDate(start.getDate() - 28);
+      const end = new Date(currentWeekStart);
+      end.setDate(end.getDate() - 21);
+      return { start, end };
+    }
+  }
+  return getWeekBounds(option as WeekOption);
+}
 
 export function MeetupDetailsTooltip({
   clubId,
@@ -89,7 +120,7 @@ export function MeetupDetailsTooltip({
   const [error, setError] = useState<string | null>(null);
   const [position, setPosition] = useState({ top: 0, left: 0, arrowLeft: 0 });
   const [showWeekDropdown, setShowWeekDropdown] = useState(false);
-  const [localWeekOption, setLocalWeekOption] = useState<WeekOption>('last_completed');
+  const [localWeekOption, setLocalWeekOption] = useState<ExtendedWeekOption>('last_completed');
 
   const triggerRef = useRef<HTMLDivElement>(null);
   const tooltipRef = useRef<HTMLDivElement>(null);
@@ -97,7 +128,7 @@ export function MeetupDetailsTooltip({
   const leaveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Compute local week bounds based on selection
-  const localWeekBounds = getWeekBounds(localWeekOption);
+  const localWeekBounds = getExtendedWeekBounds(localWeekOption);
   const localWeekStart = formatLocalDate(localWeekBounds.start);
   const localWeekEnd = formatLocalDate(localWeekBounds.end);
   const localWeekLabel = formatWeekLabel(localWeekBounds.start, localWeekBounds.end);
@@ -123,7 +154,7 @@ export function MeetupDetailsTooltip({
   }, [clubId, localWeekStart, localWeekEnd, data, isLoading]);
 
   // Refetch when week changes
-  const handleWeekChange = (option: WeekOption) => {
+  const handleWeekChange = (option: ExtendedWeekOption) => {
     setLocalWeekOption(option);
     setShowWeekDropdown(false);
     setData(null); // Clear current data to trigger refetch
