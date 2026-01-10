@@ -1544,11 +1544,10 @@ function LaunchModal({ isOpen, onClose, context, onSave }: LaunchModalProps) {
 
   if (!isOpen || !context) return null
 
-  // All required fields must be filled: Activity, City, Area, Name, Target Meetups, Cost, Capacity
+  // All required fields must be filled: Activity, City, Area, Target Meetups, Cost, Capacity (Name is optional)
   const canSave = activityName.trim().length > 0 &&
     selectedCityId !== undefined &&
     selectedAreaId !== undefined &&
-    clubName.trim().length > 0 &&
     targetMeetups > 0 &&
     meetupCost > 0 &&
     meetupCapacity > 0
@@ -1576,7 +1575,6 @@ function LaunchModal({ isOpen, onClose, context, onSave }: LaunchModalProps) {
       if (!activityName.trim()) missing.push('Activity')
       if (!selectedCityId) missing.push('City')
       if (!selectedAreaId) missing.push('Area')
-      if (!clubName.trim()) missing.push('Club Name')
       if (targetMeetups <= 0) missing.push('Target Meetups')
       if (meetupCost <= 0) missing.push('Cost')
       if (meetupCapacity <= 0) missing.push('Capacity')
@@ -1709,7 +1707,7 @@ function LaunchModal({ isOpen, onClose, context, onSave }: LaunchModalProps) {
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              Club Name <span className="text-red-500">*</span>
+              Club Name <span className="text-gray-400 font-normal">(optional)</span>
             </label>
             <input
               type="text"
