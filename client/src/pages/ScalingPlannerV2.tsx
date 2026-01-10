@@ -22,7 +22,8 @@ import {
   Save,
   Rocket,
   ToggleLeft,
-  ToggleRight
+  ToggleRight,
+  Trash2
 } from 'lucide-react'
 import type {
   HierarchyNode,
@@ -520,7 +521,7 @@ interface ExistingTarget {
 }
 
 function QuickAddModal({ isOpen, onClose, context, onSave }: QuickAddModalProps) {
-  const [targetMeetups, setTargetMeetups] = useState<number>(4)
+  const [targetMeetups, setTargetMeetups] = useState<number>(1)
   const [meetupCost, setMeetupCost] = useState<number>(200)
   const [meetupCapacity, setMeetupCapacity] = useState<number>(15)
   const [targetName, setTargetName] = useState<string>('')
@@ -619,7 +620,7 @@ function QuickAddModal({ isOpen, onClose, context, onSave }: QuickAddModalProps)
   // Reset form when context changes
   useEffect(() => {
     if (context) {
-      setTargetMeetups(4)
+      setTargetMeetups(1)
       setMeetupCost(200)
       setMeetupCapacity(15)
       setTargetName('')
@@ -892,7 +893,7 @@ interface EditTargetModalProps {
 }
 
 function EditTargetModal({ isOpen, onClose, context, onSave }: EditTargetModalProps) {
-  const [targetMeetups, setTargetMeetups] = useState<number>(4)
+  const [targetMeetups, setTargetMeetups] = useState<number>(1)
   const [meetupCost, setMeetupCost] = useState<number>(200)
   const [meetupCapacity, setMeetupCapacity] = useState<number>(15)
   const [targetName, setTargetName] = useState<string>('')
@@ -1390,7 +1391,7 @@ interface LaunchModalProps {
 function LaunchModal({ isOpen, onClose, context, onSave }: LaunchModalProps) {
   const [clubName, setClubName] = useState('')
   const [activityName, setActivityName] = useState('')
-  const [targetMeetups, setTargetMeetups] = useState<number>(6)
+  const [targetMeetups, setTargetMeetups] = useState<number>(1)
   const [meetupCost, setMeetupCost] = useState<number>(200)
   const [meetupCapacity, setMeetupCapacity] = useState<number>(15)
   const [defaultsSource, setDefaultsSource] = useState<string>('default')
@@ -1532,7 +1533,7 @@ function LaunchModal({ isOpen, onClose, context, onSave }: LaunchModalProps) {
       setSelectedCityName(context.city_name || '')
       setSelectedAreaId(context.area_id)
       setSelectedAreaName(context.area_name || '')
-      setTargetMeetups(6)
+      setTargetMeetups(1)
       setMeetupCost(200)
       setMeetupCapacity(15)
       setDefaultsSource('default')
@@ -1813,6 +1814,7 @@ interface HierarchyRowProps {
   expanded: boolean
   onToggle: () => void
   onEditTarget: (node: HierarchyNode) => void // For clubs/launches: edit existing target
+  onDeleteTarget: (node: HierarchyNode) => void // For deleting a target
   onAddAtAreaLevel: (node: HierarchyNode) => void  // For areas: open choice modal (new launch vs expand)
   onExpandClub: (node: HierarchyNode) => void  // For clubs: add target (opens ExpandClubModal)
   onCreateTask: (node: HierarchyNode) => void
@@ -1821,7 +1823,7 @@ interface HierarchyRowProps {
   taskSummary: ScalingTaskSummary | null       // Task summary for this node
 }
 
-function HierarchyRow({ node, level, expanded, onToggle, onEditTarget, onAddAtAreaLevel, onExpandClub, onCreateTask, onEditStages, onOpenSprint, taskSummary }: HierarchyRowProps) {
+function HierarchyRow({ node, level, expanded, onToggle, onEditTarget, onDeleteTarget, onAddAtAreaLevel, onExpandClub, onCreateTask, onEditStages, onOpenSprint, taskSummary }: HierarchyRowProps) {
   const hasChildren = node.children && node.children.length > 0
   const isLaunch = node.is_launch || node.type === 'launch'
   const isTarget = node.type === 'target'
@@ -2022,6 +2024,21 @@ function HierarchyRow({ node, level, expanded, onToggle, onEditTarget, onAddAtAr
               </button>
             </Tooltip>
           )}
+          {/* Delete button: For target rows, clubs with targets */}
+          {(isTarget || (node.type === 'club' && node.has_target)) && !isLaunch && (
+            <Tooltip text="Delete Target" position="left">
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onDeleteTarget(node)
+                }}
+                className="p-1.5 rounded-lg bg-red-100 hover:bg-red-200
+                  text-red-600 transition-all hover:scale-110"
+              >
+                <Trash2 size={14} />
+              </button>
+            </Tooltip>
+          )}
           {/* Plus button: Area level = Choice Modal, Club level = Expand Club Modal */}
           {node.type === 'area' && (
             <Tooltip text="Add Club/Target" position="left">
@@ -2101,6 +2118,10 @@ export default function ScalingPlannerV2() {
 
   // Edit target modal state
   const [editTargetContext, setEditTargetContext] = useState<EditTargetContext | null>(null)
+
+  // Delete target confirmation state
+  const [deleteTargetNode, setDeleteTargetNode] = useState<HierarchyNode | null>(null)
+  const [deletingTarget, setDeletingTarget] = useState(false)
 
   // Stage info modal state
   const [stageInfoModalType, setStageInfoModalType] = useState<'meetup_stage' | 'revenue_status' | null>(null)
@@ -2431,6 +2452,49 @@ export default function ScalingPlannerV2() {
 
     // Refresh data after save, preserve scroll position
     await fetchData(true)
+  }
+
+  // Delete target handler - opens confirmation modal
+  const handleDeleteTarget = (node: HierarchyNode) => {
+    setDeleteTargetNode(node)
+  }
+
+  // Confirm delete target - makes API call to delete
+  const handleConfirmDeleteTarget = async () => {
+    if (!deleteTargetNode) return
+
+    // Get the target_id and club_id from the node
+    // For target rows, use node.target_id
+    // For club rows with single target, use node.target_id
+    const targetId = deleteTargetNode.target_id
+    const clubId = deleteTargetNode.club_id
+
+    if (!targetId || !clubId) {
+      console.error('Cannot delete: missing target_id or club_id')
+      setDeleteTargetNode(null)
+      return
+    }
+
+    setDeletingTarget(true)
+    try {
+      const response = await fetch(`/api/targets/clubs/${clubId}/dimensional/${targetId}`, {
+        method: 'DELETE'
+      })
+
+      if (!response.ok) {
+        const err = await response.json()
+        throw new Error(err.error || 'Failed to delete target')
+      }
+
+      // Refresh data after delete
+      await fetchData(true)
+      setDeleteTargetNode(null)
+    } catch (error) {
+      console.error('Delete failed:', error)
+      alert(error instanceof Error ? error.message : 'Failed to delete target')
+    } finally {
+      setDeletingTarget(false)
+    }
   }
 
   // Create task handler - opens scaling task modal with context
@@ -3036,6 +3100,7 @@ export default function ScalingPlannerV2() {
                       expanded={expanded}
                       onToggle={() => toggleNode(node.id)}
                       onEditTarget={handleEditTarget}
+                      onDeleteTarget={handleDeleteTarget}
                       onAddAtAreaLevel={handleAddAtAreaLevel}
                       onExpandClub={handleExpandClub}
                       onCreateTask={handleCreateTask}
@@ -3075,6 +3140,69 @@ export default function ScalingPlannerV2() {
         context={editTargetContext}
         onSave={handleSaveEditedTarget}
       />
+
+      {/* Delete Target Confirmation Modal */}
+      {deleteTargetNode && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/50" onClick={() => !deletingTarget && setDeleteTargetNode(null)} />
+          <div className="relative bg-white rounded-xl shadow-2xl w-full max-w-sm mx-4 overflow-hidden">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 bg-red-50">
+              <div>
+                <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+                  <Trash2 size={20} className="text-red-600" />
+                  Delete Target
+                </h3>
+                <p className="text-sm text-gray-500">This action cannot be undone</p>
+              </div>
+              <button
+                onClick={() => !deletingTarget && setDeleteTargetNode(null)}
+                className="p-2 rounded-lg hover:bg-gray-200 text-gray-500 transition-colors"
+                disabled={deletingTarget}
+              >
+                <X size={20} />
+              </button>
+            </div>
+            <div className="px-6 py-4">
+              <p className="text-gray-700">
+                Are you sure you want to delete the target for <span className="font-semibold">{deleteTargetNode.name}</span>?
+              </p>
+              {deleteTargetNode.target_meetups && (
+                <p className="text-sm text-gray-500 mt-2">
+                  Target: {deleteTargetNode.target_meetups} meetups
+                </p>
+              )}
+            </div>
+            <div className="flex justify-end gap-3 px-6 py-4 border-t border-gray-200 bg-gray-50">
+              <button
+                onClick={() => setDeleteTargetNode(null)}
+                disabled={deletingTarget}
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300
+                  rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleConfirmDeleteTarget}
+                disabled={deletingTarget}
+                className="px-4 py-2 text-sm font-medium text-white bg-red-600 border border-red-600
+                  rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50 flex items-center gap-2"
+              >
+                {deletingTarget ? (
+                  <>
+                    <Loader2 size={16} className="animate-spin" />
+                    Deleting...
+                  </>
+                ) : (
+                  <>
+                    <Trash2 size={16} />
+                    Delete
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Launch Modal */}
       <LaunchModal

@@ -69,7 +69,7 @@ export function ExpandClubModal({ isOpen, onClose, onSave, context }: ExpandClub
   const [selectedClubId, setSelectedClubId] = useState<number | undefined>(context?.club_id)
 
   // Form fields
-  const [targetMeetups, setTargetMeetups] = useState(4)
+  const [targetMeetups, setTargetMeetups] = useState(1)
   const [meetupCost, setMeetupCost] = useState(200)
   const [meetupCapacity, setMeetupCapacity] = useState(15)
   const [targetName, setTargetName] = useState('')
@@ -268,7 +268,7 @@ export function ExpandClubModal({ isOpen, onClose, onSave, context }: ExpandClub
       setSelectedClubId(context.club_id)
 
       // Reset form fields
-      setTargetMeetups(4)
+      setTargetMeetups(1)
       setMeetupCost(200)
       setMeetupCapacity(15)
       setTargetName('')
