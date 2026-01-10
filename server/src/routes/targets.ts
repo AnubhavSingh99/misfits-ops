@@ -2175,16 +2175,18 @@ router.get('/v2/hierarchy', async (req, res) => {
         LEFT JOIN previous_users pu ON cu.club_id = pu.club_id AND cu.user_id = pu.user_id
         GROUP BY cu.club_id
       ),
-      -- Average rating per club (from reviews in last 30 days)
+      -- Average rating per club (from booking feedback in last 30 days)
       club_rating AS (
         SELECT
           e.club_id,
-          AVG(r.rating)::numeric(3,2) as avg_rating,
-          COUNT(r.id) as review_count
+          AVG(CASE WHEN (b.feedback_details->>'rating')::numeric IS NOT NULL
+                   THEN (b.feedback_details->>'rating')::numeric END)::numeric(3,2) as avg_rating,
+          COUNT(CASE WHEN b.feedback_details->>'rating' IS NOT NULL THEN 1 END) as review_count
         FROM event e
-        JOIN review r ON r.entity_id = e.pk AND r.entity_type = 'EVENT'
+        JOIN booking b ON b.event_id = e.pk
         WHERE e.start_time >= CURRENT_DATE - INTERVAL '30 days'
           AND e.state = 'CREATED'
+          AND b.booking_status NOT IN ('DEREGISTERED', 'INITIATED', 'WAITLISTED')
         GROUP BY e.club_id
       ),
       -- Club created date for new club detection
