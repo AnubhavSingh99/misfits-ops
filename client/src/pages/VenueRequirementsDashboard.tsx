@@ -1272,30 +1272,26 @@ function CreateRequirementModal({
     fetchActivities();
   }, []);
 
-  // Fetch cities when activity changes
+  // Fetch all cities on mount (no activity filter - show all cities)
   useEffect(() => {
-    if (selectedActivityId) {
-      const fetchCities = async () => {
-        try {
-          const res = await fetch(`${API_BASE}/scaling-tasks/filters/cities?activity_ids=${selectedActivityId}`);
-          const data = await res.json();
-          if (data.success) setCities(data.options || []);
-        } catch (err) {
-          console.error('Failed to fetch cities:', err);
-        }
-      };
-      fetchCities();
-    } else {
-      setCities([]);
-    }
-  }, [selectedActivityId]);
+    const fetchCities = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/scaling-tasks/filters/cities`);
+        const data = await res.json();
+        if (data.success) setCities(data.options || []);
+      } catch (err) {
+        console.error('Failed to fetch cities:', err);
+      }
+    };
+    fetchCities();
+  }, []);
 
-  // Fetch areas when city changes
+  // Fetch all areas when city changes (no activity filter - show all areas in city)
   useEffect(() => {
-    if (selectedActivityId && selectedCityId) {
+    if (selectedCityId) {
       const fetchAreas = async () => {
         try {
-          const res = await fetch(`${API_BASE}/scaling-tasks/filters/areas?activity_ids=${selectedActivityId}&city_ids=${selectedCityId}`);
+          const res = await fetch(`${API_BASE}/scaling-tasks/filters/areas?city_ids=${selectedCityId}`);
           const data = await res.json();
           if (data.success) setAreas(data.options || []);
         } catch (err) {
@@ -1306,7 +1302,7 @@ function CreateRequirementModal({
     } else {
       setAreas([]);
     }
-  }, [selectedActivityId, selectedCityId]);
+  }, [selectedCityId]);
 
   // Fetch clubs when area changes
   useEffect(() => {
