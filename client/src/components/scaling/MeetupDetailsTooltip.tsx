@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { Loader2, ChevronDown } from 'lucide-react';
+import { Loader2, ChevronDown, TrendingUp, TrendingDown, Minus, AlertTriangle } from 'lucide-react';
 import { getWeekBounds, formatWeekLabel, type WeekOption } from './WeekSelector';
 
 interface MeetupDetail {
@@ -15,6 +15,24 @@ interface MeetupDetail {
   matched_target: { id: number; name: string | null } | null;
 }
 
+type HealthStatus = 'green' | 'yellow' | 'red' | 'gray';
+
+interface HealthMetric {
+  current: number;
+  previous: number;
+  change: number;
+  status: HealthStatus;
+}
+
+interface HealthData {
+  score: number;
+  status: HealthStatus;
+  is_new_club: boolean;
+  capacity: HealthMetric;
+  repeat_rate: HealthMetric;
+  rating: HealthMetric;
+}
+
 interface MeetupDetailsResponse {
   success: boolean;
   club_id: number;
@@ -22,6 +40,7 @@ interface MeetupDetailsResponse {
   total_meetups: number;
   total_revenue: number;
   total_waitlist: number;
+  health?: HealthData;
 }
 
 interface MeetupDetailsTooltipProps {
@@ -102,6 +121,179 @@ function getExtendedWeekBounds(option: ExtendedWeekOption): { start: Date; end: 
     }
   }
   return getWeekBounds(option as WeekOption);
+}
+
+// Status color configuration
+const statusColors: Record<HealthStatus, { dot: string; bg: string; text: string; border: string }> = {
+  green: {
+    dot: 'bg-emerald-500',
+    bg: 'bg-emerald-50',
+    text: 'text-emerald-700',
+    border: 'border-emerald-200'
+  },
+  yellow: {
+    dot: 'bg-amber-500',
+    bg: 'bg-amber-50',
+    text: 'text-amber-700',
+    border: 'border-amber-200'
+  },
+  red: {
+    dot: 'bg-red-500',
+    bg: 'bg-red-50',
+    text: 'text-red-700',
+    border: 'border-red-200'
+  },
+  gray: {
+    dot: 'bg-gray-400',
+    bg: 'bg-gray-50',
+    text: 'text-gray-600',
+    border: 'border-gray-200'
+  }
+};
+
+// Health metric card component
+function HealthMetricCard({
+  label,
+  value,
+  change,
+  status,
+  isRating = false,
+  isNewClub = false,
+  isRepeatRate = false
+}: {
+  label: string;
+  value: number;
+  change: number;
+  status: HealthStatus;
+  isRating?: boolean;
+  isNewClub?: boolean;
+  isRepeatRate?: boolean;
+}) {
+  const colors = statusColors[status];
+  const showChange = !isNewClub || !isRepeatRate; // Don't show repeat rate change for new clubs
+  const changeValue = isRating ? change.toFixed(1) : `${Math.abs(change)}%`;
+
+  return (
+    <div className={`flex-1 px-2.5 py-2 rounded-lg border ${colors.border} ${colors.bg} transition-all duration-200`}>
+      {/* Label and status dot */}
+      <div className="flex items-center justify-between mb-1">
+        <span className="text-[9px] font-semibold text-gray-500 uppercase tracking-wider">{label}</span>
+        <div className={`w-1.5 h-1.5 rounded-full ${colors.dot}`} />
+      </div>
+
+      {/* Value */}
+      <div className={`text-lg font-bold ${colors.text} leading-none`}>
+        {isRating ? (
+          <span className="flex items-baseline gap-0.5">
+            {value.toFixed(1)}
+            <span className="text-[10px] font-normal text-gray-400">★</span>
+          </span>
+        ) : (
+          <span>{Math.round(value)}%</span>
+        )}
+      </div>
+
+      {/* WoW Change */}
+      {showChange && change !== 0 && (
+        <div className={`flex items-center gap-0.5 mt-1 ${
+          change > 0 ? 'text-emerald-600' : 'text-red-500'
+        }`}>
+          {change > 0 ? (
+            <TrendingUp size={10} strokeWidth={2.5} />
+          ) : (
+            <TrendingDown size={10} strokeWidth={2.5} />
+          )}
+          <span className="text-[10px] font-medium">
+            {change > 0 ? '+' : '-'}{changeValue}
+          </span>
+        </div>
+      )}
+      {showChange && change === 0 && (
+        <div className="flex items-center gap-0.5 mt-1 text-gray-400">
+          <Minus size={10} strokeWidth={2.5} />
+          <span className="text-[10px] font-medium">No change</span>
+        </div>
+      )}
+      {isNewClub && isRepeatRate && (
+        <div className="text-[9px] text-gray-400 mt-1 italic">New club</div>
+      )}
+    </div>
+  );
+}
+
+// Health section component
+function HealthSection({ health }: { health: HealthData }) {
+  const colors = statusColors[health.status];
+
+  // Determine insights/warnings
+  const warnings: string[] = [];
+  if (health.capacity.change < -10) {
+    warnings.push(`Capacity down ${Math.abs(health.capacity.change)}% from last week`);
+  }
+  if (health.repeat_rate.change < -5 && !health.is_new_club) {
+    warnings.push(`Repeat rate declining ${Math.abs(health.repeat_rate.change)}%`);
+  }
+  if (health.rating.change < -0.2) {
+    warnings.push(`Rating dropped ${Math.abs(health.rating.change).toFixed(1)} points`);
+  }
+
+  return (
+    <div className="border-b border-gray-100">
+      {/* Health header with score */}
+      <div className="px-3 py-2 flex items-center justify-between bg-gradient-to-r from-gray-50 to-white">
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider">Health</span>
+          {health.is_new_club && (
+            <span className="px-1.5 py-0.5 text-[8px] font-medium bg-blue-100 text-blue-600 rounded-full uppercase">
+              New
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-1.5">
+          <div className={`w-2 h-2 rounded-full ${colors.dot}`} />
+          <span className={`text-sm font-bold ${colors.text}`}>{health.score}</span>
+          <span className="text-[10px] text-gray-400">/100</span>
+        </div>
+      </div>
+
+      {/* Metric cards */}
+      <div className="px-3 pb-2.5 flex gap-2">
+        <HealthMetricCard
+          label="Capacity"
+          value={health.capacity.current}
+          change={health.capacity.change}
+          status={health.capacity.status}
+        />
+        <HealthMetricCard
+          label="Repeat"
+          value={health.repeat_rate.current}
+          change={health.repeat_rate.change}
+          status={health.repeat_rate.status}
+          isNewClub={health.is_new_club}
+          isRepeatRate={true}
+        />
+        <HealthMetricCard
+          label="Rating"
+          value={health.rating.current}
+          change={health.rating.change}
+          status={health.rating.status}
+          isRating={true}
+        />
+      </div>
+
+      {/* Warning/insight message */}
+      {warnings.length > 0 && (
+        <div className="px-3 pb-2">
+          <div className="flex items-start gap-1.5 px-2 py-1.5 rounded-md bg-amber-50 border border-amber-100">
+            <AlertTriangle size={11} className="text-amber-500 mt-0.5 flex-shrink-0" />
+            <span className="text-[10px] text-amber-700 leading-tight">
+              {warnings[0]}
+            </span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 export function MeetupDetailsTooltip({
@@ -333,8 +525,13 @@ export function MeetupDetailsTooltip({
               </div>
             </div>
 
-            {/* Content */}
-            <div className="max-h-[200px] overflow-y-auto">
+            {/* Health Section - shown when data loaded */}
+            {!isLoading && !error && data?.health && (
+              <HealthSection health={data.health} />
+            )}
+
+            {/* Meetups Content */}
+            <div className="max-h-[180px] overflow-y-auto">
               {isLoading ? (
                 <div className="flex items-center justify-center py-8">
                   <Loader2 className="w-4 h-4 text-gray-400 animate-spin" />
@@ -350,8 +547,13 @@ export function MeetupDetailsTooltip({
                 </div>
               ) : (
                 <>
+                  {/* Meetups section header */}
+                  <div className="px-3 py-1.5 bg-gradient-to-r from-gray-50 to-white border-b border-gray-100 flex items-center justify-between sticky top-0 z-10">
+                    <span className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider">Meetups</span>
+                    <span className="text-[10px] text-gray-400">{data?.meetups.length} this week</span>
+                  </div>
                   {/* Column headers */}
-                  <div className="grid grid-cols-[1fr_60px_45px_55px_50px_70px] gap-1 px-3 py-1.5 bg-gray-50 border-b border-gray-100 sticky top-0">
+                  <div className="grid grid-cols-[1fr_60px_45px_55px_50px_70px] gap-1 px-3 py-1.5 bg-gray-50/80 border-b border-gray-100 sticky top-[29px] z-10">
                     <span className="text-[10px] font-medium text-gray-400 uppercase">Event</span>
                     <span className="text-[10px] font-medium text-gray-400 uppercase text-center">Date</span>
                     <span className="text-[10px] font-medium text-gray-400 uppercase text-center">Price</span>

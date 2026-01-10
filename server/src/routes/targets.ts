@@ -4639,13 +4639,214 @@ router.get('/clubs/:clubId/meetup-details', async (req, res) => {
       };
     });
 
+    // Fetch health metrics for current week and previous week (for WoW comparison)
+    const prevWeekStartSQL = weekStartDate
+      ? `'${new Date(weekStartDate.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]}'::date`
+      : `DATE_TRUNC('week', CURRENT_DATE)::date - 14`;
+    const prevWeekEndSQL = weekStartDate
+      ? `'${weekStartDate.toISOString().split('T')[0]}'::date`
+      : `DATE_TRUNC('week', CURRENT_DATE)::date - 7`;
+
+    const healthMetricsQuery = `
+      WITH current_week_events AS (
+        SELECT
+          e.pk as event_id,
+          e.max_people as capacity,
+          COUNT(DISTINCT CASE WHEN b.booking_status NOT IN ('DEREGISTERED', 'INITIATED', 'WAITLISTED') THEN b.id END) as bookings
+        FROM event e
+        LEFT JOIN booking b ON b.event_id = e.pk
+        WHERE e.club_id = $1
+          AND e.start_time >= ${weekStartSQL}
+          AND e.start_time < ${weekEndSQL}
+          AND e.state = 'CREATED'
+        GROUP BY e.pk, e.max_people
+      ),
+      prev_week_events AS (
+        SELECT
+          e.pk as event_id,
+          e.max_people as capacity,
+          COUNT(DISTINCT CASE WHEN b.booking_status NOT IN ('DEREGISTERED', 'INITIATED', 'WAITLISTED') THEN b.id END) as bookings
+        FROM event e
+        LEFT JOIN booking b ON b.event_id = e.pk
+        WHERE e.club_id = $1
+          AND e.start_time >= ${prevWeekStartSQL}
+          AND e.start_time < ${prevWeekEndSQL}
+          AND e.state = 'CREATED'
+        GROUP BY e.pk, e.max_people
+      ),
+      current_capacity AS (
+        SELECT
+          CASE WHEN SUM(capacity) > 0 THEN ROUND((SUM(bookings)::numeric / SUM(capacity)) * 100, 1) ELSE 0 END as capacity_pct,
+          COUNT(*) as meetup_count
+        FROM current_week_events
+      ),
+      prev_capacity AS (
+        SELECT
+          CASE WHEN SUM(capacity) > 0 THEN ROUND((SUM(bookings)::numeric / SUM(capacity)) * 100, 1) ELSE 0 END as capacity_pct,
+          COUNT(*) as meetup_count
+        FROM prev_week_events
+      ),
+      -- Repeat rate for current week
+      current_users AS (
+        SELECT DISTINCT b.user_id
+        FROM event e
+        JOIN booking b ON b.event_id = e.pk
+        WHERE e.club_id = $1
+          AND e.start_time >= ${weekStartSQL}
+          AND e.start_time < ${weekEndSQL}
+          AND e.state = 'CREATED'
+          AND b.booking_status NOT IN ('DEREGISTERED', 'INITIATED', 'WAITLISTED')
+      ),
+      prior_4w_users AS (
+        SELECT DISTINCT b.user_id
+        FROM event e
+        JOIN booking b ON b.event_id = e.pk
+        WHERE e.club_id = $1
+          AND e.start_time >= ${weekStartSQL} - INTERVAL '4 weeks'
+          AND e.start_time < ${weekStartSQL}
+          AND e.state = 'CREATED'
+          AND b.booking_status NOT IN ('DEREGISTERED', 'INITIATED', 'WAITLISTED')
+      ),
+      current_repeat AS (
+        SELECT
+          COUNT(DISTINCT cu.user_id) as total_users,
+          COUNT(DISTINCT CASE WHEN pu.user_id IS NOT NULL THEN cu.user_id END) as repeat_users
+        FROM current_users cu
+        LEFT JOIN prior_4w_users pu ON cu.user_id = pu.user_id
+      ),
+      -- Repeat rate for previous week
+      prev_week_users AS (
+        SELECT DISTINCT b.user_id
+        FROM event e
+        JOIN booking b ON b.event_id = e.pk
+        WHERE e.club_id = $1
+          AND e.start_time >= ${prevWeekStartSQL}
+          AND e.start_time < ${prevWeekEndSQL}
+          AND e.state = 'CREATED'
+          AND b.booking_status NOT IN ('DEREGISTERED', 'INITIATED', 'WAITLISTED')
+      ),
+      prior_4w_for_prev AS (
+        SELECT DISTINCT b.user_id
+        FROM event e
+        JOIN booking b ON b.event_id = e.pk
+        WHERE e.club_id = $1
+          AND e.start_time >= ${prevWeekStartSQL} - INTERVAL '4 weeks'
+          AND e.start_time < ${prevWeekStartSQL}
+          AND e.state = 'CREATED'
+          AND b.booking_status NOT IN ('DEREGISTERED', 'INITIATED', 'WAITLISTED')
+      ),
+      prev_repeat AS (
+        SELECT
+          COUNT(DISTINCT pwu.user_id) as total_users,
+          COUNT(DISTINCT CASE WHEN p4p.user_id IS NOT NULL THEN pwu.user_id END) as repeat_users
+        FROM prev_week_users pwu
+        LEFT JOIN prior_4w_for_prev p4p ON pwu.user_id = p4p.user_id
+      ),
+      -- Rating from last 30 days
+      current_rating AS (
+        SELECT
+          AVG(CASE WHEN (b.feedback_details->>'rating')::numeric IS NOT NULL
+                   THEN (b.feedback_details->>'rating')::numeric END)::numeric(3,2) as avg_rating,
+          COUNT(CASE WHEN b.feedback_details->>'rating' IS NOT NULL THEN 1 END) as review_count
+        FROM event e
+        JOIN booking b ON b.event_id = e.pk
+        WHERE e.club_id = $1
+          AND e.start_time >= ${weekEndSQL} - INTERVAL '30 days'
+          AND e.start_time < ${weekEndSQL}
+          AND e.state = 'CREATED'
+          AND b.booking_status NOT IN ('DEREGISTERED', 'INITIATED', 'WAITLISTED')
+      ),
+      prev_rating AS (
+        SELECT
+          AVG(CASE WHEN (b.feedback_details->>'rating')::numeric IS NOT NULL
+                   THEN (b.feedback_details->>'rating')::numeric END)::numeric(3,2) as avg_rating,
+          COUNT(CASE WHEN b.feedback_details->>'rating' IS NOT NULL THEN 1 END) as review_count
+        FROM event e
+        JOIN booking b ON b.event_id = e.pk
+        WHERE e.club_id = $1
+          AND e.start_time >= ${prevWeekEndSQL} - INTERVAL '30 days'
+          AND e.start_time < ${prevWeekEndSQL}
+          AND e.state = 'CREATED'
+          AND b.booking_status NOT IN ('DEREGISTERED', 'INITIATED', 'WAITLISTED')
+      ),
+      club_info AS (
+        SELECT created_at FROM club WHERE pk = $1
+      )
+      SELECT
+        COALESCE(cc.capacity_pct, 0) as capacity_pct,
+        COALESCE(cc.meetup_count, 0) as meetup_count,
+        COALESCE(pc.capacity_pct, 0) as prev_capacity_pct,
+        CASE WHEN COALESCE(cr.total_users, 0) > 0
+             THEN ROUND((cr.repeat_users::numeric / cr.total_users) * 100, 1)
+             ELSE 0 END as repeat_rate_pct,
+        CASE WHEN COALESCE(pr.total_users, 0) > 0
+             THEN ROUND((pr.repeat_users::numeric / pr.total_users) * 100, 1)
+             ELSE 0 END as prev_repeat_rate_pct,
+        COALESCE(crat.avg_rating, 0) as avg_rating,
+        COALESCE(prat.avg_rating, 0) as prev_avg_rating,
+        ci.created_at,
+        CASE WHEN ci.created_at > CURRENT_DATE - INTERVAL '2 months' THEN true ELSE false END as is_new_club
+      FROM current_capacity cc
+      CROSS JOIN prev_capacity pc
+      CROSS JOIN current_repeat cr
+      CROSS JOIN prev_repeat pr
+      CROSS JOIN current_rating crat
+      CROSS JOIN prev_rating prat
+      CROSS JOIN club_info ci
+    `;
+
+    const healthResult = await queryProduction(healthMetricsQuery, [clubId]);
+    const healthRow = healthResult.rows[0] || {};
+
+    const capacityPct = parseFloat(healthRow.capacity_pct) || 0;
+    const prevCapacityPct = parseFloat(healthRow.prev_capacity_pct) || 0;
+    const repeatRatePct = parseFloat(healthRow.repeat_rate_pct) || 0;
+    const prevRepeatRatePct = parseFloat(healthRow.prev_repeat_rate_pct) || 0;
+    const avgRating = parseFloat(healthRow.avg_rating) || 0;
+    const prevAvgRating = parseFloat(healthRow.prev_avg_rating) || 0;
+    const isNewClub = healthRow.is_new_club === true;
+    const hasMeetups = parseInt(healthRow.meetup_count) > 0;
+
+    // Calculate health score and status
+    const healthScore = calculateHealthScore(capacityPct, repeatRatePct, avgRating, isNewClub);
+    const healthStatus = getHealthStatus(healthScore, hasMeetups);
+
+    // Calculate individual metric health
+    const capacityHealth = getMetricHealth(capacityPct, HEALTH_THRESHOLDS.capacity_utilization);
+    const repeatHealth = isNewClub ? 'green' : getMetricHealth(repeatRatePct, HEALTH_THRESHOLDS.repeat_rate);
+    const ratingHealth = getMetricHealth(avgRating, HEALTH_THRESHOLDS.avg_rating);
+
     res.json({
       success: true,
       club_id: clubId,
       meetups,
       total_meetups: meetups.length,
       total_revenue: meetups.reduce((sum: number, m: any) => sum + m.revenue, 0),
-      total_waitlist: meetups.reduce((sum: number, m: any) => sum + m.waitlist_count, 0)
+      total_waitlist: meetups.reduce((sum: number, m: any) => sum + m.waitlist_count, 0),
+      // Health metrics for tooltip
+      health: {
+        score: healthScore,
+        status: healthStatus,
+        is_new_club: isNewClub,
+        capacity: {
+          current: capacityPct,
+          previous: prevCapacityPct,
+          change: Math.round((capacityPct - prevCapacityPct) * 10) / 10,
+          status: capacityHealth
+        },
+        repeat_rate: {
+          current: repeatRatePct,
+          previous: prevRepeatRatePct,
+          change: Math.round((repeatRatePct - prevRepeatRatePct) * 10) / 10,
+          status: repeatHealth
+        },
+        rating: {
+          current: avgRating,
+          previous: prevAvgRating,
+          change: Math.round((avgRating - prevAvgRating) * 100) / 100,
+          status: ratingHealth
+        }
+      }
     });
   } catch (error) {
     logger.error(`Failed to fetch meetup details for club ${req.params.clubId}:`, error);
