@@ -1,7 +1,12 @@
+"use strict";
 // Meetup Defaults - Hardcoded from meetup master.csv
 // Used for pre-filling meetup_cost and meetup_capacity in target modals
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.MEETUP_DEFAULTS = exports.ACTIVITY_NAME_REVERSE = exports.ACTIVITY_NAME_MAP = void 0;
+exports.getMeetupDefaults = getMeetupDefaults;
+exports.calculateTargetRevenue = calculateTargetRevenue;
 // Activity name mapping: CSV format -> Display format
-export const ACTIVITY_NAME_MAP = {
+exports.ACTIVITY_NAME_MAP = {
     'ART': 'Art',
     'BADMINTON': 'Badminton',
     'BASKETBALL': 'Basketball',
@@ -26,9 +31,9 @@ export const ACTIVITY_NAME_MAP = {
     'RUNNING': 'Running',
 };
 // Reverse mapping for lookup
-export const ACTIVITY_NAME_REVERSE = Object.fromEntries(Object.entries(ACTIVITY_NAME_MAP).map(([k, v]) => [v.toLowerCase(), k]));
+exports.ACTIVITY_NAME_REVERSE = Object.fromEntries(Object.entries(exports.ACTIVITY_NAME_MAP).map(([k, v]) => [v.toLowerCase(), k]));
 // All 159 rows from meetup master.csv
-export const MEETUP_DEFAULTS = [
+exports.MEETUP_DEFAULTS = [
     // Gurgaon - GCR Extn.
     { city: 'Gurgaon', area: 'GCR Extn.', activity: 'ART', meetup_cost: 250, meetup_capacity: 18 },
     { city: 'Gurgaon', area: 'GCR Extn.', activity: 'BADMINTON', meetup_cost: 177, meetup_capacity: 9 },
@@ -245,13 +250,13 @@ function average(numbers) {
  * 3. Fallback to activity average (all cities for this activity)
  * 4. Return null if activity not found
  */
-export function getMeetupDefaults(activity, city, area) {
+function getMeetupDefaults(activity, city, area) {
     const normalizedActivity = normalizeActivity(activity);
     const normalizedCity = normalizeCity(city);
     const normalizedArea = area ? normalizeArea(area) : undefined;
     // 1. Try exact match (activity + city + area)
     if (normalizedArea) {
-        const exactMatch = MEETUP_DEFAULTS.find(d => d.activity === normalizedActivity &&
+        const exactMatch = exports.MEETUP_DEFAULTS.find(d => d.activity === normalizedActivity &&
             d.city.toLowerCase() === normalizedCity.toLowerCase() &&
             d.area.toLowerCase() === normalizedArea.toLowerCase());
         if (exactMatch) {
@@ -264,7 +269,7 @@ export function getMeetupDefaults(activity, city, area) {
         }
     }
     // 2. Fallback to city average (all areas in city for this activity)
-    const cityMatches = MEETUP_DEFAULTS.filter(d => d.activity === normalizedActivity &&
+    const cityMatches = exports.MEETUP_DEFAULTS.filter(d => d.activity === normalizedActivity &&
         d.city.toLowerCase() === normalizedCity.toLowerCase());
     if (cityMatches.length > 0) {
         return {
@@ -275,13 +280,13 @@ export function getMeetupDefaults(activity, city, area) {
         };
     }
     // 3. Fallback to activity average (all cities for this activity)
-    const activityMatches = MEETUP_DEFAULTS.filter(d => d.activity === normalizedActivity);
+    const activityMatches = exports.MEETUP_DEFAULTS.filter(d => d.activity === normalizedActivity);
     if (activityMatches.length > 0) {
         return {
             meetup_cost: average(activityMatches.map(d => d.meetup_cost)),
             meetup_capacity: average(activityMatches.map(d => d.meetup_capacity)),
             source: 'activity_avg',
-            source_detail: `${ACTIVITY_NAME_MAP[normalizedActivity] || activity} average (${activityMatches.length} locations)`
+            source_detail: `${exports.ACTIVITY_NAME_MAP[normalizedActivity] || activity} average (${activityMatches.length} locations)`
         };
     }
     // 4. Activity not found
@@ -295,6 +300,7 @@ export function getMeetupDefaults(activity, city, area) {
 /**
  * Calculate target revenue from meetups, cost, and capacity
  */
-export function calculateTargetRevenue(targetMeetups, meetupCost, meetupCapacity) {
+function calculateTargetRevenue(targetMeetups, meetupCost, meetupCapacity) {
     return Math.round(targetMeetups * meetupCost * meetupCapacity);
 }
+//# sourceMappingURL=meetupDefaults.js.map

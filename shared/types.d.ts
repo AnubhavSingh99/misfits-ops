@@ -940,3 +940,4 @@ export interface ClubMatchResult {
 export interface StageProgressWithUA extends StageProgress {
     unattributed_meetups: number;
 }
+//# sourceMappingURL=types.d.ts.map

@@ -26,3 +26,4 @@ export declare function getMeetupDefaults(activity: string, city: string, area?:
  * Calculate target revenue from meetups, cost, and capacity
  */
 export declare function calculateTargetRevenue(targetMeetups: number, meetupCost: number, meetupCapacity: number): number;
+//# sourceMappingURL=meetupDefaults.d.ts.map
