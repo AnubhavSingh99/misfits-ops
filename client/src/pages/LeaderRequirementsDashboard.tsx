@@ -21,7 +21,9 @@ import {
   Settings,
   X,
   GripVertical,
-  Layers
+  Layers,
+  Edit3,
+  Trash2
 } from 'lucide-react';
 import type { LeaderRequirement, RequirementStatus, CreateRequirementRequest } from '../../../shared/types';
 import { getTeamForClub, TEAMS, TEAM_KEYS, type TeamKey } from '../../../shared/teamConfig';
@@ -182,6 +184,13 @@ export default function LeaderRequirementsDashboard() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [createContext, setCreateContext] = useState<CreateContext>({});
 
+  // Edit modal state
+  const [editingRequirement, setEditingRequirement] = useState<LeaderRequirement | null>(null);
+
+  // Delete confirmation state
+  const [deleteRequirement, setDeleteRequirement] = useState<LeaderRequirement | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
   // Fetch filter options
   useEffect(() => {
     const fetchFilterOptions = async () => {
@@ -280,6 +289,29 @@ export default function LeaderRequirementsDashboard() {
       }
     } catch (err) {
       console.error('Failed to update status:', err);
+    }
+  };
+
+  // Delete requirement
+  const handleConfirmDelete = async () => {
+    if (!deleteRequirement) return;
+    setDeleting(true);
+    try {
+      const response = await fetch(`${API_BASE}/requirements/leaders/${deleteRequirement.id}`, {
+        method: 'DELETE'
+      });
+      if (response.ok) {
+        fetchData(true);
+        setDeleteRequirement(null);
+      } else {
+        const err = await response.json();
+        alert(err.error || 'Failed to delete requirement');
+      }
+    } catch (err) {
+      console.error('Failed to delete requirement:', err);
+      alert('Failed to delete requirement');
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -433,6 +465,11 @@ export default function LeaderRequirementsDashboard() {
             <EffortBadges growth={node.growth_effort_count} platform={node.platform_effort_count} />
           </td>
 
+          {/* Team (empty for hierarchy rows) */}
+          <td className="py-3 px-4 text-center">
+            {/* Team column only shown for requirement rows */}
+          </td>
+
           {/* Actions */}
           <td className="py-3 px-4 text-center">
             <button
@@ -454,7 +491,14 @@ export default function LeaderRequirementsDashboard() {
 
         {/* Requirements (leaf nodes) */}
         {isExpanded && node.requirements && node.requirements.map(req => (
-          <RequirementRow key={req.id} requirement={req} depth={depth + 1} onStatusChange={updateRequirementStatus} />
+          <RequirementRow
+            key={req.id}
+            requirement={req}
+            depth={depth + 1}
+            onStatusChange={updateRequirementStatus}
+            onEdit={setEditingRequirement}
+            onDelete={setDeleteRequirement}
+          />
         ))}
       </>
     );
@@ -464,17 +508,21 @@ export default function LeaderRequirementsDashboard() {
   const RequirementRow = ({
     requirement: req,
     depth,
-    onStatusChange
+    onStatusChange,
+    onEdit,
+    onDelete
   }: {
     requirement: LeaderRequirement;
     depth: number;
     onStatusChange: (id: number, status: RequirementStatus) => void;
+    onEdit: (req: LeaderRequirement) => void;
+    onDelete: (req: LeaderRequirement) => void;
   }) => {
     const statusConfig = STATUS_CONFIG[req.status];
     const StatusIcon = statusConfig.icon;
 
     return (
-      <tr className="border-b border-gray-100 hover:bg-indigo-50/30 transition-colors">
+      <tr className="group border-b border-gray-100 hover:bg-indigo-50/30 transition-colors">
         {/* Name */}
         <td className="py-2.5 pr-4" style={{ paddingLeft: `${12 + depth * 24 + 20}px` }}>
           <div className="flex items-center gap-2">
@@ -528,6 +576,32 @@ export default function LeaderRequirementsDashboard() {
               {req.team}
             </span>
           )}
+        </td>
+
+        {/* Actions */}
+        <td className="py-2.5 px-4 text-center">
+          <div className="flex items-center justify-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onEdit(req);
+              }}
+              className="p-1.5 rounded-md bg-indigo-50 text-indigo-600 hover:bg-indigo-100 transition-colors"
+              title="Edit"
+            >
+              <Edit3 className="h-3.5 w-3.5" />
+            </button>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onDelete(req);
+              }}
+              className="p-1.5 rounded-md bg-red-50 text-red-600 hover:bg-red-100 transition-colors"
+              title="Delete"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          </div>
         </td>
       </tr>
     );
@@ -840,7 +914,10 @@ export default function LeaderRequirementsDashboard() {
                     Effort
                   </th>
                   <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                    Add/Edit Target
+                    Team
+                  </th>
+                  <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                    Actions
                   </th>
                 </tr>
               </thead>
@@ -861,6 +938,62 @@ export default function LeaderRequirementsDashboard() {
           onClose={() => setShowCreateModal(false)}
           onCreate={createRequirement}
         />
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {deleteRequirement && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/50" onClick={() => !deleting && setDeleteRequirement(null)} />
+          <div className="relative bg-white rounded-xl shadow-2xl w-full max-w-sm mx-4 overflow-hidden">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 bg-red-50">
+              <div>
+                <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+                  <Trash2 size={20} className="text-red-600" />
+                  Delete Requirement
+                </h3>
+                <p className="text-sm text-gray-500">This action cannot be undone</p>
+              </div>
+              <button
+                onClick={() => !deleting && setDeleteRequirement(null)}
+                disabled={deleting}
+                className="p-1 hover:bg-red-100 rounded-lg transition-colors"
+              >
+                <X size={20} className="text-gray-500" />
+              </button>
+            </div>
+            <div className="px-6 py-4">
+              <p className="text-sm text-gray-700">
+                Are you sure you want to delete <span className="font-semibold">{deleteRequirement.name}</span>?
+              </p>
+            </div>
+            <div className="flex gap-3 px-6 py-4 border-t border-gray-200 bg-gray-50">
+              <button
+                onClick={() => setDeleteRequirement(null)}
+                disabled={deleting}
+                className="flex-1 px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleConfirmDelete}
+                disabled={deleting}
+                className="flex-1 px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                {deleting ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Deleting...
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="h-4 w-4" />
+                    Delete
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

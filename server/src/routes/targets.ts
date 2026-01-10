@@ -2156,7 +2156,7 @@ router.get('/v2/hierarchy', async (req, res) => {
         day_type_name: dayTypeName,
         revenue_status: hasRevenueData ? clubRevenueStatus : null,
         revenue_status_display: hasRevenueData ? getRevenueStatusDisplay(clubRevenueStatus) : null,
-        children: targetChildren.length > 1 ? targetChildren : undefined // Only show children when 2+ targets
+        children: targetChildren.length >= 1 ? targetChildren : undefined // Show children even when 1 target
       };
 
       areaNode.children.push(clubNode);
@@ -2425,7 +2425,7 @@ router.get('/v2/hierarchy', async (req, res) => {
           is_expansion: true, // Mark as expansion
           team: team,
           target_count: targets.length,
-          children: targetChildren.length > 1 ? targetChildren : undefined
+          children: targetChildren.length >= 1 ? targetChildren : undefined // Show children even when 1 target
         };
 
         areaNode.children.push(expansionClubNode);

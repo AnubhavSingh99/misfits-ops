@@ -2024,9 +2024,9 @@ function HierarchyRow({ node, level, expanded, onToggle, onEditTarget, onDeleteT
               </button>
             </Tooltip>
           )}
-          {/* Delete button: For target rows, clubs with targets */}
-          {(isTarget || (node.type === 'club' && node.has_target)) && !isLaunch && (
-            <Tooltip text="Delete Target" position="left">
+          {/* Delete button: For target rows, clubs with targets, or launches */}
+          {(isTarget || (node.type === 'club' && node.has_target) || isLaunch) && (
+            <Tooltip text={isLaunch ? "Delete Launch" : "Delete Target"} position="left">
               <button
                 onClick={(e) => {
                   e.stopPropagation()
@@ -2459,31 +2459,41 @@ export default function ScalingPlannerV2() {
     setDeleteTargetNode(node)
   }
 
-  // Confirm delete target - makes API call to delete
+  // Confirm delete target/launch - makes API call to delete
   const handleConfirmDeleteTarget = async () => {
     if (!deleteTargetNode) return
 
-    // Get the target_id and club_id from the node
-    // For target rows, use node.target_id
-    // For club rows with single target, use node.target_id
-    const targetId = deleteTargetNode.target_id
-    const clubId = deleteTargetNode.club_id
-
-    if (!targetId || !clubId) {
-      console.error('Cannot delete: missing target_id or club_id')
-      setDeleteTargetNode(null)
-      return
-    }
+    const isLaunch = deleteTargetNode.is_launch || deleteTargetNode.type === 'launch'
 
     setDeletingTarget(true)
     try {
-      const response = await fetch(`/api/targets/clubs/${clubId}/dimensional/${targetId}`, {
-        method: 'DELETE'
-      })
+      let response: Response
+
+      if (isLaunch) {
+        // Delete launch - use launch_id
+        const launchId = deleteTargetNode.launch_id
+        if (!launchId) {
+          throw new Error('Missing launch_id')
+        }
+        response = await fetch(`/api/targets/v2/launches/${launchId}`, {
+          method: 'DELETE'
+        })
+      } else {
+        // Delete target - use target_id and club_id
+        const targetId = deleteTargetNode.target_id
+        const clubId = deleteTargetNode.club_id
+
+        if (!targetId || !clubId) {
+          throw new Error('Missing target_id or club_id')
+        }
+        response = await fetch(`/api/targets/clubs/${clubId}/dimensional/${targetId}`, {
+          method: 'DELETE'
+        })
+      }
 
       if (!response.ok) {
         const err = await response.json()
-        throw new Error(err.error || 'Failed to delete target')
+        throw new Error(err.error || `Failed to delete ${isLaunch ? 'launch' : 'target'}`)
       }
 
       // Refresh data after delete
@@ -2491,7 +2501,7 @@ export default function ScalingPlannerV2() {
       setDeleteTargetNode(null)
     } catch (error) {
       console.error('Delete failed:', error)
-      alert(error instanceof Error ? error.message : 'Failed to delete target')
+      alert(error instanceof Error ? error.message : 'Failed to delete')
     } finally {
       setDeletingTarget(false)
     }
