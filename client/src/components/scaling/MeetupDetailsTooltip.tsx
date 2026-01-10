@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { Loader2 } from 'lucide-react';
+import { Loader2, ChevronDown } from 'lucide-react';
+import { getWeekBounds, formatWeekLabel, type WeekOption } from './WeekSelector';
 
 interface MeetupDetail {
   event_id: string;
@@ -57,6 +58,21 @@ const truncateName = (name: string, maxLen: number = 22): string => {
   return name.substring(0, maxLen - 1) + '…';
 };
 
+// Format date as YYYY-MM-DD in local timezone
+const formatLocalDate = (date: Date): string => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+// Week options for dropdown
+const weekOptions: Array<{ value: WeekOption; label: string }> = [
+  { value: 'last_completed', label: 'Last Week' },
+  { value: 'current', label: 'This Week' },
+  { value: 'two_weeks_ago', label: '2 Wks Ago' },
+];
+
 export function MeetupDetailsTooltip({
   clubId,
   clubName,
@@ -72,24 +88,29 @@ export function MeetupDetailsTooltip({
   const [data, setData] = useState<MeetupDetailsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [position, setPosition] = useState({ top: 0, left: 0, arrowLeft: 0 });
+  const [showWeekDropdown, setShowWeekDropdown] = useState(false);
+  const [localWeekOption, setLocalWeekOption] = useState<WeekOption>('last_completed');
 
   const triggerRef = useRef<HTMLDivElement>(null);
   const tooltipRef = useRef<HTMLDivElement>(null);
   const hoverTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const leaveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
+  // Compute local week bounds based on selection
+  const localWeekBounds = getWeekBounds(localWeekOption);
+  const localWeekStart = formatLocalDate(localWeekBounds.start);
+  const localWeekEnd = formatLocalDate(localWeekBounds.end);
+  const localWeekLabel = formatWeekLabel(localWeekBounds.start, localWeekBounds.end);
+
   // Fetch meetup details
-  const fetchMeetupDetails = useCallback(async () => {
-    if (data || isLoading) return;
+  const fetchMeetupDetails = useCallback(async (forceRefresh = false) => {
+    if ((data && !forceRefresh) || isLoading) return;
 
     setIsLoading(true);
     setError(null);
 
     try {
-      let url = `/api/targets/clubs/${clubId}/meetup-details`;
-      if (weekStart && weekEnd) {
-        url += `?week_start=${weekStart}&week_end=${weekEnd}`;
-      }
+      const url = `/api/targets/clubs/${clubId}/meetup-details?week_start=${localWeekStart}&week_end=${localWeekEnd}`;
       const response = await fetch(url);
       if (!response.ok) throw new Error('Failed to fetch');
       const result = await response.json();
@@ -99,7 +120,21 @@ export function MeetupDetailsTooltip({
     } finally {
       setIsLoading(false);
     }
-  }, [clubId, weekStart, weekEnd, data, isLoading]);
+  }, [clubId, localWeekStart, localWeekEnd, data, isLoading]);
+
+  // Refetch when week changes
+  const handleWeekChange = (option: WeekOption) => {
+    setLocalWeekOption(option);
+    setShowWeekDropdown(false);
+    setData(null); // Clear current data to trigger refetch
+  };
+
+  // Refetch when week option changes and data is cleared
+  useEffect(() => {
+    if (isVisible && !data && !isLoading) {
+      fetchMeetupDetails(true);
+    }
+  }, [localWeekOption, isVisible, data, isLoading]);
 
   // Calculate position
   const updatePosition = useCallback(() => {
@@ -167,6 +202,13 @@ export function MeetupDetailsTooltip({
     };
   }, []);
 
+  // Close dropdown when tooltip hides
+  useEffect(() => {
+    if (!isVisible) {
+      setShowWeekDropdown(false);
+    }
+  }, [isVisible]);
+
   // Don't show tooltip if no meetups
   if (currentMeetups === 0) {
     return <>{children}</>;
@@ -204,12 +246,46 @@ export function MeetupDetailsTooltip({
           <div className="w-[430px] bg-white rounded-lg shadow-lg border border-gray-200 overflow-hidden">
             {/* Header */}
             <div className="px-3 py-2 border-b border-gray-100 flex items-center justify-between">
-              <span className="text-sm font-medium text-gray-700 truncate max-w-[260px]">
-                {truncateName(clubName, 32)}
+              <span className="text-sm font-medium text-gray-700 truncate max-w-[220px]">
+                {truncateName(clubName, 28)}
               </span>
-              <span className="text-[10px] text-gray-400 uppercase tracking-wider">
-                {weekLabel || 'Last Week'}
-              </span>
+              {/* Week selector dropdown */}
+              <div className="relative">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setShowWeekDropdown(!showWeekDropdown);
+                  }}
+                  className="flex items-center gap-1 px-2 py-0.5 rounded-md
+                    text-[10px] text-gray-500 uppercase tracking-wider
+                    hover:bg-gray-100 hover:text-gray-700 transition-colors"
+                >
+                  {localWeekLabel}
+                  <ChevronDown size={10} className={`transition-transform ${showWeekDropdown ? 'rotate-180' : ''}`} />
+                </button>
+                {showWeekDropdown && (
+                  <div className="absolute right-0 top-full mt-1 z-10
+                    bg-white rounded-lg shadow-lg border border-gray-200
+                    py-1 min-w-[100px] animate-in fade-in slide-in-from-top-1 duration-150">
+                    {weekOptions.map((option) => (
+                      <button
+                        key={option.value}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleWeekChange(option.value);
+                        }}
+                        className={`w-full px-3 py-1.5 text-left text-[11px] transition-colors
+                          ${localWeekOption === option.value
+                            ? 'bg-indigo-50 text-indigo-600 font-medium'
+                            : 'text-gray-600 hover:bg-gray-50'
+                          }`}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* Content */}
@@ -225,7 +301,7 @@ export function MeetupDetailsTooltip({
                 </div>
               ) : data?.meetups.length === 0 ? (
                 <div className="flex items-center justify-center py-8 text-xs text-gray-400">
-                  No meetups {weekLabel ? `for ${weekLabel}` : 'last week'}
+                  No meetups for {localWeekLabel}
                 </div>
               ) : (
                 <>
