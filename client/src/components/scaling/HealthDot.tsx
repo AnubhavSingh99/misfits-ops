@@ -1,4 +1,5 @@
-import React from 'react';
+import React, { useState, useRef, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 
 export type HealthStatus = 'green' | 'yellow' | 'red' | 'gray';
 
@@ -57,11 +58,32 @@ export function HealthDot({
 }: HealthDotProps) {
   const colors = statusColors[status];
   const label = statusLabels[status];
+  const [isHovered, setIsHovered] = useState(false);
+  const [tooltipPos, setTooltipPos] = useState({ top: 0, left: 0 });
+  const dotRef = useRef<HTMLButtonElement>(null);
+
+  const handleMouseEnter = useCallback(() => {
+    if (dotRef.current && showTooltip) {
+      const rect = dotRef.current.getBoundingClientRect();
+      setTooltipPos({
+        top: rect.top - 8,
+        left: rect.left + rect.width / 2
+      });
+      setIsHovered(true);
+    }
+  }, [showTooltip]);
+
+  const handleMouseLeave = useCallback(() => {
+    setIsHovered(false);
+  }, []);
 
   return (
-    <div className="relative group">
+    <div className="relative">
       <button
+        ref={dotRef}
         onClick={onClick}
+        onMouseEnter={handleMouseEnter}
+        onMouseLeave={handleMouseLeave}
         className={`
           ${sizeClasses[size]}
           ${colors.bg}
@@ -73,29 +95,29 @@ export function HealthDot({
           ${colors.glow}
           ${className}
         `}
-        title={showTooltip ? `${label}${score !== undefined ? ` (${score})` : ''}` : undefined}
       />
 
-      {/* Hover tooltip */}
-      {showTooltip && (
-        <div className="
-          absolute bottom-full left-1/2 -translate-x-1/2 mb-2
-          px-2 py-1 rounded-md
-          bg-gray-900 text-white text-[10px] font-medium
-          opacity-0 group-hover:opacity-100
-          transition-opacity duration-150
-          whitespace-nowrap
-          pointer-events-none
-          z-50
-        ">
-          {label}
-          {score !== undefined && (
-            <span className="text-gray-400 ml-1">({score})</span>
-          )}
-          <div className="absolute top-full left-1/2 -translate-x-1/2 -mt-1">
+      {/* Portal-based tooltip to escape overflow containers */}
+      {showTooltip && isHovered && createPortal(
+        <div
+          className="fixed z-[9999] pointer-events-none"
+          style={{
+            top: tooltipPos.top,
+            left: tooltipPos.left,
+            transform: 'translate(-50%, -100%)'
+          }}
+        >
+          <div className="px-2 py-1 rounded-md bg-gray-900 text-white text-[10px] font-medium whitespace-nowrap">
+            {label}
+            {score !== undefined && (
+              <span className="text-gray-400 ml-1">({score})</span>
+            )}
+          </div>
+          <div className="absolute top-full left-1/2 -translate-x-1/2 -mt-px">
             <div className="border-4 border-transparent border-t-gray-900" />
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
