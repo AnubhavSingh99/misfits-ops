@@ -2118,7 +2118,7 @@ router.get('/v2/hierarchy', async (req, res) => {
         SELECT
           e.club_id,
           e.pk as event_id,
-          e.capacity,
+          e.max_people as capacity,
           COUNT(DISTINCT CASE
             WHEN b.state NOT IN ('DEREGISTERED', 'INITIATED', 'WAITLISTED')
             THEN b.id
@@ -2128,7 +2128,7 @@ router.get('/v2/hierarchy', async (req, res) => {
         WHERE e.start_time >= ${weekStartSQL}
           AND e.start_time < ${weekEndSQL}
           AND e.state = 'CREATED'
-        GROUP BY e.club_id, e.pk, e.capacity
+        GROUP BY e.club_id, e.pk, e.max_people
       ),
       club_capacity AS (
         -- Capacity utilization per club
