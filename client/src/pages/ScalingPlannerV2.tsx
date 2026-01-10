@@ -33,7 +33,7 @@ import type {
   ValidationStatus,
   ScalingTaskSummary
 } from '../../shared/types'
-import { SprintViewModal, TaskSummaryCell, ScalingTaskCreateModal, SummaryTiles, HierarchyFilterBar, HierarchyRollupHeader, RevenueStatusPills, DayTypeTags, StageInfoModal, InfoIconButton, buildRolledUpSummaryMap, buildSummaryKey, type HierarchyFilters, MeetupDetailsTooltip, ExpandClubModal, AddChoiceModal, type ExpandClubTargetData } from '../components/scaling'
+import { SprintViewModal, TaskSummaryCell, ScalingTaskCreateModal, SummaryTiles, HierarchyFilterBar, HierarchyRollupHeader, RevenueStatusPills, DayTypeTags, StageInfoModal, InfoIconButton, buildRolledUpSummaryMap, buildSummaryKey, type HierarchyFilters, type HierarchyLevel, MeetupDetailsTooltip, ExpandClubModal, AddChoiceModal, type ExpandClubTargetData } from '../components/scaling'
 import { getTeamForClub, type TeamKey } from '../../shared/teamConfig'
 import { DimensionalTargetsService } from '../services/api'
 
@@ -2148,6 +2148,23 @@ export default function ScalingPlannerV2() {
     teams: []
   })
 
+  // Hierarchy order state (drag-drop reorder + enable/disable)
+  const [hierarchyLevels, setHierarchyLevels] = useState<HierarchyLevel[]>(['activity', 'city', 'area'])
+  const [enabledLevels, setEnabledLevels] = useState<Set<HierarchyLevel>>(new Set(['activity', 'city', 'area']))
+  const [draggingLevel, setDraggingLevel] = useState<HierarchyLevel | null>(null)
+
+  // Get enabled levels in order for API call
+  const enabledHierarchyOrder = useMemo(() => {
+    return hierarchyLevels.filter(l => enabledLevels.has(l))
+  }, [hierarchyLevels, enabledLevels])
+
+  // Check if using custom hierarchy (not default order)
+  const isCustomHierarchy = useMemo(() => {
+    const defaultOrder: HierarchyLevel[] = ['activity', 'city', 'area']
+    return enabledHierarchyOrder.length !== 3 ||
+      enabledHierarchyOrder.some((l, i) => l !== defaultOrder[i])
+  }, [enabledHierarchyOrder])
+
   // Direct task summaries from API (keyed by name)
   const [directTaskSummaries, setDirectTaskSummaries] = useState<Record<string, ScalingTaskSummary>>({})
 
@@ -2219,12 +2236,24 @@ export default function ScalingPlannerV2() {
     // Save scroll position if preserving
     const scrollTop = preserveScroll ? tableContainerRef.current?.scrollTop : undefined
 
-    setLoading(true)
+    // Only show loading spinner on initial load (when no data yet)
+    // This prevents flicker when changing hierarchy order
+    if (hierarchy.length === 0) {
+      setLoading(true)
+    }
     setError(null)
 
     try {
+      // Build hierarchy query params including custom order if different from default
+      const hierarchyParams = new URLSearchParams()
+      hierarchyParams.append('include_launches', String(includeLaunches))
+      hierarchyParams.append('use_auto_matching', 'true')
+      if (enabledHierarchyOrder.length > 0) {
+        hierarchyParams.append('hierarchy_order', enabledHierarchyOrder.join(','))
+      }
+
       const [hierarchyRes, trendsRes] = await Promise.all([
-        fetch(`/api/targets/v2/hierarchy?include_launches=${includeLaunches}&use_auto_matching=true`),
+        fetch(`/api/targets/v2/hierarchy?${hierarchyParams}`),
         fetch('/api/targets/v2/trends')
       ])
 
@@ -2257,12 +2286,54 @@ export default function ScalingPlannerV2() {
     } finally {
       setLoading(false)
     }
-  }, [includeLaunches])
+  }, [includeLaunches, enabledHierarchyOrder, hierarchy.length])
 
   useEffect(() => {
     fetchData()
     fetchTaskSummaries()
-  }, [includeLaunches])
+  }, [includeLaunches, enabledHierarchyOrder])
+
+  // Hierarchy order handlers
+  const handleDragStart = (level: HierarchyLevel) => {
+    setDraggingLevel(level)
+  }
+
+  const handleDragEnd = () => {
+    setDraggingLevel(null)
+  }
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault()
+  }
+
+  const handleDrop = (targetLevel: HierarchyLevel) => {
+    if (!draggingLevel || draggingLevel === targetLevel) return
+
+    setHierarchyLevels(prev => {
+      const newLevels = [...prev]
+      const dragIndex = newLevels.indexOf(draggingLevel)
+      const dropIndex = newLevels.indexOf(targetLevel)
+      // Remove from old position
+      newLevels.splice(dragIndex, 1)
+      // Insert at new position
+      newLevels.splice(dropIndex, 0, draggingLevel)
+      return newLevels
+    })
+  }
+
+  const toggleLevel = (level: HierarchyLevel) => {
+    setEnabledLevels(prev => {
+      const next = new Set(prev)
+      if (next.has(level)) {
+        // Don't allow disabling if it's the last enabled level
+        if (next.size <= 1) return prev
+        next.delete(level)
+      } else {
+        next.add(level)
+      }
+      return next
+    })
+  }
 
   // Toggle node expansion
   const toggleNode = (nodeId: string) => {
@@ -3042,11 +3113,26 @@ export default function ScalingPlannerV2() {
           revenueStatus={filteredTotals?.revenueStatus || null}
         />
 
-        {/* Filter Bar */}
+        {/* Filter Bar with Hierarchy Order Controls */}
         <HierarchyFilterBar
           filters={filters}
           onFiltersChange={setFilters}
           filterOptions={filterOptions}
+          hierarchyOrder={{
+            hierarchyLevels,
+            enabledLevels,
+            draggingLevel,
+            isCustomHierarchy,
+            onDragStart: handleDragStart,
+            onDragEnd: handleDragEnd,
+            onDragOver: handleDragOver,
+            onDrop: handleDrop,
+            onToggleLevel: toggleLevel,
+            onReset: () => {
+              setHierarchyLevels(['activity', 'city', 'area']);
+              setEnabledLevels(new Set(['activity', 'city', 'area']));
+            }
+          }}
         />
 
         {/* Hierarchy Table */}

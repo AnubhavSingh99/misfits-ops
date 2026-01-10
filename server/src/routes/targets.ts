@@ -1498,6 +1498,229 @@ function validateProgress(targetMeetups: number, currentMeetups: number, progres
   return { status: 'valid' };
 }
 
+// Helper: Hierarchy level type for dynamic ordering
+type HierarchyLevel = 'activity' | 'city' | 'area';
+
+// Helper: Get level value from club data
+function getLevelValue(level: HierarchyLevel, club: any): { id: number; name: string } {
+  switch (level) {
+    case 'activity':
+      return { id: parseInt(club.activity_id), name: club.activity_name };
+    case 'city':
+      return { id: parseInt(club.city_id) || 0, name: club.city_name || 'Unknown' };
+    case 'area':
+      return { id: parseInt(club.area_id) || 0, name: club.area_name || 'Unknown' };
+  }
+}
+
+// Helper: Create a level node for dynamic hierarchy
+function createLevelNode(level: HierarchyLevel, value: { id: number; name: string }, parentKey: string, allLevelValues: Record<HierarchyLevel, { id: number; name: string }>) {
+  const nodeId = parentKey ? `${parentKey}-${level}:${value.id}` : `${level}:${value.id}`;
+  return {
+    type: level,
+    id: nodeId,
+    name: value.name,
+    [`${level}_id`]: value.id,
+    // Also store all level IDs for context (needed for + button context)
+    activity_id: allLevelValues.activity.id,
+    city_id: allLevelValues.city.id,
+    area_id: allLevelValues.area.id,
+    // Also store names for task summary matching
+    activity_name: allLevelValues.activity.name,
+    city_name: allLevelValues.city.name,
+    area_name: allLevelValues.area.name,
+    target_meetups: 0,
+    target_revenue: 0,
+    current_meetups: 0,
+    current_revenue: 0,
+    gap_meetups: 0,
+    gap_revenue: 0,
+    progress_summary: { ...defaultProgress },
+    club_count: 0,
+    launch_count: 0,
+    last_4w_revenue_total: 0,
+    revenue_status_list: [] as RevenueStatus[],
+    childrenMap: new Map<string, any>(), // For intermediate levels
+    children: [] as any[] // For final level before clubs
+  };
+}
+
+// Interface for processed club data used by dynamic hierarchy builder
+interface ProcessedClubData {
+  club: any;
+  clubNode: any;
+  levelValues: Record<HierarchyLevel, { id: number; name: string }>;
+  hasTargets: boolean;
+  hasRevenueData: boolean;
+  clubRevenueStatus: RevenueStatus;
+  aggregatedProgress: any;
+  last4wTotal: number;
+}
+
+// Interface for processed launch data
+interface ProcessedLaunchData {
+  launch: any;
+  launchNode: any;
+  levelValues: Record<HierarchyLevel, { id: number; name: string }>;
+  progress: any;
+  hasTarget: boolean;
+}
+
+// Helper: Build dynamic hierarchy from processed data
+function buildDynamicHierarchy(
+  processedClubs: ProcessedClubData[],
+  processedLaunches: ProcessedLaunchData[],
+  hierarchyLevels: HierarchyLevel[]
+): Map<string, any> {
+  const rootMap = new Map<string, any>();
+
+  // Process clubs
+  for (const data of processedClubs) {
+    const { clubNode, levelValues, hasTargets, hasRevenueData, clubRevenueStatus, aggregatedProgress, last4wTotal } = data;
+
+    // Traverse/create path through hierarchy based on order
+    let currentMap = rootMap;
+    let currentKey = '';
+
+    for (let i = 0; i < hierarchyLevels.length; i++) {
+      const level = hierarchyLevels[i];
+      const levelValue = levelValues[level];
+      const levelKey = `${level}:${levelValue.id}`;
+
+      // Create node if doesn't exist
+      if (!currentMap.has(levelKey)) {
+        currentMap.set(levelKey, createLevelNode(level, levelValue, currentKey, levelValues));
+      }
+
+      const node = currentMap.get(levelKey);
+      currentKey = currentKey ? `${currentKey}-${levelKey}` : levelKey;
+
+      // Accumulate metrics at each level
+      node.target_meetups += clubNode.target_meetups;
+      node.target_revenue += clubNode.target_revenue;
+      node.current_meetups += clubNode.current_meetups;
+      node.current_revenue += clubNode.current_revenue;
+      node.club_count++;
+      node.last_4w_revenue_total += last4wTotal;
+      if (hasRevenueData) {
+        node.revenue_status_list.push(clubRevenueStatus);
+      }
+
+      if (i === hierarchyLevels.length - 1) {
+        // Last level before clubs - add club as child
+        // Update club ID to match the dynamic path
+        clubNode.id = `${currentKey}-club:${clubNode.club_id}`;
+        node.children.push(clubNode);
+        // Roll up progress
+        if (hasTargets) {
+          node.progress_summary = sumProgress([node.progress_summary, aggregatedProgress]);
+        }
+      } else {
+        // Intermediate level - continue traversal
+        currentMap = node.childrenMap;
+      }
+    }
+  }
+
+  // Process launches
+  for (const data of processedLaunches) {
+    const { launchNode, levelValues, progress, hasTarget } = data;
+
+    let currentMap = rootMap;
+    let currentKey = '';
+
+    for (let i = 0; i < hierarchyLevels.length; i++) {
+      const level = hierarchyLevels[i];
+      const levelValue = levelValues[level];
+      const levelKey = `${level}:${levelValue.id}`;
+
+      if (!currentMap.has(levelKey)) {
+        currentMap.set(levelKey, createLevelNode(level, levelValue, currentKey, levelValues));
+      }
+
+      const node = currentMap.get(levelKey);
+      currentKey = currentKey ? `${currentKey}-${levelKey}` : levelKey;
+
+      // Accumulate metrics
+      node.target_meetups += launchNode.target_meetups;
+      node.target_revenue += launchNode.target_revenue;
+      if (!node.launch_count) node.launch_count = 0;
+      node.launch_count++;
+
+      if (i === hierarchyLevels.length - 1) {
+        // Last level - add launch as child
+        launchNode.id = `${currentKey}-launch:${launchNode.launch_id}`;
+        node.children.push(launchNode);
+        // Roll up progress
+        if (hasTarget) {
+          node.progress_summary = sumProgress([node.progress_summary, progress]);
+        }
+      } else {
+        currentMap = node.childrenMap;
+      }
+    }
+  }
+
+  return rootMap;
+}
+
+// Helper: Convert dynamic hierarchy map to array with calculated gaps/validations
+function convertDynamicHierarchyToArray(
+  rootMap: Map<string, any>,
+  hierarchyLevels: HierarchyLevel[],
+  depth: number = 0
+): any[] {
+  const result: any[] = [];
+
+  for (const [, node] of rootMap) {
+    // Recursively convert children from Map to Array
+    if (depth < hierarchyLevels.length - 1 && node.childrenMap && node.childrenMap.size > 0) {
+      node.children = convertDynamicHierarchyToArray(node.childrenMap, hierarchyLevels, depth + 1);
+      // Roll up progress from children
+      node.progress_summary = sumProgress(node.children.map((c: any) => c.progress_summary));
+    }
+    delete node.childrenMap; // Clean up
+
+    // Calculate gaps
+    node.gap_meetups = Math.max(0, node.target_meetups - node.current_meetups);
+    node.gap_revenue = Math.max(0, node.target_revenue - node.current_revenue);
+    node.last_4w_revenue_avg = node.last_4w_revenue_total / 4;
+
+    // Validation
+    const validation = validateProgress(node.target_meetups, node.current_meetups, node.progress_summary);
+    node.validation_status = validation.status;
+    node.validation_message = validation.message;
+
+    // Roll up revenue status
+    const revenueStatusList = node.revenue_status_list || [];
+    node.revenue_status = revenueStatusList.length > 0
+      ? rollupRevenueStatuses(revenueStatusList)
+      : null;
+    node.revenue_status_display = node.revenue_status
+      ? getRevenueStatusDisplay(node.revenue_status)
+      : null;
+    delete node.revenue_status_list;
+
+    // Add counts based on level type
+    if (node.children && Array.isArray(node.children)) {
+      const childTypes = new Set(node.children.map((c: any) => c.type));
+      if (childTypes.has('activity')) {
+        node.activity_count = node.children.filter((c: any) => c.type === 'activity').length;
+      }
+      if (childTypes.has('city')) {
+        node.city_count = node.children.filter((c: any) => c.type === 'city').length;
+      }
+      if (childTypes.has('area')) {
+        node.area_count = node.children.filter((c: any) => c.type === 'area').length;
+      }
+    }
+
+    result.push(node);
+  }
+
+  return result;
+}
+
 // PUT /api/targets/clubs/:clubId/dimensional/:targetId/progress - Update progress
 router.put('/clubs/:clubId/dimensional/:targetId/progress', async (req, res) => {
   try {
@@ -1649,8 +1872,33 @@ router.put('/launches/:launchId/dimensional/:targetId/progress', async (req, res
 // GET /api/targets/v2/hierarchy - Get full hierarchy for V2 dashboard
 router.get('/v2/hierarchy', async (req, res) => {
   try {
-    const { activity_id, city_id, area_id, include_launches, targets_only, use_auto_matching } = req.query;
+    const { activity_id, city_id, area_id, include_launches, targets_only, use_auto_matching, hierarchy_order } = req.query;
     const autoMatchingEnabled = use_auto_matching === 'true';
+
+    // Parse hierarchy_order parameter (comma-separated list of levels)
+    // Valid levels: activity, city, area
+    // Default order: activity, city, area
+    const validLevels: HierarchyLevel[] = ['activity', 'city', 'area'];
+    const defaultOrder: HierarchyLevel[] = ['activity', 'city', 'area'];
+    let hierarchyLevels: HierarchyLevel[] = defaultOrder;
+
+    if (hierarchy_order && typeof hierarchy_order === 'string') {
+      const requestedLevels = hierarchy_order.split(',')
+        .map(l => l.trim().toLowerCase())
+        .filter(l => validLevels.includes(l as HierarchyLevel)) as HierarchyLevel[];
+
+      // Use requested order if at least one valid level provided
+      if (requestedLevels.length > 0) {
+        hierarchyLevels = requestedLevels;
+      }
+    }
+
+    const useCustomHierarchy = hierarchyLevels.length !== 3 ||
+      hierarchyLevels[0] !== 'activity' ||
+      hierarchyLevels[1] !== 'city' ||
+      hierarchyLevels[2] !== 'area';
+
+    logger.info(`V2 Hierarchy request with order: ${hierarchyLevels.join(',')}, custom: ${useCustomHierarchy}`);
 
     // Store for auto-matching results (club_id -> ClubMatchResult)
     const autoMatchResults = new Map<number, ClubMatchResult>();
@@ -1883,6 +2131,494 @@ router.get('/v2/hierarchy', async (req, res) => {
       logger.info(`Auto-matching completed for ${autoMatchResults.size} clubs`);
     }
 
+    // Declare hierarchy variable for both code paths
+    let hierarchy: any[];
+    let launchCount = 0;
+
+    // Use dynamic hierarchy builder when custom order is requested
+    if (useCustomHierarchy) {
+      logger.info('Using dynamic hierarchy builder');
+
+      // Collect processed club data
+      const processedClubs: ProcessedClubData[] = [];
+
+      for (const club of clubsToProcess) {
+        const activityId = parseInt(club.activity_id);
+        const cityId = parseInt(club.city_id) || 0;
+        const areaId = parseInt(club.area_id) || 0;
+        const clubId = parseInt(club.club_id);
+
+        const targets = targetsMap.get(clubId) || [];
+        const hasTargets = targets.length > 0;
+
+        const targetMeetups = targets.reduce((sum: number, t: any) => sum + (parseInt(t.target_meetups) || 0), 0);
+        const targetRevenue = targets.reduce((sum: number, t: any) => sum + (parseFloat(t.target_revenue) || 0), 0);
+
+        const autoMatchResult = autoMatchResults.get(clubId);
+
+        let aggregatedProgress: any;
+        if (autoMatchResult && autoMatchResult.targets.length > 0) {
+          aggregatedProgress = autoMatchResult.targets.reduce((acc: any, t: any) => {
+            return sumProgress([acc, t.new_progress]);
+          }, { ...defaultProgress });
+          aggregatedProgress.unattributed_meetups = (aggregatedProgress.unattributed_meetups || 0) + autoMatchResult.total_unattributed_meetups;
+        } else {
+          aggregatedProgress = targets.reduce((acc: any, t: any) => {
+            const p = t.progress || defaultProgress;
+            return sumProgress([acc, p]);
+          }, { ...defaultProgress });
+        }
+
+        const currentMeetups = parseInt(club.current_meetups) || 0;
+        const currentRevenue = parseFloat(club.current_revenue) || 0;
+        const gapMeetups = Math.max(0, targetMeetups - currentMeetups);
+        const gapRevenue = Math.max(0, targetRevenue - currentRevenue);
+
+        const clubLast4w = last4WeeksMap.get(clubId) || { total: 0, weeks: 0 };
+        const last4wTotal = clubLast4w.total;
+        const last4wAvg = clubLast4w.weeks > 0 ? last4wTotal / 4 : 0;
+
+        let clubRevenueStatus: RevenueStatus;
+        if (autoMatchResult && autoMatchResult.targets.length > 0) {
+          const targetStatuses = autoMatchResult.targets.map((t: any) => t.revenue_status);
+          clubRevenueStatus = rollupRevenueStatuses(targetStatuses);
+          clubRevenueStatus.unattributed += autoMatchResult.total_unattributed_revenue;
+        } else {
+          clubRevenueStatus = calculateClubRevenueStatus(
+            targets.map((t: any) => ({
+              target_revenue: parseFloat(t.target_revenue) || 0,
+              progress: t.progress || defaultProgress
+            })),
+            currentRevenue
+          );
+        }
+        const hasRevenueData = hasTargets || currentRevenue > 0;
+
+        const validation = validateProgress(targetMeetups, currentMeetups, aggregatedProgress);
+        const team = getTeamForClub(club.activity_name, club.city_name || 'Unknown');
+
+        // Build target children
+        const targetChildren = targets.map((t: any, idx: number) => {
+          const tMeetups = parseInt(t.target_meetups) || 0;
+          const tRevenue = parseFloat(t.target_revenue) || 0;
+          const targetId = parseInt(t.target_id);
+          const autoMatchedTarget = autoMatchResult?.targets.find((mt: any) => mt.target_id === targetId);
+          const tProgress = autoMatchedTarget?.new_progress || t.progress || defaultProgress;
+          const matchedMeetups = autoMatchedTarget?.matched_count || 0;
+          const matchedRevenue = autoMatchedTarget?.matched_revenue || 0;
+          const tRevenueStatus = autoMatchedTarget?.revenue_status || null;
+
+          let targetName = t.target_name;
+          if (!targetName) {
+            const dimensionParts = [];
+            if (t.day_type_name) dimensionParts.push(t.day_type_name);
+            if (t.format_name) dimensionParts.push(t.format_name);
+            targetName = dimensionParts.length > 0 ? dimensionParts.join(' / ') : `Target ${idx + 1}`;
+          }
+
+          return {
+            type: 'target',
+            id: `target:${targetId}`, // Will be updated with full path
+            name: targetName,
+            club_id: clubId,
+            activity_id: activityId,
+            area_id: areaId,
+            city_id: cityId,
+            target_id: targetId,
+            target_meetups: tMeetups,
+            target_revenue: tRevenue,
+            meetup_cost: parseFloat(t.meetup_cost) || null,
+            meetup_capacity: parseInt(t.meetup_capacity) || null,
+            day_type_id: t.day_type_id ? parseInt(t.day_type_id) : null,
+            day_type_name: t.day_type_name || null,
+            format_id: t.format_id ? parseInt(t.format_id) : null,
+            current_meetups: matchedMeetups,
+            current_revenue: matchedRevenue,
+            gap_meetups: Math.max(0, tMeetups - matchedMeetups),
+            gap_revenue: Math.max(0, tRevenue - matchedRevenue),
+            progress_summary: tProgress,
+            validation_status: validateProgress(tMeetups, 0, tProgress).status,
+            has_target: true,
+            is_launch: false,
+            team: team,
+            revenue_status: tRevenueStatus,
+            revenue_status_display: tRevenueStatus ? getRevenueStatusDisplay(tRevenueStatus) : null,
+            activity_name: club.activity_name,
+            city_name: club.city_name || 'Unknown',
+            area_name: club.area_name || 'Unknown',
+            club_name: club.club_name
+          };
+        });
+
+        const primaryTarget = targets.length > 0 ? targets[0] : null;
+        const dayTypeId = primaryTarget?.day_type_id ? parseInt(primaryTarget.day_type_id) : null;
+        const dayTypeName = primaryTarget?.day_type_name || null;
+
+        const clubNode = {
+          type: 'club',
+          id: `club:${clubId}`, // Will be updated with full path
+          name: club.club_name,
+          club_id: clubId,
+          activity_id: activityId,
+          area_id: areaId,
+          city_id: cityId,
+          target_id: targets.length === 1 ? parseInt(targets[0].target_id) : null,
+          target_meetups: targetMeetups,
+          target_revenue: targetRevenue,
+          current_meetups: currentMeetups,
+          current_revenue: currentRevenue,
+          gap_meetups: gapMeetups,
+          gap_revenue: gapRevenue,
+          progress_summary: aggregatedProgress,
+          validation_status: validation.status,
+          validation_message: validation.message,
+          has_target: hasTargets,
+          is_launch: false,
+          last_4w_revenue_total: last4wTotal,
+          last_4w_revenue_avg: last4wAvg,
+          team: team,
+          target_count: targets.length,
+          day_type_id: dayTypeId,
+          day_type_name: dayTypeName,
+          revenue_status: hasRevenueData ? clubRevenueStatus : null,
+          revenue_status_display: hasRevenueData ? getRevenueStatusDisplay(clubRevenueStatus) : null,
+          children: targetChildren.length >= 1 ? targetChildren : undefined,
+          activity_name: club.activity_name,
+          city_name: club.city_name || 'Unknown',
+          area_name: club.area_name || 'Unknown'
+        };
+
+        const levelValues: Record<HierarchyLevel, { id: number; name: string }> = {
+          activity: { id: activityId, name: club.activity_name },
+          city: { id: cityId, name: club.city_name || 'Unknown' },
+          area: { id: areaId, name: club.area_name || 'Unknown' }
+        };
+
+        processedClubs.push({
+          club,
+          clubNode,
+          levelValues,
+          hasTargets,
+          hasRevenueData,
+          clubRevenueStatus,
+          aggregatedProgress,
+          last4wTotal
+        });
+      }
+
+      // Collect processed launches
+      const processedLaunches: ProcessedLaunchData[] = [];
+
+      if (includeLaunches && launchesData.length > 0) {
+        // Get activity mapping
+        const activityMapQuery = `SELECT id, name FROM activity WHERE name != 'Test'`;
+        const activityMapResult = await queryProduction(activityMapQuery);
+        const activityNameToId = new Map(activityMapResult.rows.map((a: any) => [a.name, parseInt(a.id)]));
+
+        // Get area info
+        const areaInfoQuery = `
+          SELECT ar.id, ar.name, ci.id as city_id, ci.name as city_name
+          FROM area ar
+          JOIN city ci ON ar.city_id = ci.id
+        `;
+        const areaInfoResult = await queryProduction(areaInfoQuery);
+        const areaNameToInfo = new Map(areaInfoResult.rows.map((a: any) => [a.name.toLowerCase(), a]));
+        const areaIdToInfo = new Map(areaInfoResult.rows.map((a: any) => [parseInt(a.id), a]));
+
+        // Get dim_areas mapping
+        const dimAreasMapQuery = `SELECT id as dim_area_id, production_area_id FROM dim_areas`;
+        const dimAreasMapResult = await queryLocal(dimAreasMapQuery);
+        const dimToProductionAreaMap = new Map(dimAreasMapResult.rows.map((a: any) => [parseInt(a.dim_area_id), parseInt(a.production_area_id)]));
+
+        for (const launch of launchesData) {
+          const activityId = activityNameToId.get(launch.activity_name);
+          if (!activityId) continue;
+
+          const launchTarget = launchTargetsMap.get(launch.launch_id);
+          const dimAreaId = launchTarget?.area_id ? parseInt(launchTarget.area_id) : null;
+          const targetAreaId = dimAreaId ? dimToProductionAreaMap.get(dimAreaId) : null;
+
+          let areaInfo = targetAreaId ?
+            areaIdToInfo.get(targetAreaId) :
+            areaNameToInfo.get((launch.planned_area || '').toLowerCase());
+
+          if (!areaInfo) {
+            areaInfo = { id: 0, name: launch.planned_area || 'Unknown', city_id: 0, city_name: launch.planned_city || 'Unknown' };
+          }
+
+          const cityId = parseInt(areaInfo.city_id) || 0;
+          const areaId = parseInt(areaInfo.id) || 0;
+
+          const targetMeetups = launchTarget?.target_meetups || 0;
+          const targetRevenue = launchTarget?.target_revenue || parseFloat(launch.target_revenue_rupees) || 0;
+          const progress = launchTarget?.progress || defaultProgress;
+          const validation = validateProgress(targetMeetups, 0, progress);
+          const launchTeam = getTeamForClub(launch.activity_name, areaInfo.city_name || 'Unknown');
+
+          const launchNode = {
+            type: 'launch',
+            id: `launch:${launch.launch_id}`, // Will be updated with full path
+            name: launch.planned_club_name || `New ${launch.activity_name} Club`,
+            launch_id: launch.launch_id,
+            activity_id: activityId,
+            activity_name: launch.activity_name,
+            area_id: areaId,
+            city_id: cityId,
+            target_id: launchTarget?.target_id || null,
+            target_meetups: targetMeetups,
+            target_revenue: targetRevenue,
+            current_meetups: 0,
+            current_revenue: 0,
+            gap_meetups: Math.max(0, targetMeetups),
+            gap_revenue: Math.max(0, targetRevenue),
+            progress_summary: progress,
+            validation_status: validation.status,
+            validation_message: validation.message,
+            has_target: !!launchTarget || targetMeetups > 0,
+            is_launch: true,
+            launch_status: launch.launch_status,
+            planned_launch_date: launch.planned_launch_date,
+            milestones: launch.milestones,
+            team: launchTeam,
+            city_name: areaInfo.city_name || 'Unknown',
+            area_name: areaInfo.name || 'Unknown'
+          };
+
+          const levelValues: Record<HierarchyLevel, { id: number; name: string }> = {
+            activity: { id: activityId, name: launch.activity_name },
+            city: { id: cityId, name: areaInfo.city_name || 'Unknown' },
+            area: { id: areaId, name: areaInfo.name || 'Unknown' }
+          };
+
+          processedLaunches.push({
+            launch,
+            launchNode,
+            levelValues,
+            progress,
+            hasTarget: !!launchTarget || targetMeetups > 0
+          });
+          launchCount++;
+        }
+      }
+
+      // Process expansion targets - clubs with targets in areas different from their home area
+      // This needs to be done BEFORE building the hierarchy
+      const allTargetDimAreaIds = new Set<number>();
+      for (const club of clubsToProcess) {
+        const clubId = parseInt(club.club_id);
+        const targets = targetsMap.get(clubId) || [];
+        for (const t of targets) {
+          const targetDimAreaId = parseInt(t.target_area_id);
+          if (targetDimAreaId) allTargetDimAreaIds.add(targetDimAreaId);
+        }
+      }
+
+      if (allTargetDimAreaIds.size > 0) {
+        // Map dim_area_ids to production_area_ids
+        const dimAreasMapQuery = `SELECT id as dim_area_id, production_area_id FROM dim_areas WHERE id = ANY($1)`;
+        const dimAreasMapResult = await queryLocal(dimAreasMapQuery, [[...allTargetDimAreaIds]]);
+        const dimToProductionMap = new Map<number, number>(
+          dimAreasMapResult.rows.map((a: any) => [parseInt(a.dim_area_id), parseInt(a.production_area_id)])
+        );
+
+        // Collect expansion targets
+        const expansionTargets: { club: any, target: any, expansionDimAreaId: number, expansionProdAreaId: number }[] = [];
+        for (const club of clubsToProcess) {
+          const clubId = parseInt(club.club_id);
+          const homeAreaId = parseInt(club.area_id) || 0; // Production area.id
+          const targets = targetsMap.get(clubId) || [];
+
+          for (const target of targets) {
+            const targetDimAreaId = parseInt(target.target_area_id);
+            if (!targetDimAreaId) continue;
+
+            const targetProdAreaId = dimToProductionMap.get(targetDimAreaId);
+            if (targetProdAreaId && targetProdAreaId !== homeAreaId) {
+              expansionTargets.push({
+                club,
+                target,
+                expansionDimAreaId: targetDimAreaId,
+                expansionProdAreaId: targetProdAreaId
+              });
+            }
+          }
+        }
+
+        // Process expansion targets if any
+        if (expansionTargets.length > 0) {
+          const expansionProdAreaIds = [...new Set(expansionTargets.map(e => e.expansionProdAreaId))];
+
+          // Fetch area info from production for expansion areas
+          const areaInfoQuery = `
+            SELECT ar.id, ar.name as area_name, ci.id as city_id, ci.name as city_name
+            FROM area ar
+            JOIN city ci ON ar.city_id = ci.id
+            WHERE ar.id = ANY($1)
+          `;
+          const areaInfoResult = await queryProduction(areaInfoQuery, [expansionProdAreaIds]);
+          const productionAreaInfo = new Map(areaInfoResult.rows.map((a: any) => [parseInt(a.id), a]));
+
+          // Map dim_area_id -> area info
+          const expansionAreaInfo = new Map<number, any>();
+          for (const [dimAreaId, productionAreaId] of dimToProductionMap) {
+            const areaInfo = productionAreaInfo.get(productionAreaId);
+            if (areaInfo) expansionAreaInfo.set(dimAreaId, areaInfo);
+          }
+
+          // Group expansion targets by (club_id, expansion_dim_area_id)
+          const expansionsByClubArea = new Map<string, { club: any, targets: any[], areaInfo: any }>();
+          for (const { club, target, expansionDimAreaId } of expansionTargets) {
+            const key = `${club.club_id}-${expansionDimAreaId}`;
+            if (!expansionsByClubArea.has(key)) {
+              expansionsByClubArea.set(key, {
+                club,
+                targets: [],
+                areaInfo: expansionAreaInfo.get(expansionDimAreaId)
+              });
+            }
+            expansionsByClubArea.get(key)!.targets.push(target);
+          }
+
+          // Create ProcessedClubData entries for each expansion
+          for (const [, { club, targets, areaInfo }] of expansionsByClubArea) {
+            if (!areaInfo) continue;
+
+            const activityId = parseInt(club.activity_id);
+            const cityId = parseInt(areaInfo.city_id);
+            const areaId = parseInt(areaInfo.id);
+            const clubId = parseInt(club.club_id);
+
+            // Aggregate targets for this expansion
+            const targetMeetups = targets.reduce((sum: number, t: any) => sum + (parseInt(t.target_meetups) || 0), 0);
+            const targetRevenue = targets.reduce((sum: number, t: any) => sum + (parseFloat(t.target_revenue) || 0), 0);
+            const currentMeetups = 0;
+            const currentRevenue = 0;
+
+            // Aggregate progress
+            const aggregatedProgress = targets.reduce((acc: any, t: any) => {
+              return sumProgress([acc, t.progress || defaultProgress]);
+            }, { ...defaultProgress });
+
+            const validation = validateProgress(targetMeetups, currentMeetups, aggregatedProgress);
+            const team = getTeamForClub(club.activity_name, areaInfo.city_name);
+
+            // Build target children for this expansion
+            const targetChildren = targets.map((t: any) => {
+              const tMeetups = parseInt(t.target_meetups) || 0;
+              const tRevenue = parseFloat(t.target_revenue) || 0;
+              const targetId = parseInt(t.target_id);
+              const tProgress = t.progress || defaultProgress;
+              const tValidation = validateProgress(tMeetups, 0, tProgress);
+
+              return {
+                type: 'target',
+                id: `target:${targetId}`,
+                name: t.target_name || `Target ${targetId}`,
+                target_id: targetId,
+                club_id: clubId,
+                target_meetups: tMeetups,
+                target_revenue: tRevenue,
+                current_meetups: 0,
+                current_revenue: 0,
+                gap_meetups: tMeetups,
+                gap_revenue: tRevenue,
+                progress_summary: tProgress,
+                validation_status: tValidation.status,
+                has_target: true,
+                is_launch: false,
+                is_expansion: true,
+                team: team
+              };
+            });
+
+            // Create expansion club node
+            const expansionClubNode = {
+              type: 'club',
+              id: `club:${clubId}-expansion-${areaId}`,
+              name: `${club.club_name} (Expansion)`,
+              club_id: clubId,
+              activity_id: activityId,
+              area_id: areaId,
+              city_id: cityId,
+              target_id: targets.length === 1 ? parseInt(targets[0].target_id) : null,
+              target_meetups: targetMeetups,
+              target_revenue: targetRevenue,
+              current_meetups: currentMeetups,
+              current_revenue: currentRevenue,
+              gap_meetups: Math.max(0, targetMeetups - currentMeetups),
+              gap_revenue: Math.max(0, targetRevenue - currentRevenue),
+              progress_summary: aggregatedProgress,
+              validation_status: validation.status,
+              validation_message: validation.message,
+              has_target: true,
+              is_launch: false,
+              is_expansion: true,
+              team: team,
+              target_count: targets.length,
+              children: targetChildren.length >= 1 ? targetChildren : undefined,
+              activity_name: club.activity_name,
+              city_name: areaInfo.city_name,
+              area_name: areaInfo.area_name
+            };
+
+            const levelValues: Record<HierarchyLevel, { id: number; name: string }> = {
+              activity: { id: activityId, name: club.activity_name },
+              city: { id: cityId, name: areaInfo.city_name },
+              area: { id: areaId, name: areaInfo.area_name }
+            };
+
+            processedClubs.push({
+              club: { ...club, is_expansion: true },
+              clubNode: expansionClubNode,
+              levelValues,
+              hasTargets: true,
+              hasRevenueData: false,
+              clubRevenueStatus: undefined as any,
+              aggregatedProgress,
+              last4wTotal: 0
+            });
+          }
+        }
+      }
+
+      // Build and convert dynamic hierarchy
+      const rootMap = buildDynamicHierarchy(processedClubs, processedLaunches, hierarchyLevels);
+      hierarchy = convertDynamicHierarchyToArray(rootMap, hierarchyLevels);
+
+      // Calculate overall summary
+      const overallProgress = sumProgress(hierarchy.map(a => a.progress_summary));
+      const totalTargetMeetups = hierarchy.reduce((sum, a) => sum + a.target_meetups, 0);
+      const totalTargetRevenue = hierarchy.reduce((sum, a) => sum + a.target_revenue, 0);
+      const totalCurrentMeetups = hierarchy.reduce((sum, a) => sum + a.current_meetups, 0);
+      const totalCurrentRevenue = hierarchy.reduce((sum, a) => sum + a.current_revenue, 0);
+      const totalLast4wRevenue = hierarchy.reduce((sum, a) => sum + (a.last_4w_revenue_total || 0), 0);
+
+      return res.json({
+        success: true,
+        hierarchy,
+        hierarchy_order: hierarchyLevels,
+        summary: {
+          total_activities: hierarchy.filter(n => n.type === 'activity').length || hierarchy.reduce((sum, n) => sum + (n.activity_count || 0), 0),
+          total_cities: hierarchy.filter(n => n.type === 'city').length || hierarchy.reduce((sum, n) => sum + (n.city_count || 0), 0),
+          total_areas: hierarchy.filter(n => n.type === 'area').length || hierarchy.reduce((sum, n) => sum + (n.area_count || 0), 0),
+          total_clubs: clubsToProcess.length,
+          total_launches: launchCount,
+          total_target_meetups: totalTargetMeetups,
+          total_target_revenue: totalTargetRevenue,
+          total_current_meetups: totalCurrentMeetups,
+          total_current_revenue: totalCurrentRevenue,
+          overall_progress: overallProgress,
+          overall_validation_status: validateProgress(totalTargetMeetups, totalCurrentMeetups, overallProgress).status,
+          monthly_target_meetups: Math.round(totalTargetMeetups * 4.2),
+          monthly_target_revenue: Math.round(totalTargetRevenue * 4.2),
+          last_4w_revenue_total: totalLast4wRevenue,
+          last_4w_revenue_avg: totalLast4wRevenue / 4,
+          march_2026_revenue: march2026Revenue
+        }
+      });
+    }
+
+    // === DEFAULT HIERARCHY: Activity → City → Area → Clubs ===
     // Build hierarchy: Activity → City → Area → Clubs
     const activityMap = new Map<number, any>();
 
@@ -2133,7 +2869,7 @@ router.get('/v2/hierarchy', async (req, res) => {
         id: `activity:${activityId}-city:${cityId}-area:${areaId}-club:${clubId}`,
         name: club.club_name,
         club_id: clubId,
-        activity_id: parseInt(activityId),
+        activity_id: activityId,
         area_id: areaId,
         city_id: cityId,
         target_id: targets.length === 1 ? parseInt(targets[0].target_id) : null, // Only set if single target
@@ -2438,7 +3174,6 @@ router.get('/v2/hierarchy', async (req, res) => {
     }
 
     // Process launches and add to hierarchy
-    let launchCount = 0;
     if (includeLaunches && launchesData.length > 0) {
       // Get activity name to ID mapping from production
       const activityMapQuery = `SELECT id, name FROM activity WHERE name != 'Test'`;
@@ -2624,7 +3359,7 @@ router.get('/v2/hierarchy', async (req, res) => {
     }
 
     // Convert maps to arrays and calculate gaps/validations
-    const hierarchy: any[] = [];
+    hierarchy = [];
 
     for (const [, activityNode] of activityMap) {
       const cityNodes: any[] = [];
@@ -2739,6 +3474,7 @@ router.get('/v2/hierarchy', async (req, res) => {
     res.json({
       success: true,
       hierarchy,
+      hierarchy_order: hierarchyLevels,
       summary: {
         total_activities: hierarchy.length,
         total_cities: hierarchy.reduce((sum, a) => sum + (a.city_count || 0), 0),

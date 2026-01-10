@@ -6,7 +6,7 @@ export { TaskCommentsPanel } from './TaskCommentsPanel';
 export { TaskSummaryCell } from './TaskSummaryCell';
 export { TaskIndicator } from './TaskIndicator';
 export { SummaryTiles } from './SummaryTiles';
-export { HierarchyFilterBar, type HierarchyFilters } from './HierarchyFilterBar';
+export { HierarchyFilterBar, type HierarchyFilters, type HierarchyLevel } from './HierarchyFilterBar';
 export { HierarchyRollupHeader } from './HierarchyRollupHeader';
 export { RevenueStatusPills, getRevenueStatusDisplay, createEmptyRevenueStatus, rollupRevenueStatuses } from './RevenueStatusPills';
 export { DayTypeTags } from './DayTypeTags';

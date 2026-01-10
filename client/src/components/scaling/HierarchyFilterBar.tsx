@@ -1,5 +1,5 @@
 import React from 'react';
-import { Activity, Building2, MapPin, Home, Users, X } from 'lucide-react';
+import { Activity, Building2, MapPin, Home, Users, X, Layers, GripVertical, Check } from 'lucide-react';
 import { MultiSelectDropdown } from '../ui/MultiSelectDropdown';
 import { TEAMS, TEAM_KEYS, type TeamKey } from '../../../../shared/teamConfig';
 
@@ -16,6 +16,21 @@ export interface HierarchyFilters {
   teams: TeamKey[];
 }
 
+export type HierarchyLevel = 'activity' | 'city' | 'area';
+
+interface HierarchyOrderProps {
+  hierarchyLevels: HierarchyLevel[];
+  enabledLevels: Set<HierarchyLevel>;
+  draggingLevel: HierarchyLevel | null;
+  isCustomHierarchy: boolean;
+  onDragStart: (level: HierarchyLevel) => void;
+  onDragEnd: () => void;
+  onDragOver: (e: React.DragEvent) => void;
+  onDrop: (targetLevel: HierarchyLevel) => void;
+  onToggleLevel: (level: HierarchyLevel) => void;
+  onReset: () => void;
+}
+
 interface HierarchyFilterBarProps {
   filters: HierarchyFilters;
   onFiltersChange: (filters: HierarchyFilters) => void;
@@ -25,12 +40,20 @@ interface HierarchyFilterBarProps {
     areas: FilterOption[];
     clubs: FilterOption[];
   };
+  hierarchyOrder?: HierarchyOrderProps;
 }
+
+const levelConfig: Record<HierarchyLevel, { icon: typeof Activity; color: string; label: string }> = {
+  activity: { icon: Activity, color: 'purple', label: 'Activity' },
+  city: { icon: Building2, color: 'blue', label: 'City' },
+  area: { icon: MapPin, color: 'emerald', label: 'Area' }
+};
 
 export function HierarchyFilterBar({
   filters,
   onFiltersChange,
-  filterOptions
+  filterOptions,
+  hierarchyOrder
 }: HierarchyFilterBarProps) {
   const hasActiveFilters =
     filters.activities.length > 0 ||
@@ -135,6 +158,85 @@ export function HierarchyFilterBar({
             })}
           </div>
         </div>
+
+        {/* Hierarchy Order Controls */}
+        {hierarchyOrder && (
+          <>
+            <div className="h-6 w-px bg-gray-200" />
+            <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1.5 text-gray-400">
+                <Layers size={14} />
+                <span className="text-xs font-medium">Order:</span>
+              </div>
+              <div className="flex items-center gap-1">
+                {hierarchyOrder.hierarchyLevels.map((level) => {
+                  const isEnabled = hierarchyOrder.enabledLevels.has(level);
+                  const config = levelConfig[level];
+                  const Icon = config.icon;
+
+                  const colorStyles = {
+                    purple: {
+                      enabled: 'bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-100',
+                      disabled: 'bg-gray-100 text-gray-400 border-gray-200 hover:bg-gray-150'
+                    },
+                    blue: {
+                      enabled: 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100',
+                      disabled: 'bg-gray-100 text-gray-400 border-gray-200 hover:bg-gray-150'
+                    },
+                    emerald: {
+                      enabled: 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100',
+                      disabled: 'bg-gray-100 text-gray-400 border-gray-200 hover:bg-gray-150'
+                    }
+                  };
+                  const style = colorStyles[config.color as keyof typeof colorStyles];
+
+                  return (
+                    <div
+                      key={level}
+                      draggable
+                      onDragStart={() => hierarchyOrder.onDragStart(level)}
+                      onDragEnd={hierarchyOrder.onDragEnd}
+                      onDragOver={hierarchyOrder.onDragOver}
+                      onDrop={() => hierarchyOrder.onDrop(level)}
+                      className={`
+                        flex items-center gap-1 px-2 py-1 rounded-md cursor-grab transition-all border text-xs font-medium
+                        ${hierarchyOrder.draggingLevel === level ? 'opacity-50 scale-95' : ''}
+                        ${isEnabled ? style.enabled : style.disabled}
+                      `}
+                    >
+                      <GripVertical size={10} className="opacity-40" />
+                      <Icon size={10} />
+                      <span>{config.label}</span>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          hierarchyOrder.onToggleLevel(level);
+                        }}
+                        className={`ml-0.5 p-0.5 rounded transition-colors ${
+                          isEnabled ? 'hover:bg-white/50' : 'hover:bg-gray-200'
+                        }`}
+                      >
+                        {isEnabled ? (
+                          <Check size={8} className="text-green-600" />
+                        ) : (
+                          <X size={8} className="text-gray-400" />
+                        )}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+              {hierarchyOrder.isCustomHierarchy && (
+                <button
+                  onClick={hierarchyOrder.onReset}
+                  className="text-xs text-gray-500 hover:text-gray-700 hover:underline"
+                >
+                  Reset
+                </button>
+              )}
+            </div>
+          </>
+        )}
 
         {/* Clear Filters */}
         {hasActiveFilters && (
