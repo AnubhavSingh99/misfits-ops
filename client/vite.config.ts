@@ -3,9 +3,11 @@ import react from '@vitejs/plugin-react'
 import path from 'path'
 import fs from 'fs'
 
-// Generate build version: YYMMDD-HHMM format
+// Generate build version: YYMMDD-HHMM format in IST (UTC+5:30)
 const now = new Date()
-const buildVersion = `${now.getFullYear().toString().slice(2)}${(now.getMonth() + 1).toString().padStart(2, '0')}${now.getDate().toString().padStart(2, '0')}-${now.getHours().toString().padStart(2, '0')}${now.getMinutes().toString().padStart(2, '0')}`
+const istOffset = 5.5 * 60 * 60 * 1000 // IST is UTC+5:30
+const istDate = new Date(now.getTime() + istOffset)
+const buildVersion = `${istDate.getUTCFullYear().toString().slice(2)}${(istDate.getUTCMonth() + 1).toString().padStart(2, '0')}${istDate.getUTCDate().toString().padStart(2, '0')}-${istDate.getUTCHours().toString().padStart(2, '0')}${istDate.getUTCMinutes().toString().padStart(2, '0')}`
 
 // Plugin to generate version.json in dist folder
 const versionPlugin = () => ({
@@ -13,7 +15,8 @@ const versionPlugin = () => ({
   writeBundle() {
     const versionInfo = {
       version: buildVersion,
-      buildTime: now.toISOString(),
+      buildTime: istDate.toISOString().replace('Z', '+05:30'),
+      timezone: 'IST',
     }
     fs.writeFileSync(
       path.resolve(__dirname, 'dist/version.json'),
