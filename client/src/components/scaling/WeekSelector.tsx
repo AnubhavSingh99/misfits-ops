@@ -185,7 +185,7 @@ export function WeekSelector({
         />
 
         {/* Week option pills with sliding background */}
-        <div className="relative flex items-center gap-0.5" ref={pillsRef}>
+        <div className="relative flex items-center" ref={pillsRef}>
           {/* Sliding active background */}
           {activeIndex >= 0 && (
             <div
@@ -193,8 +193,8 @@ export function WeekSelector({
                 rounded-lg shadow-[0_2px_8px_-2px_rgba(99,102,241,0.5)]
                 transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)]"
               style={{
-                width: '44px',
-                left: `${activeIndex * 48 + 2}px`,
+                width: '40px',
+                left: `${activeIndex * 42 + 1}px`,
               }}
             />
           )}
@@ -211,8 +211,8 @@ export function WeekSelector({
                   transform: mounted ? 'translateY(0)' : 'translateY(4px)',
                 }}
                 className={`
-                  relative z-10 px-2.5 py-1 text-[11px] font-semibold rounded-lg
-                  transition-all duration-200 ease-out
+                  relative z-10 w-[42px] py-1 text-[11px] font-semibold rounded-lg
+                  transition-all duration-200 ease-out text-center
                   active:scale-95
                   ${isActive
                     ? 'text-white'
