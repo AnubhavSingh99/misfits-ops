@@ -78,14 +78,25 @@ export function HealthDot({
   }, []);
 
   return (
-    <div className="relative inline-flex items-center justify-center">
-      {/* Larger hitbox wrapper for easier hovering */}
+    <div className="relative inline-block">
+      {/* Button with generous padding for easier hovering */}
       <button
+        type="button"
         ref={dotRef}
-        onClick={onClick}
-        onMouseEnter={handleMouseEnter}
-        onMouseLeave={handleMouseLeave}
-        className="p-1.5 -m-1.5 cursor-pointer group"
+        onClick={(e) => {
+          e.stopPropagation();
+          e.preventDefault();
+          onClick?.();
+        }}
+        onMouseEnter={(e) => {
+          e.stopPropagation();
+          handleMouseEnter();
+        }}
+        onMouseLeave={(e) => {
+          e.stopPropagation();
+          handleMouseLeave();
+        }}
+        className="p-2 cursor-pointer flex items-center justify-center"
       >
         <div className={`
           ${sizeClasses[size]}
@@ -93,7 +104,7 @@ export function HealthDot({
           rounded-full
           ring-1 ring-white
           transition-all duration-200 ease-out
-          group-hover:scale-125 group-hover:ring-2 ${colors.ring}
+          hover:scale-125 hover:ring-2 ${colors.ring}
           ${colors.glow}
           ${className}
         `} />

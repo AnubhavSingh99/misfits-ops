@@ -204,7 +204,7 @@ function SummaryMetricTile({
   label: string;
   value: string | number;
   change: number;
-  icon: React.ComponentType<{ size?: number; className?: string }>;
+  icon: React.ElementType;
   isCurrency?: boolean;
   isPercentage?: boolean;
   invertColors?: boolean;

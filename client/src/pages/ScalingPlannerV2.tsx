@@ -2070,7 +2070,7 @@ function HierarchyRow({ node, level, expanded, onToggle, onEditTarget, onDeleteT
           </MeetupDetailsTooltip>
         ) : node.health_status ? (
           // Roll-up level: just show health dot with built-in tooltip
-          <div className="flex justify-center">
+          <div className="flex justify-center" onClick={(e) => e.stopPropagation()}>
             <HealthDot
               status={node.health_status as HealthStatus}
               score={node.health_score}
