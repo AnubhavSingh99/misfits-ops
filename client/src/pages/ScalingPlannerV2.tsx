@@ -2024,8 +2024,8 @@ function HierarchyRow({ node, level, expanded, onToggle, onEditTarget, onDeleteT
               </button>
             </Tooltip>
           )}
-          {/* Delete button: For target rows, clubs with targets, or launches */}
-          {(isTarget || (node.type === 'club' && node.has_target) || isLaunch) && (
+          {/* Delete button: For target rows, clubs with single target (target_id set), or launches */}
+          {(isTarget || (node.type === 'club' && node.has_target && node.target_id) || isLaunch) && (
             <Tooltip text={isLaunch ? "Delete Launch" : "Delete Target"} position="left">
               <button
                 onClick={(e) => {
