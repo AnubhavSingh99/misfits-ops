@@ -120,18 +120,32 @@ export function MeetupDetailsTooltip({
   const [error, setError] = useState<string | null>(null);
   const [position, setPosition] = useState({ top: 0, left: 0, arrowLeft: 0 });
   const [showWeekDropdown, setShowWeekDropdown] = useState(false);
-  const [localWeekOption, setLocalWeekOption] = useState<ExtendedWeekOption>('last_completed');
+  const [localWeekOption, setLocalWeekOption] = useState<ExtendedWeekOption | null>(null);
 
   const triggerRef = useRef<HTMLDivElement>(null);
   const tooltipRef = useRef<HTMLDivElement>(null);
   const hoverTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const leaveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Compute local week bounds based on selection
-  const localWeekBounds = getExtendedWeekBounds(localWeekOption);
-  const localWeekStart = formatLocalDate(localWeekBounds.start);
-  const localWeekEnd = formatLocalDate(localWeekBounds.end);
-  const localWeekLabel = formatWeekLabel(localWeekBounds.start, localWeekBounds.end);
+  // Track parent week props - only clear data if no local override
+  const prevParentWeekRef = useRef<string | undefined>(weekStart);
+  useEffect(() => {
+    if (weekStart !== prevParentWeekRef.current) {
+      // Parent week changed - only clear data if user hasn't made a local selection
+      if (localWeekOption === null) {
+        setData(null);
+      }
+      prevParentWeekRef.current = weekStart;
+    }
+  }, [weekStart, localWeekOption]);
+
+  // Use parent's week by default, local override if user selected one
+  const useParentWeek = localWeekOption === null && weekStart && weekEnd;
+
+  // Compute effective week bounds
+  const effectiveWeekStart = useParentWeek ? weekStart : (localWeekOption ? formatLocalDate(getExtendedWeekBounds(localWeekOption).start) : formatLocalDate(getExtendedWeekBounds('last_completed').start));
+  const effectiveWeekEnd = useParentWeek ? weekEnd : (localWeekOption ? formatLocalDate(getExtendedWeekBounds(localWeekOption).end) : formatLocalDate(getExtendedWeekBounds('last_completed').end));
+  const effectiveWeekLabel = useParentWeek ? weekLabel : (localWeekOption ? formatWeekLabel(getExtendedWeekBounds(localWeekOption).start, getExtendedWeekBounds(localWeekOption).end) : formatWeekLabel(getExtendedWeekBounds('last_completed').start, getExtendedWeekBounds('last_completed').end));
 
   // Fetch meetup details
   const fetchMeetupDetails = useCallback(async (forceRefresh = false) => {
@@ -141,7 +155,7 @@ export function MeetupDetailsTooltip({
     setError(null);
 
     try {
-      const url = `/api/targets/clubs/${clubId}/meetup-details?week_start=${localWeekStart}&week_end=${localWeekEnd}`;
+      const url = `/api/targets/clubs/${clubId}/meetup-details?week_start=${effectiveWeekStart}&week_end=${effectiveWeekEnd}`;
       const response = await fetch(url);
       if (!response.ok) throw new Error('Failed to fetch');
       const result = await response.json();
@@ -151,7 +165,7 @@ export function MeetupDetailsTooltip({
     } finally {
       setIsLoading(false);
     }
-  }, [clubId, localWeekStart, localWeekEnd, data, isLoading]);
+  }, [clubId, effectiveWeekStart, effectiveWeekEnd, data, isLoading]);
 
   // Refetch when week changes
   const handleWeekChange = (option: ExtendedWeekOption) => {
@@ -160,12 +174,12 @@ export function MeetupDetailsTooltip({
     setData(null); // Clear current data to trigger refetch
   };
 
-  // Refetch when week option changes and data is cleared
+  // Refetch when week changes (parent or local override)
   useEffect(() => {
     if (isVisible && !data && !isLoading) {
       fetchMeetupDetails(true);
     }
-  }, [localWeekOption, isVisible, data, isLoading]);
+  }, [effectiveWeekStart, effectiveWeekEnd, isVisible, data, isLoading]);
 
   // Calculate position
   const updatePosition = useCallback(() => {
@@ -291,7 +305,7 @@ export function MeetupDetailsTooltip({
                     text-[10px] text-gray-500 uppercase tracking-wider
                     hover:bg-gray-100 hover:text-gray-700 transition-colors"
                 >
-                  {localWeekLabel}
+                  {effectiveWeekLabel}
                   <ChevronDown size={10} className={`transition-transform ${showWeekDropdown ? 'rotate-180' : ''}`} />
                 </button>
                 {showWeekDropdown && (
@@ -332,7 +346,7 @@ export function MeetupDetailsTooltip({
                 </div>
               ) : data?.meetups.length === 0 ? (
                 <div className="flex items-center justify-center py-8 text-xs text-gray-400">
-                  No meetups for {localWeekLabel}
+                  No meetups for {effectiveWeekLabel}
                 </div>
               ) : (
                 <>
