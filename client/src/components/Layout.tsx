@@ -207,8 +207,11 @@ export function Layout({ children }: LayoutProps) {
           {/* Spacer */}
           <div className="flex-1" />
 
-          {/* Right side - optional status indicator */}
+          {/* Right side - version and status indicator */}
           <div className="flex items-center gap-2">
+            <span className="text-[10px] font-mono text-slate-400" title="Build version">
+              v{__BUILD_VERSION__}
+            </span>
             <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-50 border border-emerald-200">
               <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
               <span className="text-[10px] font-semibold text-emerald-700 uppercase tracking-wide">Live</span>
