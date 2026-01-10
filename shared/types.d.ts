@@ -589,6 +589,21 @@ export interface HierarchyNode {
     revenue_status_display?: RevenueStatusDisplay;
     day_type_id?: number;
     day_type_name?: string;
+    health_score?: number;
+    health_status?: 'green' | 'yellow' | 'red' | 'gray';
+    capacity_pct?: number;
+    repeat_rate_pct?: number;
+    avg_rating?: number;
+    is_new_club?: boolean;
+    capacity_health?: 'green' | 'yellow' | 'red';
+    repeat_health?: 'green' | 'yellow' | 'red';
+    rating_health?: 'green' | 'yellow' | 'red';
+    health_distribution?: {
+        green: number;
+        yellow: number;
+        red: number;
+        gray: number;
+    };
 }
 export interface WeeklyTrend {
     week_start: string;

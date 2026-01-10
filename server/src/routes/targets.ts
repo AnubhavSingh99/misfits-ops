@@ -20,8 +20,96 @@ import {
   matchClubMeetups,
   type ClubMatchResult,
 } from '../services/meetupMatchingService';
+import {
+  HEALTH_THRESHOLDS,
+  type HealthStatus
+} from '../services/healthEngine';
 
 const router = Router();
+
+// =====================================================
+// HEALTH CALCULATION HELPERS
+// =====================================================
+
+/**
+ * Calculate health score (0-100) for a club based on metrics
+ * Uses weighted formula: capacity(30%) + repeat_rate(40%) + rating(30%)
+ * For new clubs (<2 months): capacity(60%) + rating(40%)
+ */
+function calculateHealthScore(
+  capacityPct: number,
+  repeatRatePct: number,
+  avgRating: number,
+  isNewClub: boolean = false
+): number {
+  const weights = isNewClub
+    ? { capacity: 0.6, repeat_rate: 0.0, rating: 0.4 }
+    : { capacity: 0.3, repeat_rate: 0.4, rating: 0.3 };
+
+  const score =
+    (capacityPct / 100) * weights.capacity * 100 +
+    (repeatRatePct / 100) * weights.repeat_rate * 100 +
+    (avgRating / 5) * weights.rating * 100;
+
+  return Math.round(Math.max(0, Math.min(100, score)));
+}
+
+/**
+ * Get health status based on score thresholds
+ */
+function getHealthStatus(score: number, hasMeetups: boolean): 'green' | 'yellow' | 'red' | 'gray' {
+  if (!hasMeetups) return 'gray';  // Dormant - no meetups this week
+  if (score >= 70) return 'green';
+  if (score >= 50) return 'yellow';
+  return 'red';
+}
+
+/**
+ * Get individual metric health status
+ */
+function getMetricHealth(value: number, thresholds: { green: number; yellow: number }): HealthStatus {
+  if (value >= thresholds.green) return 'green';
+  if (value >= thresholds.yellow) return 'yellow';
+  return 'red';
+}
+
+/**
+ * Calculate rolled-up health for parent nodes (weighted average of children)
+ * Excludes launches from calculation
+ */
+function rollupHealth(children: Array<{ health_score?: number; is_launch?: boolean }>): {
+  health_score: number;
+  health_status: 'green' | 'yellow' | 'red' | 'gray';
+  health_distribution: { green: number; yellow: number; red: number; gray: number };
+} {
+  // Filter out launches - they don't contribute to health
+  const clubChildren = children.filter(c => !c.is_launch && c.health_score !== undefined);
+
+  if (clubChildren.length === 0) {
+    return {
+      health_score: 0,
+      health_status: 'gray',
+      health_distribution: { green: 0, yellow: 0, red: 0, gray: 0 }
+    };
+  }
+
+  // Calculate average health score
+  const totalScore = clubChildren.reduce((sum, c) => sum + (c.health_score || 0), 0);
+  const avgScore = Math.round(totalScore / clubChildren.length);
+
+  // Count distribution
+  const distribution = { green: 0, yellow: 0, red: 0, gray: 0 };
+  for (const child of clubChildren) {
+    const status = getHealthStatus(child.health_score || 0, true);
+    distribution[status]++;
+  }
+
+  return {
+    health_score: avgScore,
+    health_status: getHealthStatus(avgScore, true),
+    health_distribution: distribution
+  };
+}
 
 // =====================================================
 // HELPER FUNCTIONS
@@ -2022,22 +2110,162 @@ router.get('/v2/hierarchy', async (req, res) => {
       }
     ]));
 
-    // Get March 2026 revenue (will only have data when March 2026 arrives)
-    const march2026RevenueQuery = `
-      SELECT COALESCE(SUM(
-        CASE WHEN p.state = 'COMPLETED' THEN p.amount / 100.0 ELSE 0 END
-      ), 0) as total_revenue
-      FROM event e
-      JOIN club c ON e.club_id = c.pk
+    // Get health metrics per club for the selected week
+    // Metrics: capacity_percentage, repeat_rate_percentage, avg_rating
+    const healthMetricsQuery = `
+      WITH week_events AS (
+        -- Events in the selected week
+        SELECT
+          e.club_id,
+          e.pk as event_id,
+          e.capacity,
+          COUNT(DISTINCT CASE
+            WHEN b.state NOT IN ('DEREGISTERED', 'INITIATED', 'WAITLISTED')
+            THEN b.id
+          END) as bookings_count
+        FROM event e
+        LEFT JOIN booking b ON b.event_id = e.pk
+        WHERE e.start_time >= ${weekStartSQL}
+          AND e.start_time < ${weekEndSQL}
+          AND e.state = 'CREATED'
+        GROUP BY e.club_id, e.pk, e.capacity
+      ),
+      club_capacity AS (
+        -- Capacity utilization per club
+        SELECT
+          club_id,
+          COUNT(event_id) as meetup_count,
+          CASE
+            WHEN SUM(capacity) > 0
+            THEN ROUND((SUM(bookings_count)::numeric / SUM(capacity)) * 100, 1)
+            ELSE 0
+          END as capacity_pct
+        FROM week_events
+        GROUP BY club_id
+      ),
+      -- Repeat rate: users who booked this week and also booked in last 4 weeks
+      current_week_users AS (
+        SELECT DISTINCT
+          e.club_id,
+          b.user_id
+        FROM event e
+        JOIN booking b ON b.event_id = e.pk
+        WHERE e.start_time >= ${weekStartSQL}
+          AND e.start_time < ${weekEndSQL}
+          AND e.state = 'CREATED'
+          AND b.state NOT IN ('DEREGISTERED', 'INITIATED', 'WAITLISTED')
+      ),
+      previous_users AS (
+        SELECT DISTINCT
+          e.club_id,
+          b.user_id
+        FROM event e
+        JOIN booking b ON b.event_id = e.pk
+        WHERE e.start_time >= ${weekStartSQL} - INTERVAL '4 weeks'
+          AND e.start_time < ${weekStartSQL}
+          AND e.state = 'CREATED'
+          AND b.state NOT IN ('DEREGISTERED', 'INITIATED', 'WAITLISTED')
+      ),
+      club_repeat AS (
+        SELECT
+          cu.club_id,
+          COUNT(DISTINCT cu.user_id) as total_users,
+          COUNT(DISTINCT CASE WHEN pu.user_id IS NOT NULL THEN cu.user_id END) as repeat_users
+        FROM current_week_users cu
+        LEFT JOIN previous_users pu ON cu.club_id = pu.club_id AND cu.user_id = pu.user_id
+        GROUP BY cu.club_id
+      ),
+      -- Average rating per club (from reviews in last 30 days)
+      club_rating AS (
+        SELECT
+          e.club_id,
+          AVG(r.rating)::numeric(3,2) as avg_rating,
+          COUNT(r.id) as review_count
+        FROM event e
+        JOIN review r ON r.entity_id = e.pk AND r.entity_type = 'EVENT'
+        WHERE e.start_time >= CURRENT_DATE - INTERVAL '30 days'
+          AND e.state = 'CREATED'
+        GROUP BY e.club_id
+      ),
+      -- Club created date for new club detection
+      club_age AS (
+        SELECT pk as club_id, created_at
+        FROM club
+        WHERE status = 'ACTIVE' AND is_private = false
+      )
+      SELECT
+        c.pk as club_id,
+        COALESCE(cc.capacity_pct, 0) as capacity_pct,
+        COALESCE(cc.meetup_count, 0) as meetup_count,
+        CASE
+          WHEN COALESCE(cr.total_users, 0) > 0
+          THEN ROUND((cr.repeat_users::numeric / cr.total_users) * 100, 1)
+          ELSE 0
+        END as repeat_rate_pct,
+        COALESCE(crat.avg_rating, 0) as avg_rating,
+        COALESCE(crat.review_count, 0) as review_count,
+        ca.created_at,
+        CASE
+          WHEN ca.created_at > CURRENT_DATE - INTERVAL '2 months'
+          THEN true
+          ELSE false
+        END as is_new_club
+      FROM club c
+      LEFT JOIN club_capacity cc ON c.pk = cc.club_id
+      LEFT JOIN club_repeat cr ON c.pk = cr.club_id
+      LEFT JOIN club_rating crat ON c.pk = crat.club_id
+      LEFT JOIN club_age ca ON c.pk = ca.club_id
+      WHERE c.status = 'ACTIVE' AND c.is_private = false
+    `;
+    const healthMetricsResult = await queryProduction(healthMetricsQuery);
+    const healthMetricsMap = new Map(healthMetricsResult.rows.map((r: any) => [
+      parseInt(r.club_id),
+      {
+        capacity_pct: parseFloat(r.capacity_pct) || 0,
+        meetup_count: parseInt(r.meetup_count) || 0,
+        repeat_rate_pct: parseFloat(r.repeat_rate_pct) || 0,
+        avg_rating: parseFloat(r.avg_rating) || 0,
+        review_count: parseInt(r.review_count) || 0,
+        is_new_club: r.is_new_club === true
+      }
+    ]));
+
+    // Get monthly revenue from Sep 2025 to Mar 2026
+    const monthlyRevenueQuery = `
+      WITH month_series AS (
+        SELECT generate_series(
+          '2025-09-01'::date,
+          '2026-03-01'::date,
+          '1 month'::interval
+        )::date as month_start
+      )
+      SELECT
+        ms.month_start,
+        TO_CHAR(ms.month_start, 'Mon') as month_label,
+        EXTRACT(MONTH FROM ms.month_start) as month_num,
+        EXTRACT(YEAR FROM ms.month_start) as year,
+        COALESCE(SUM(
+          CASE WHEN p.state = 'COMPLETED' THEN p.amount / 100.0 ELSE 0 END
+        ), 0) as total_revenue
+      FROM month_series ms
+      LEFT JOIN event e ON e.start_time >= ms.month_start
+        AND e.start_time < (ms.month_start + INTERVAL '1 month')
+        AND e.state = 'CREATED'
+      LEFT JOIN club c ON e.club_id = c.pk AND c.is_private = false
       LEFT JOIN booking b ON b.event_id = e.pk
       LEFT JOIN transaction t ON t.entity_id = b.id AND t.entity_type = 'BOOKING'
       LEFT JOIN payment p ON p.pk = t.payment_id
-      WHERE e.start_time >= '2026-03-01 00:00:00+05:30' AND e.start_time < '2026-04-01 00:00:00+05:30'
-        AND e.state = 'CREATED'
-        AND c.is_private = false
+      GROUP BY ms.month_start
+      ORDER BY ms.month_start
     `;
-    const march2026Result = await queryProduction(march2026RevenueQuery);
-    const march2026Revenue = parseFloat(march2026Result.rows[0]?.total_revenue || 0);
+    const monthlyRevenueResult = await queryProduction(monthlyRevenueQuery);
+    const monthlyRevenue = monthlyRevenueResult.rows.map((row: any) => ({
+      month: row.month_label,
+      year: parseInt(row.year),
+      revenue: parseFloat(row.total_revenue || 0)
+    }));
+    // Keep march_2026_revenue for backward compatibility
+    const march2026Revenue = monthlyRevenue.find((m: any) => m.month === 'Mar' && m.year === 2026)?.revenue || 0;
 
     // Get dimensional targets from local DB (these overlay on clubs)
     // Now fetching ALL targets per club to support multiple targets
@@ -2202,6 +2430,19 @@ router.get('/v2/hierarchy', async (req, res) => {
         const last4wTotal = clubLast4w.total;
         const last4wAvg = clubLast4w.weeks > 0 ? last4wTotal / 4 : 0;
 
+        // Health metrics calculation for this club
+        const healthMetrics = healthMetricsMap.get(clubId) || {
+          capacity_pct: 0, meetup_count: 0, repeat_rate_pct: 0, avg_rating: 0, review_count: 0, is_new_club: false
+        };
+        const hasMeetups = healthMetrics.meetup_count > 0;
+        const clubHealthScore = calculateHealthScore(
+          healthMetrics.capacity_pct,
+          healthMetrics.repeat_rate_pct,
+          healthMetrics.avg_rating,
+          healthMetrics.is_new_club
+        );
+        const clubHealthStatus = getHealthStatus(clubHealthScore, hasMeetups);
+
         let clubRevenueStatus: RevenueStatus;
         if (autoMatchResult && autoMatchResult.targets.length > 0) {
           const targetStatuses = autoMatchResult.targets.map((t: any) => t.revenue_status);
@@ -2309,7 +2550,18 @@ router.get('/v2/hierarchy', async (req, res) => {
           children: targetChildren.length >= 1 ? targetChildren : undefined,
           activity_name: club.activity_name,
           city_name: club.city_name || 'Unknown',
-          area_name: club.area_name || 'Unknown'
+          area_name: club.area_name || 'Unknown',
+          // Health metrics
+          health_score: clubHealthScore,
+          health_status: clubHealthStatus,
+          capacity_pct: healthMetrics.capacity_pct,
+          repeat_rate_pct: healthMetrics.repeat_rate_pct,
+          avg_rating: healthMetrics.avg_rating,
+          is_new_club: healthMetrics.is_new_club,
+          // Individual metric health status
+          capacity_health: getMetricHealth(healthMetrics.capacity_pct, HEALTH_THRESHOLDS.capacity_utilization),
+          repeat_health: healthMetrics.is_new_club ? 'green' : getMetricHealth(healthMetrics.repeat_rate_pct, HEALTH_THRESHOLDS.repeat_rate),
+          rating_health: getMetricHealth(healthMetrics.avg_rating, HEALTH_THRESHOLDS.avg_rating)
         };
 
         const levelValues: Record<HierarchyLevel, { id: number; name: string }> = {
@@ -2637,7 +2889,8 @@ router.get('/v2/hierarchy', async (req, res) => {
           monthly_target_revenue: Math.round(totalTargetRevenue * 4.2),
           last_4w_revenue_total: totalLast4wRevenue,
           last_4w_revenue_avg: totalLast4wRevenue / 4,
-          march_2026_revenue: march2026Revenue
+          march_2026_revenue: march2026Revenue,
+          monthly_revenue: monthlyRevenue
         }
       });
     }
@@ -2692,6 +2945,19 @@ router.get('/v2/hierarchy', async (req, res) => {
       const clubLast4w = last4WeeksMap.get(clubId) || { total: 0, weeks: 0 };
       const last4wTotal = clubLast4w.total;
       const last4wAvg = clubLast4w.weeks > 0 ? last4wTotal / 4 : 0; // Always divide by 4 for consistent avg
+
+      // Health metrics calculation for this club
+      const healthMetrics = healthMetricsMap.get(clubId) || {
+        capacity_pct: 0, meetup_count: 0, repeat_rate_pct: 0, avg_rating: 0, review_count: 0, is_new_club: false
+      };
+      const hasMeetups = healthMetrics.meetup_count > 0;
+      const clubHealthScore = calculateHealthScore(
+        healthMetrics.capacity_pct,
+        healthMetrics.repeat_rate_pct,
+        healthMetrics.avg_rating,
+        healthMetrics.is_new_club
+      );
+      const clubHealthStatus = getHealthStatus(clubHealthScore, hasMeetups);
 
       // Calculate revenue status for this club
       // When auto-matching is enabled, rollup the matched revenue statuses
@@ -2916,7 +3182,18 @@ router.get('/v2/hierarchy', async (req, res) => {
         day_type_name: dayTypeName,
         revenue_status: hasRevenueData ? clubRevenueStatus : null,
         revenue_status_display: hasRevenueData ? getRevenueStatusDisplay(clubRevenueStatus) : null,
-        children: targetChildren.length >= 1 ? targetChildren : undefined // Show children even when 1 target
+        children: targetChildren.length >= 1 ? targetChildren : undefined, // Show children even when 1 target
+        // Health metrics
+        health_score: clubHealthScore,
+        health_status: clubHealthStatus,
+        capacity_pct: healthMetrics.capacity_pct,
+        repeat_rate_pct: healthMetrics.repeat_rate_pct,
+        avg_rating: healthMetrics.avg_rating,
+        is_new_club: healthMetrics.is_new_club,
+        // Individual metric health status
+        capacity_health: getMetricHealth(healthMetrics.capacity_pct, HEALTH_THRESHOLDS.capacity_utilization),
+        repeat_health: healthMetrics.is_new_club ? 'green' : getMetricHealth(healthMetrics.repeat_rate_pct, HEALTH_THRESHOLDS.repeat_rate),
+        rating_health: getMetricHealth(healthMetrics.avg_rating, HEALTH_THRESHOLDS.avg_rating)
       };
 
       areaNode.children.push(clubNode);
@@ -3438,6 +3715,13 @@ router.get('/v2/hierarchy', async (req, res) => {
             ? getRevenueStatusDisplay(areaNode.revenue_status)
             : null;
           delete areaNode.revenue_status_list; // Clean up temporary list
+
+          // Roll up health for area (excludes launches)
+          const areaHealthRollup = rollupHealth(areaNode.children || []);
+          areaNode.health_score = areaHealthRollup.health_score;
+          areaNode.health_status = areaHealthRollup.health_status;
+          areaNode.health_distribution = areaHealthRollup.health_distribution;
+
           areaNodes.push(areaNode);
         }
 
@@ -3461,6 +3745,13 @@ router.get('/v2/hierarchy', async (req, res) => {
           ? getRevenueStatusDisplay(cityNode.revenue_status)
           : null;
         delete cityNode.revenue_status_list; // Clean up temporary list
+
+        // Roll up health for city (from areas)
+        const cityHealthRollup = rollupHealth(areaNodes);
+        cityNode.health_score = cityHealthRollup.health_score;
+        cityNode.health_status = cityHealthRollup.health_status;
+        cityNode.health_distribution = cityHealthRollup.health_distribution;
+
         cityNodes.push(cityNode);
       }
 
@@ -3484,6 +3775,13 @@ router.get('/v2/hierarchy', async (req, res) => {
         ? getRevenueStatusDisplay(activityNode.revenue_status)
         : null;
       delete activityNode.revenue_status_list; // Clean up temporary list
+
+      // Roll up health for activity (from cities)
+      const activityHealthRollup = rollupHealth(cityNodes);
+      activityNode.health_score = activityHealthRollup.health_score;
+      activityNode.health_status = activityHealthRollup.health_status;
+      activityNode.health_distribution = activityHealthRollup.health_distribution;
+
       hierarchy.push(activityNode);
     }
 
@@ -3494,6 +3792,9 @@ router.get('/v2/hierarchy', async (req, res) => {
     const totalCurrentMeetups = hierarchy.reduce((sum, a) => sum + a.current_meetups, 0);
     const totalCurrentRevenue = hierarchy.reduce((sum, a) => sum + a.current_revenue, 0);
     const totalLast4wRevenue = hierarchy.reduce((sum, a) => sum + (a.last_4w_revenue_total || 0), 0);
+
+    // Calculate overall health distribution (from all activities)
+    const overallHealthRollup = rollupHealth(hierarchy);
 
     res.json({
       success: true,
@@ -3518,7 +3819,13 @@ router.get('/v2/hierarchy', async (req, res) => {
         last_4w_revenue_total: totalLast4wRevenue,
         last_4w_revenue_avg: totalLast4wRevenue / 4,
         // March 2026 specific
-        march_2026_revenue: march2026Revenue
+        march_2026_revenue: march2026Revenue,
+        // Monthly revenue breakdown (Sep 2025 - Mar 2026)
+        monthly_revenue: monthlyRevenue,
+        // Health summary
+        overall_health_score: overallHealthRollup.health_score,
+        overall_health_status: overallHealthRollup.health_status,
+        health_distribution: overallHealthRollup.health_distribution
       }
     });
   } catch (error) {

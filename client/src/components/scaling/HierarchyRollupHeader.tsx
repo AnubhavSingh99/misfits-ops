@@ -4,6 +4,7 @@ import { Sigma, Calendar, Plus } from 'lucide-react';
 import type { HierarchyNode, StageProgress, StageKey, ScalingTaskSummary, RevenueStatus } from '../../../../shared/types';
 import { TEAMS, type TeamKey } from '../../../../shared/teamConfig';
 import { RevenueStatusPills, createEmptyRevenueStatus, rollupRevenueStatuses } from './RevenueStatusPills';
+import { HealthDistributionBar } from './HealthDot';
 import { STAGES_ORDERED, STAGE_CONFIG, type MeetupStageKey } from '../../pages/ScalingPlannerV2';
 
 // Portal-based tooltip component that escapes overflow:hidden containers
@@ -129,6 +130,9 @@ function calculateTotals(nodes: HierarchyNode[]) {
     unattributed_meetups: 0
   };
 
+  // Health distribution for rollup
+  const healthDistribution = { green: 0, yellow: 0, red: 0, gray: 0 };
+
   // Collect all revenue statuses for rollup
   const revenueStatuses: RevenueStatus[] = [];
 
@@ -154,6 +158,11 @@ function calculateTotals(nodes: HierarchyNode[]) {
       // Collect revenue status if available
       if (node.revenue_status) {
         revenueStatuses.push(node.revenue_status);
+      }
+
+      // Aggregate health status (exclude launches from health rollup)
+      if (!node.is_launch && node.health_status) {
+        healthDistribution[node.health_status as keyof typeof healthDistribution]++;
       }
     }
 
@@ -183,7 +192,8 @@ function calculateTotals(nodes: HierarchyNode[]) {
     l4wRevenueAvg: totalL4WRevenueAvg,
     clubCount,
     progress: aggregatedProgress,
-    revenueStatus: aggregatedRevenueStatus
+    revenueStatus: aggregatedRevenueStatus,
+    healthDistribution
   };
 }
 
@@ -306,6 +316,11 @@ export function HierarchyRollupHeader({
             )}
           </div>
         </div>
+      </td>
+
+      {/* Health column */}
+      <td className="py-3 px-3 text-center">
+        <HealthDistributionBar distribution={totals.healthDistribution} />
       </td>
 
       {/* Target column */}

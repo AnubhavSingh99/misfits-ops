@@ -87,11 +87,13 @@ export function SprintViewModal({ isOpen, onClose, node, context }: SprintViewMo
 
   // Track if we've initialized filters from context (to avoid re-setting after user changes)
   const [filtersInitialized, setFiltersInitialized] = useState(false);
+  const [initialFetchDone, setInitialFetchDone] = useState(false);
 
   // Reset filters when modal closes
   useEffect(() => {
     if (!isOpen) {
       setFiltersInitialized(false);
+      setInitialFetchDone(false);
       setActivityFilters([]);
       setCityFilters([]);
       setAreaFilters([]);
@@ -111,103 +113,131 @@ export function SprintViewModal({ isOpen, onClose, node, context }: SprintViewMo
   // Team members for filter
   const [members, setMembers] = useState<{ id: number; name: string; team_lead?: string }[]>([]);
 
-  // Fetch hierarchy filter options and members
+  // Initial fetch - only runs once when modal opens
   useEffect(() => {
-    const fetchFilterOptions = async () => {
-      try {
-        // Fetch activities (all activities with active clubs)
-        const actRes = await fetch(`${API_BASE}/scaling-tasks/filters/activities`);
-        const actData = await actRes.json();
-        const actOptions = actData.success ? (actData.options || []) : [];
-        setActivities(actOptions);
+    const fetchInitialOptions = async () => {
+      if (initialFetchDone) return;
 
-        // Fetch cities (filtered by selected activities - cascading)
+      try {
+        // Fetch all filter options in parallel for speed
+        const [actRes, cityRes, areaRes, clubRes, membersRes] = await Promise.all([
+          fetch(`${API_BASE}/scaling-tasks/filters/activities`),
+          fetch(`${API_BASE}/scaling-tasks/filters/cities`),
+          fetch(`${API_BASE}/scaling-tasks/filters/areas`),
+          fetch(`${API_BASE}/scaling-tasks/filters/clubs`),
+          fetch(`${API_BASE}/scaling-tasks/assignees/list`)
+        ]);
+
+        const [actData, cityData, areaData, clubData, membersData] = await Promise.all([
+          actRes.json(),
+          cityRes.json(),
+          areaRes.json(),
+          clubRes.json(),
+          membersRes.json()
+        ]);
+
+        const actOptions = actData.success ? (actData.options || []) : [];
+        const cityOptions = cityData.success ? (cityData.options || []) : [];
+        const areaOptions = areaData.success ? (areaData.options || []) : [];
+        const clubOptions = clubData.success ? (clubData.options || []) : [];
+
+        // Batch all state updates together to prevent multiple re-renders
+        setActivities(actOptions);
+        setCities(cityOptions);
+        setAreas(areaOptions);
+        setClubs(clubOptions);
+        if (membersData.success) setMembers(membersData.assignees || []);
+
+        // Initialize filters from context by matching NAME (not ID)
+        if (context) {
+          const newActivityFilters: number[] = [];
+          const newCityFilters: number[] = [];
+          const newAreaFilters: number[] = [];
+          const newClubFilters: number[] = [];
+
+          if (context.activity_name) {
+            const matchedActivity = actOptions.find(
+              (a: FilterOption) => a.name?.toLowerCase() === context.activity_name?.toLowerCase()
+            );
+            if (matchedActivity?.id) newActivityFilters.push(matchedActivity.id);
+          }
+
+          if (context.city_name) {
+            const matchedCity = cityOptions.find(
+              (c: FilterOption) => c.name?.toLowerCase() === context.city_name?.toLowerCase()
+            );
+            if (matchedCity?.id) newCityFilters.push(matchedCity.id);
+          }
+
+          if (context.area_name) {
+            const matchedArea = areaOptions.find(
+              (a: FilterOption) => a.name?.toLowerCase() === context.area_name?.toLowerCase()
+            );
+            if (matchedArea?.id) newAreaFilters.push(matchedArea.id);
+          }
+
+          if (context.club_name) {
+            const matchedClub = clubOptions.find(
+              (c: FilterOption) => c.name?.toLowerCase() === context.club_name?.toLowerCase()
+            );
+            if (matchedClub?.id) newClubFilters.push(matchedClub.id);
+          }
+
+          // Batch filter updates
+          if (newActivityFilters.length > 0) setActivityFilters(newActivityFilters);
+          if (newCityFilters.length > 0) setCityFilters(newCityFilters);
+          if (newAreaFilters.length > 0) setAreaFilters(newAreaFilters);
+          if (newClubFilters.length > 0) setClubFilters(newClubFilters);
+        }
+
+        setInitialFetchDone(true);
+        setFiltersInitialized(true);
+      } catch (err) {
+        console.error('Failed to fetch filter options:', err);
+        setFiltersInitialized(true); // Still mark as initialized to allow sprints to fetch
+      }
+    };
+
+    if (isOpen && !initialFetchDone) {
+      fetchInitialOptions();
+    }
+  }, [isOpen, initialFetchDone, context]);
+
+  // Update cascading filter options when parent filters change (after initial fetch)
+  useEffect(() => {
+    if (!initialFetchDone || !isOpen) return;
+
+    const updateCascadingFilters = async () => {
+      try {
+        // Only update child filter options based on parent selections
         const cityParams = activityFilters.length > 0 ? `?activity_ids=${activityFilters.join(',')}` : '';
         const cityRes = await fetch(`${API_BASE}/scaling-tasks/filters/cities${cityParams}`);
         const cityData = await cityRes.json();
-        const cityOptions = cityData.success ? (cityData.options || []) : [];
-        setCities(cityOptions);
+        if (cityData.success) setCities(cityData.options || []);
 
-        // Fetch areas (filtered by selected activities and cities - cascading)
         const areaParams = new URLSearchParams();
         if (activityFilters.length > 0) areaParams.append('activity_ids', activityFilters.join(','));
         if (cityFilters.length > 0) areaParams.append('city_ids', cityFilters.join(','));
         const areaRes = await fetch(`${API_BASE}/scaling-tasks/filters/areas?${areaParams}`);
         const areaData = await areaRes.json();
-        const areaOptions = areaData.success ? (areaData.options || []) : [];
-        setAreas(areaOptions);
+        if (areaData.success) setAreas(areaData.options || []);
 
-        // Fetch clubs (filtered by selected activities, cities, and areas - cascading)
         const clubParams = new URLSearchParams();
         if (activityFilters.length > 0) clubParams.append('activity_ids', activityFilters.join(','));
         if (cityFilters.length > 0) clubParams.append('city_ids', cityFilters.join(','));
         if (areaFilters.length > 0) clubParams.append('area_ids', areaFilters.join(','));
         const clubRes = await fetch(`${API_BASE}/scaling-tasks/filters/clubs?${clubParams}`);
         const clubData = await clubRes.json();
-        const clubOptions = clubData.success ? (clubData.options || []) : [];
-        setClubs(clubOptions);
-
-        // Fetch team members
-        const membersRes = await fetch(`${API_BASE}/scaling-tasks/assignees/list`);
-        const membersData = await membersRes.json();
-        if (membersData.success) setMembers(membersData.assignees || []);
-
-        // Initialize filters from context by matching NAME (not ID)
-        // This handles ID mismatch between hierarchy (production DB) and tasks (local DB)
-        if (!filtersInitialized) {
-          if (context) {
-            // Find activity by name and add to filters
-            if (context.activity_name && actOptions.length > 0) {
-              const matchedActivity = actOptions.find(
-                (a: FilterOption) => a.name?.toLowerCase() === context.activity_name?.toLowerCase()
-              );
-              if (matchedActivity && matchedActivity.id) {
-                setActivityFilters([matchedActivity.id]);
-              }
-            }
-
-            // Find city by name
-            if (context.city_name && cityOptions.length > 0) {
-              const matchedCity = cityOptions.find(
-                (c: FilterOption) => c.name?.toLowerCase() === context.city_name?.toLowerCase()
-              );
-              if (matchedCity && matchedCity.id) {
-                setCityFilters([matchedCity.id]);
-              }
-            }
-
-            // Find area by name
-            if (context.area_name && areaOptions.length > 0) {
-              const matchedArea = areaOptions.find(
-                (a: FilterOption) => a.name?.toLowerCase() === context.area_name?.toLowerCase()
-              );
-              if (matchedArea && matchedArea.id) {
-                setAreaFilters([matchedArea.id]);
-              }
-            }
-
-            // Find club by name
-            if (context.club_name && clubOptions.length > 0) {
-              const matchedClub = clubOptions.find(
-                (c: FilterOption) => c.name?.toLowerCase() === context.club_name?.toLowerCase()
-              );
-              if (matchedClub && matchedClub.id) {
-                setClubFilters([matchedClub.id]);
-              }
-            }
-          }
-          // Mark filters as initialized (even if no context - allows sprints to fetch)
-          setFiltersInitialized(true);
-        }
+        if (clubData.success) setClubs(clubData.options || []);
       } catch (err) {
-        console.error('Failed to fetch filter options:', err);
+        console.error('Failed to update cascading filters:', err);
       }
     };
 
-    if (isOpen) {
-      fetchFilterOptions();
-    }
-  }, [isOpen, activityFilters, cityFilters, areaFilters, context, filtersInitialized]);
+    // Debounce to prevent rapid re-fetches
+    const timeoutId = setTimeout(updateCascadingFilters, 150);
+    return () => clearTimeout(timeoutId);
+  }, [activityFilters, cityFilters, areaFilters, initialFetchDone, isOpen]);
 
   // Reset child filters when parent changes (for multi-select, clear children when parent is emptied)
   useEffect(() => {

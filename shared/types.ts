@@ -687,6 +687,24 @@ export interface HierarchyNode {
   // Day type for targets (displayed as tags)
   day_type_id?: number;
   day_type_name?: string;
+  // Health metrics (for clubs)
+  health_score?: number;           // 0-100 weighted score
+  health_status?: 'green' | 'yellow' | 'red' | 'gray';  // Overall status
+  capacity_pct?: number;           // Capacity utilization %
+  repeat_rate_pct?: number;        // Repeat rate %
+  avg_rating?: number;             // Average rating (0-5)
+  is_new_club?: boolean;           // Less than 2 months old
+  // Individual metric health (for clubs)
+  capacity_health?: 'green' | 'yellow' | 'red';
+  repeat_health?: 'green' | 'yellow' | 'red';
+  rating_health?: 'green' | 'yellow' | 'red';
+  // Health distribution (for roll-up nodes: area, city, activity)
+  health_distribution?: {
+    green: number;
+    yellow: number;
+    red: number;
+    gray: number;  // Dormant/inactive
+  };
 }
 
 // Weekly trend data for charts

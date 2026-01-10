@@ -26,6 +26,7 @@ import trendsRoutes from './routes/trends';
 import scalingTasksRoutes from './routes/scalingTasks';
 import requirementsRoutes from './routes/requirements';
 import configRoutes from './routes/config';
+import feedbackRoutes from './routes/feedback';
 
 // Import services
 import { initializeDatabase } from './services/database';
@@ -138,6 +139,7 @@ app.use('/api/trends', trendsRoutes);
 app.use('/api/scaling-tasks', scalingTasksRoutes);
 app.use('/api/requirements', requirementsRoutes);
 app.use('/api/config', configRoutes);
+app.use('/api/feedback', feedbackRoutes);
 app.use('/api', revenueRoutes); // Also handle direct /api/revenue-growth
 
 // Teams endpoints (simple fallback)

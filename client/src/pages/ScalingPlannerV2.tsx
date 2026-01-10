@@ -26,7 +26,8 @@ import {
   Trash2,
   ArrowUpDown,
   ArrowUp,
-  ArrowDown
+  ArrowDown,
+  MessageSquarePlus
 } from 'lucide-react'
 import type {
   HierarchyNode,
@@ -36,9 +37,10 @@ import type {
   ValidationStatus,
   ScalingTaskSummary
 } from '../../shared/types'
-import { SprintViewModal, TaskSummaryCell, ScalingTaskCreateModal, SummaryTiles, HierarchyFilterBar, HierarchyRollupHeader, RevenueStatusPills, DayTypeTags, StageInfoModal, InfoIconButton, buildRolledUpSummaryMap, buildSummaryKey, type HierarchyFilters, type HierarchyLevel, MeetupDetailsTooltip, ExpandClubModal, AddChoiceModal, type ExpandClubTargetData, WeekSelector, getWeekBounds, formatWeekLabel, type WeekOption } from '../components/scaling'
+import { SprintViewModal, TaskSummaryCell, ScalingTaskCreateModal, SummaryTiles, HierarchyFilterBar, HierarchyRollupHeader, RevenueStatusPills, DayTypeTags, StageInfoModal, InfoIconButton, buildRolledUpSummaryMap, buildSummaryKey, type HierarchyFilters, type HierarchyLevel, MeetupDetailsTooltip, ExpandClubModal, AddChoiceModal, type ExpandClubTargetData, WeekSelector, getWeekBounds, formatWeekLabel, type WeekOption, HealthDot, HealthDistributionBar, HealthInfoModal, type HealthStatus, TaskListTooltip } from '../components/scaling'
 import { getTeamForClub, type TeamKey } from '../../shared/teamConfig'
 import { DimensionalTargetsService } from '../services/api'
+import FeedbackModal from '../components/FeedbackModal'
 
 // Format date as YYYY-MM-DD in LOCAL timezone (IST)
 // IMPORTANT: Do NOT use toISOString() as it converts to UTC,
@@ -53,7 +55,7 @@ function formatLocalDate(date: Date): string {
 // =====================================================
 // SORTABLE TABLE HEADER CONFIGURATION
 // =====================================================
-type SortColumn = 'name' | 'target_meetups' | 'current_meetups' | 'gap_meetups' | 'l4w_revenue'
+type SortColumn = 'name' | 'health_score' | 'target_meetups' | 'current_meetups' | 'gap_meetups' | 'l4w_revenue'
 type SortDirection = 'asc' | 'desc' | null
 
 interface SortState {
@@ -122,6 +124,11 @@ function sortHierarchy(nodes: HierarchyNode[], sortState: SortState): HierarchyN
           aVal = a.name.toLowerCase()
           bVal = b.name.toLowerCase()
           return multiplier * aVal.localeCompare(bVal)
+        case 'health_score':
+          // Sort by health score, put undefined/null at the end
+          aVal = a.health_score ?? -1
+          bVal = b.health_score ?? -1
+          break
         case 'target_meetups':
           aVal = a.target_meetups ?? 0
           bVal = b.target_meetups ?? 0
@@ -2036,6 +2043,33 @@ function HierarchyRow({ node, level, expanded, onToggle, onEditTarget, onDeleteT
         </div>
       </td>
 
+      {/* Health column */}
+      <td className="py-3 px-3 text-center">
+        {isTarget ? (
+          <div className="text-gray-400 text-xs">-</div>
+        ) : (node.type === 'club' || node.type === 'launch') ? (
+          // Show health dot for clubs/launches
+          node.health_status ? (
+            <div className="flex justify-center">
+              <HealthDot
+                status={node.health_status as HealthStatus}
+                score={node.health_score}
+                size="md"
+              />
+            </div>
+          ) : (
+            <div className="text-gray-400 text-xs">-</div>
+          )
+        ) : (
+          // Show distribution bar for rollup nodes (activity, city, area)
+          node.health_distribution ? (
+            <HealthDistributionBar distribution={node.health_distribution} />
+          ) : (
+            <div className="text-gray-400 text-xs">-</div>
+          )
+        )}
+      </td>
+
       {/* Target column */}
       <td className="py-3 px-4 text-right">
         <div className="text-gray-800 font-mono font-semibold">{node.target_meetups}</div>
@@ -2133,11 +2167,13 @@ function HierarchyRow({ node, level, expanded, onToggle, onEditTarget, onDeleteT
 
       {/* Tasks column */}
       <td className="py-3 px-4 text-center">
-        <TaskSummaryCell
-          summary={taskSummary}
-          onOpenSprints={() => onOpenSprint(node)}
-          onCreateTask={() => onCreateTask(node)}
-        />
+        <TaskListTooltip node={node} taskSummary={taskSummary}>
+          <TaskSummaryCell
+            summary={taskSummary}
+            onOpenSprints={() => onOpenSprint(node)}
+            onCreateTask={() => onCreateTask(node)}
+          />
+        </TaskListTooltip>
       </td>
 
       {/* Actions column */}
@@ -2263,6 +2299,12 @@ export default function ScalingPlannerV2() {
 
   // Stage info modal state
   const [stageInfoModalType, setStageInfoModalType] = useState<'meetup_stage' | 'revenue_status' | null>(null)
+
+  // Health info modal state
+  const [healthInfoModalOpen, setHealthInfoModalOpen] = useState(false)
+
+  // Feedback modal state
+  const [feedbackModalOpen, setFeedbackModalOpen] = useState(false)
 
   // Hierarchy filter state
   const [filters, setFilters] = useState<HierarchyFilters>({
@@ -3271,6 +3313,14 @@ export default function ScalingPlannerV2() {
               onCustomWeekChange={(start) => setCustomWeekStart(start)}
             />
             <button
+              onClick={() => setFeedbackModalOpen(true)}
+              className="p-2 rounded-lg bg-white hover:bg-indigo-50 text-gray-600
+                hover:text-indigo-600 transition-all border border-gray-200 shadow-sm"
+              title="Submit Feedback"
+            >
+              <MessageSquarePlus size={20} />
+            </button>
+            <button
               onClick={() => fetchData()}
               className="p-2 rounded-lg bg-white hover:bg-gray-100 text-gray-600
                 hover:text-gray-900 transition-all border border-gray-200 shadow-sm"
@@ -3324,6 +3374,12 @@ export default function ScalingPlannerV2() {
                     onSort={handleSort}
                     align="left"
                   />
+                  <th className="py-3 px-3 text-xs font-semibold text-gray-600 uppercase tracking-wider text-center">
+                    <div className="flex items-center gap-1.5 justify-center">
+                      <span>Health</span>
+                      <InfoIconButton onClick={() => setHealthInfoModalOpen(true)} />
+                    </div>
+                  </th>
                   <SortableHeader
                     label="Target"
                     column="target_meetups"
@@ -3388,7 +3444,7 @@ export default function ScalingPlannerV2() {
                 />
                 {flattenedRows.length === 0 ? (
                   <tr>
-                    <td colSpan={10} className="py-12 text-center">
+                    <td colSpan={11} className="py-12 text-center">
                       <div className="text-gray-400">
                         <Target size={48} className="mx-auto mb-4 opacity-50" />
                         <p className="font-medium">No targets found</p>
@@ -3576,6 +3632,18 @@ export default function ScalingPlannerV2() {
         isOpen={stageInfoModalType !== null}
         onClose={() => setStageInfoModalType(null)}
         type={stageInfoModalType || 'meetup_stage'}
+      />
+
+      {/* Health Info Modal (Health calculation explanation) */}
+      <HealthInfoModal
+        isOpen={healthInfoModalOpen}
+        onClose={() => setHealthInfoModalOpen(false)}
+      />
+
+      {/* Feedback Modal (Feature request / Bug report) */}
+      <FeedbackModal
+        isOpen={feedbackModalOpen}
+        onClose={() => setFeedbackModalOpen(false)}
       />
     </div>
   )

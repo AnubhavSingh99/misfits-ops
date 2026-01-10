@@ -1,6 +1,12 @@
-import React from 'react'
-import { Calendar, Layers, Target, TrendingUp } from 'lucide-react'
+import React, { useState } from 'react'
+import { Calendar, Layers, Target, TrendingUp, ChevronRight } from 'lucide-react'
 import type { RevenueStatus } from '../../../../shared/types'
+
+interface MonthlyRevenueData {
+  month: string
+  year: number
+  revenue: number
+}
 
 interface SummaryData {
   total_target_meetups: number
@@ -14,6 +20,7 @@ interface SummaryData {
   last_4w_revenue_total: number
   last_4w_revenue_avg: number
   march_2026_revenue: number
+  monthly_revenue?: MonthlyRevenueData[]
 }
 
 interface TrendsData {
@@ -53,6 +60,124 @@ const formatCurrency = (value: number): string => {
 const getCurrentMonthLabel = (): string => {
   const now = new Date()
   return now.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+}
+
+// Monthly Revenue Tile Component - Beautiful mini bar chart
+function MonthlyRevenueTile({ monthlyRevenue }: { monthlyRevenue?: MonthlyRevenueData[] }) {
+  const [hoveredMonth, setHoveredMonth] = useState<number | null>(null)
+
+  // If no data, show placeholder
+  if (!monthlyRevenue || monthlyRevenue.length === 0) {
+    return (
+      <div className="bg-white rounded-xl border border-gray-100 p-3 md:p-4 shadow-sm hover:shadow-md transition-shadow">
+        <div className="flex items-start justify-between">
+          <div>
+            <div className="flex items-center gap-2 mb-2 md:mb-3">
+              <Calendar size={14} className="text-amber-500" />
+              <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">
+                Monthly Revenue
+              </span>
+            </div>
+            <div className="text-gray-400 text-sm">Loading...</div>
+          </div>
+          <div className="w-8 h-8 md:w-10 md:h-10 rounded-lg bg-amber-50 flex items-center justify-center">
+            <Calendar size={16} className="text-amber-500" />
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // Find max revenue for scaling bars
+  const maxRevenue = Math.max(...monthlyRevenue.map(m => m.revenue), 1)
+  const totalRevenue = monthlyRevenue.reduce((sum, m) => sum + m.revenue, 0)
+
+  // Calculate month-over-month growth
+  const lastMonth = monthlyRevenue[monthlyRevenue.length - 1]
+  const prevMonth = monthlyRevenue[monthlyRevenue.length - 2]
+  const momGrowth = prevMonth && prevMonth.revenue > 0
+    ? Math.round(((lastMonth.revenue - prevMonth.revenue) / prevMonth.revenue) * 100)
+    : 0
+
+  // Get bar color based on position and value
+  const getBarColor = (index: number, revenue: number) => {
+    if (revenue === 0) return 'bg-gray-200'
+    const isCurrentMonth = index === monthlyRevenue.length - 1
+    if (isCurrentMonth) return 'bg-amber-500'
+    return 'bg-amber-300'
+  }
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-100 p-3 md:p-4 shadow-sm hover:shadow-md transition-shadow">
+      <div className="flex items-start justify-between mb-3">
+        <div>
+          <div className="flex items-center gap-2 mb-1">
+            <Calendar size={14} className="text-amber-500" />
+            <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">
+              Revenue Trend
+            </span>
+          </div>
+          <div className="flex items-baseline gap-2">
+            <span className="text-lg md:text-xl font-bold text-gray-900">
+              {formatCurrency(totalRevenue)}
+            </span>
+            <span className="text-[10px] text-gray-400">
+              Sep '25 – Mar '26
+            </span>
+          </div>
+        </div>
+        {momGrowth !== 0 && (
+          <div className={`px-2 py-1 rounded-full text-[10px] font-semibold ${
+            momGrowth > 0
+              ? 'bg-emerald-50 text-emerald-600'
+              : 'bg-red-50 text-red-600'
+          }`}>
+            {momGrowth > 0 ? '+' : ''}{momGrowth}% MoM
+          </div>
+        )}
+      </div>
+
+      {/* Mini Bar Chart */}
+      <div className="flex items-end gap-1 h-12 md:h-14">
+        {monthlyRevenue.map((month, index) => {
+          const barHeight = maxRevenue > 0 ? Math.max((month.revenue / maxRevenue) * 100, 4) : 4
+          const isHovered = hoveredMonth === index
+
+          return (
+            <div
+              key={`${month.month}-${month.year}`}
+              className="flex-1 flex flex-col items-center gap-1 group cursor-pointer"
+              onMouseEnter={() => setHoveredMonth(index)}
+              onMouseLeave={() => setHoveredMonth(null)}
+            >
+              {/* Tooltip */}
+              {isHovered && (
+                <div className="absolute -translate-y-full mb-1 px-2 py-1 bg-gray-900 text-white text-[10px] rounded shadow-lg whitespace-nowrap z-10">
+                  <div className="font-semibold">{month.month} {month.year}</div>
+                  <div>{formatCurrency(month.revenue)}</div>
+                </div>
+              )}
+
+              {/* Bar */}
+              <div
+                className={`w-full rounded-t transition-all duration-200 ${getBarColor(index, month.revenue)} ${
+                  isHovered ? 'opacity-100 scale-105' : 'opacity-80 group-hover:opacity-100'
+                }`}
+                style={{ height: `${barHeight}%` }}
+              />
+
+              {/* Month label */}
+              <span className={`text-[8px] md:text-[9px] transition-colors ${
+                isHovered ? 'text-gray-900 font-semibold' : 'text-gray-400'
+              }`}>
+                {month.month}
+              </span>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
 }
 
 export function SummaryTiles({ summary, trends, filteredTotals, isFiltered, revenueStatus }: SummaryTilesProps) {
@@ -206,29 +331,8 @@ export function SummaryTiles({ summary, trends, filteredTotals, isFiltered, reve
           </div>
         </div>
 
-        {/* March 2026 Revenue */}
-        <div className="bg-white rounded-xl border border-gray-100 p-3 md:p-4 shadow-sm hover:shadow-md transition-shadow">
-          <div className="flex items-start justify-between">
-            <div>
-              <div className="flex items-center gap-2 mb-2 md:mb-3">
-                <Calendar size={14} className="text-amber-500" />
-                <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">
-                  March 2026
-                </span>
-              </div>
-              <p className="text-[10px] font-medium text-gray-400 uppercase tracking-wider mb-0.5">Revenue</p>
-              <div className="text-xl md:text-2xl font-bold text-gray-900 tracking-tight">
-                {summary.march_2026_revenue > 0 ? formatCurrency(summary.march_2026_revenue) : '—'}
-              </div>
-              <p className="text-[9px] md:text-[10px] text-gray-400 mt-0.5">
-                {summary.march_2026_revenue > 0 ? 'achieved so far' : 'Tracking starts in March'}
-              </p>
-            </div>
-            <div className="w-8 h-8 md:w-10 md:h-10 rounded-lg bg-amber-50 flex items-center justify-center">
-              <Calendar size={16} className="text-amber-500" />
-            </div>
-          </div>
-        </div>
+        {/* Monthly Revenue Trend (Sep 2025 - Mar 2026) */}
+        <MonthlyRevenueTile monthlyRevenue={summary.monthly_revenue} />
       </div>
     </div>
   )

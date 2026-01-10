@@ -55,43 +55,38 @@ export const TEAMS: Record<TeamKey, TeamConfig> = {
 };
 
 // =====================================================
-// TEAM-ACTIVITY-CITY ASSIGNMENTS
+// TEAM-ACTIVITY ASSIGNMENTS (PLATFORM-WIDE)
 // =====================================================
 
-// Delhi NCR cities
+// Activity assignments apply to ALL cities platform-wide
+// Teams are assigned by activity type, not by geography
+export const TEAM_ACTIVITIES: Record<TeamKey, string[]> = {
+  blue: ['Board Gaming', 'Football', 'Social Deduction', 'Quiz'],
+  yellow: ['Badminton', 'Art', 'Journaling', 'Box Cricket'],
+  green: [] // Green handles all OTHER activities not listed above
+};
+
+// Legacy constants (kept for backward compatibility, but no longer used in logic)
 export const DELHI_NCR_CITIES = [
   'Gurgaon', 'Noida', 'Faridabad', 'Ghaziabad',
   'North Delhi', 'South Delhi', 'West Delhi', 'East Delhi'
 ];
-
-// Green team owns ALL activities in these cities
-export const GREEN_EXCLUSIVE_CITIES = ['Jaipur', 'Bangalore'];
-
-// Activity assignments for Delhi NCR
-export const TEAM_ACTIVITIES: Record<TeamKey, string[]> = {
-  blue: ['Board Gaming', 'Football', 'Social Deduction', 'Quiz'],
-  yellow: ['Badminton', 'Art', 'Journaling', 'Box Cricket'],
-  green: [] // Green handles all OTHER activities not listed above (in Delhi NCR)
-};
+export const GREEN_EXCLUSIVE_CITIES: string[] = []; // No longer city-exclusive
 
 // =====================================================
 // HELPER FUNCTIONS
 // =====================================================
 
 /**
- * Determine team for a club based on activity and city
+ * Determine team for a club based on activity (platform-wide)
+ * City is no longer used for team assignment - all cities follow the same activity-based logic
  */
-export function getTeamForClub(activityName: string, cityName: string): TeamKey {
-  // Green owns all activities in Jaipur and Bangalore
-  if (GREEN_EXCLUSIVE_CITIES.includes(cityName)) {
-    return 'green';
-  }
-
-  // For Delhi NCR cities, check activity assignment
+export function getTeamForClub(activityName: string, _cityName?: string): TeamKey {
+  // Activity-based assignment applies platform-wide
   if (TEAM_ACTIVITIES.blue.includes(activityName)) return 'blue';
   if (TEAM_ACTIVITIES.yellow.includes(activityName)) return 'yellow';
 
-  // Default: Green handles remaining activities
+  // Default: Green handles all other activities
   return 'green';
 }
 
