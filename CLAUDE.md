@@ -22,6 +22,25 @@ Example migration file structure:
 ALTER TABLE table_name ADD COLUMN IF NOT EXISTS column_name TYPE;
 ```
 
+## IMPORTANT: Deployment
+
+**ALWAYS use the deploy-ops skill for deploying changes to production:**
+
+```
+/deploy-ops
+```
+
+Or invoke via Skill tool with `skill: "deploy-ops"`.
+
+The deploy skill handles:
+1. Pushing code to GitHub
+2. Pulling on production server
+3. Building frontend
+4. Copying to nginx root
+5. Restarting PM2
+
+**DO NOT manually run deployment commands** - always use the skill.
+
 ## Project Overview
 
 Misfits Operations Platform is a comprehensive task management and operations dashboard for managing Misfits clubs. It features intelligent task automation, health monitoring, POC (Point of Contact) management, revenue tracking, and scaling operations.
