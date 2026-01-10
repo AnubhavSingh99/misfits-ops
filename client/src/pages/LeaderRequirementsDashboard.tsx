@@ -315,6 +315,27 @@ export default function LeaderRequirementsDashboard() {
     }
   };
 
+  // Update requirement
+  const updateRequirement = async (id: number, data: Partial<LeaderRequirement>) => {
+    try {
+      const response = await fetch(`${API_BASE}/requirements/leaders/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+      });
+      if (response.ok) {
+        fetchData(true);
+        setEditingRequirement(null);
+      } else {
+        const err = await response.json();
+        alert(err.error || 'Failed to update requirement');
+      }
+    } catch (err) {
+      console.error('Failed to update requirement:', err);
+      alert('Failed to update requirement');
+    }
+  };
+
   // Open create modal with context from hierarchy node
   const openCreateModal = (node?: HierarchyNode, parentContext?: CreateContext) => {
     let context: CreateContext = { ...parentContext };
@@ -995,6 +1016,161 @@ export default function LeaderRequirementsDashboard() {
           </div>
         </div>
       )}
+
+      {/* Edit Requirement Modal */}
+      {editingRequirement && (
+        <EditRequirementModal
+          requirement={editingRequirement}
+          onClose={() => setEditingRequirement(null)}
+          onSave={(data) => updateRequirement(editingRequirement.id, data)}
+        />
+      )}
+    </div>
+  );
+}
+
+// Edit Requirement Modal Component
+function EditRequirementModal({
+  requirement,
+  onClose,
+  onSave
+}: {
+  requirement: LeaderRequirement;
+  onClose: () => void;
+  onSave: (data: Partial<LeaderRequirement>) => void;
+}) {
+  const [name, setName] = useState(requirement.name);
+  const [description, setDescription] = useState(requirement.description || '');
+  const [status, setStatus] = useState(requirement.status);
+  const [growthEffort, setGrowthEffort] = useState(requirement.growth_team_effort);
+  const [platformEffort, setPlatformEffort] = useState(requirement.platform_team_effort);
+  const [submitting, setSubmitting] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!name.trim()) return;
+
+    setSubmitting(true);
+    await onSave({
+      name: name.trim(),
+      description: description.trim() || undefined,
+      status,
+      growth_team_effort: growthEffort,
+      platform_team_effort: platformEffort
+    });
+    setSubmitting(false);
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 overflow-y-auto">
+      <div className="flex min-h-full items-center justify-center p-4 text-center">
+        <div className="fixed inset-0 bg-black/30 backdrop-blur-sm" onClick={onClose} />
+
+        <div className="relative transform overflow-hidden rounded-2xl bg-white text-left shadow-2xl transition-all w-full max-w-md">
+          {/* Header */}
+          <div className="bg-gradient-to-r from-indigo-500 to-violet-600 px-6 py-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-white/20 rounded-lg">
+                  <Edit3 className="h-5 w-5 text-white" />
+                </div>
+                <h3 className="text-lg font-semibold text-white">Edit Requirement</h3>
+              </div>
+              <button onClick={onClose} className="p-1 hover:bg-white/20 rounded-lg transition-colors">
+                <X className="h-5 w-5 text-white" />
+              </button>
+            </div>
+          </div>
+
+          {/* Form */}
+          <form onSubmit={handleSubmit} className="p-6 space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Name *</label>
+              <input
+                type="text"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-sm"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+              <textarea
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                rows={2}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-sm resize-none"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
+              <select
+                value={status}
+                onChange={(e) => setStatus(e.target.value as RequirementStatus)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-sm bg-white"
+              >
+                {Object.entries(STATUS_CONFIG).map(([key, config]) => (
+                  <option key={key} value={key}>{config.label}</option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Effort Required</label>
+              <div className="flex gap-4">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={growthEffort}
+                    onChange={(e) => setGrowthEffort(e.target.checked)}
+                    className="w-4 h-4 text-violet-600 border-gray-300 rounded focus:ring-violet-500"
+                  />
+                  <span className="text-sm text-gray-600">Growth Team</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={platformEffort}
+                    onChange={(e) => setPlatformEffort(e.target.checked)}
+                    className="w-4 h-4 text-cyan-600 border-gray-300 rounded focus:ring-cyan-500"
+                  />
+                  <span className="text-sm text-gray-600">Platform Team</span>
+                </label>
+              </div>
+            </div>
+
+            {/* Actions */}
+            <div className="flex gap-3 pt-2">
+              <button
+                type="button"
+                onClick={onClose}
+                className="flex-1 px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={!name.trim() || submitting}
+                className="flex-1 px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
+              >
+                {submitting ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Saving...
+                  </>
+                ) : (
+                  <>
+                    <Check className="h-4 w-4" />
+                    Save Changes
+                  </>
+                )}
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
     </div>
   );
 }
