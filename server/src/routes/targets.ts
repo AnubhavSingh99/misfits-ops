@@ -2032,7 +2032,7 @@ router.get('/v2/hierarchy', async (req, res) => {
       LEFT JOIN booking b ON b.event_id = e.pk
       LEFT JOIN transaction t ON t.entity_id = b.id AND t.entity_type = 'BOOKING'
       LEFT JOIN payment p ON p.pk = t.payment_id
-      WHERE e.start_time >= '2026-03-01' AND e.start_time < '2026-04-01'
+      WHERE e.start_time >= '2026-03-01 00:00:00+05:30' AND e.start_time < '2026-04-01 00:00:00+05:30'
         AND e.state = 'CREATED'
         AND c.is_private = false
     `;

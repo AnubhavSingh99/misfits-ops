@@ -49,6 +49,12 @@ const formatCurrency = (value: number): string => {
   return `₹${(value / 1000).toFixed(1)}K`
 }
 
+// Get current month name and year
+const getCurrentMonthLabel = (): string => {
+  const now = new Date()
+  return now.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+}
+
 export function SummaryTiles({ summary, trends, filteredTotals, isFiltered, revenueStatus }: SummaryTilesProps) {
   if (!summary) return null
 
