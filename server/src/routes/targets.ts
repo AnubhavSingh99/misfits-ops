@@ -2168,38 +2168,60 @@ router.get('/v2/hierarchy', async (req, res) => {
     }
 
     // Process expansion targets - clubs with targets in areas different from their home area
-    // Collect unique expansion area_ids (areas where targets exist but not the club's home area)
-    const expansionTargets: { club: any, target: any, expansionAreaId: number }[] = [];
+    // First, get all unique dim_area_ids from targets and resolve them to production_area_ids
+    const allTargetDimAreaIds = new Set<number>();
     for (const club of clubsToProcess) {
       const clubId = parseInt(club.club_id);
-      const homeAreaId = parseInt(club.area_id) || 0;
+      const targets = targetsMap.get(clubId) || [];
+      for (const target of targets) {
+        if (target.target_area_id) {
+          allTargetDimAreaIds.add(parseInt(target.target_area_id));
+        }
+      }
+    }
+
+    // Resolve all dim_areas.id to production_area_id upfront
+    let dimToProductionMap = new Map<number, number>();
+    if (allTargetDimAreaIds.size > 0) {
+      const dimAreasQuery = `
+        SELECT id as dim_area_id, production_area_id
+        FROM dim_areas
+        WHERE id = ANY($1)
+      `;
+      const dimAreasResult = await queryLocal(dimAreasQuery, [[...allTargetDimAreaIds]]);
+      dimToProductionMap = new Map(dimAreasResult.rows.map((a: any) => [parseInt(a.dim_area_id), parseInt(a.production_area_id)]));
+    }
+
+    // Now collect expansion targets by comparing PRODUCTION area IDs
+    const expansionTargets: { club: any, target: any, expansionDimAreaId: number, expansionProdAreaId: number }[] = [];
+    for (const club of clubsToProcess) {
+      const clubId = parseInt(club.club_id);
+      const homeAreaId = parseInt(club.area_id) || 0; // This is production area.id
       const targets = targetsMap.get(clubId) || [];
 
       for (const target of targets) {
-        const targetAreaId = target.target_area_id ? parseInt(target.target_area_id) : null;
-        // If target has a different area than the club's home area, it's an expansion
-        if (targetAreaId && targetAreaId !== homeAreaId) {
-          expansionTargets.push({ club, target, expansionAreaId: targetAreaId });
+        const targetDimAreaId = target.target_area_id ? parseInt(target.target_area_id) : null;
+        if (!targetDimAreaId) continue;
+
+        // Resolve dim_areas.id to production_area_id for proper comparison
+        const targetProdAreaId = dimToProductionMap.get(targetDimAreaId);
+
+        // If target's production area is different from club's home area, it's an expansion
+        if (targetProdAreaId && targetProdAreaId !== homeAreaId) {
+          expansionTargets.push({
+            club,
+            target,
+            expansionDimAreaId: targetDimAreaId,
+            expansionProdAreaId: targetProdAreaId
+          });
         }
       }
     }
 
     // Process expansion targets if any
     if (expansionTargets.length > 0) {
-      // Get unique expansion area IDs (these are dim_areas.id values)
-      const expansionDimAreaIds = [...new Set(expansionTargets.map(e => e.expansionAreaId))];
-
-      // First, resolve dim_areas.id to production_area_id
-      const dimAreasQuery = `
-        SELECT id as dim_area_id, production_area_id
-        FROM dim_areas
-        WHERE id = ANY($1)
-      `;
-      const dimAreasResult = await queryLocal(dimAreasQuery, [expansionDimAreaIds]);
-      const dimToProductionMap = new Map(dimAreasResult.rows.map((a: any) => [parseInt(a.dim_area_id), parseInt(a.production_area_id)]));
-
-      // Get production area IDs for querying production database
-      const productionAreaIds = [...new Set(dimAreasResult.rows.map((a: any) => parseInt(a.production_area_id)))];
+      // Get unique expansion production area IDs for querying production DB
+      const expansionProdAreaIds = [...new Set(expansionTargets.map(e => e.expansionProdAreaId))];
 
       // Fetch area info from production for expansion areas using production_area_id
       const areaInfoQuery = `
@@ -2208,10 +2230,10 @@ router.get('/v2/hierarchy', async (req, res) => {
         JOIN city ci ON ar.city_id = ci.id
         WHERE ar.id = ANY($1)
       `;
-      const areaInfoResult = await queryProduction(areaInfoQuery, [productionAreaIds]);
-      // Map by production area ID, but we'll look up by dim_area_id
+      const areaInfoResult = await queryProduction(areaInfoQuery, [expansionProdAreaIds]);
+      // Map by production area ID
       const productionAreaInfo = new Map(areaInfoResult.rows.map((a: any) => [parseInt(a.id), a]));
-      // Create final map: dim_area_id -> area info (for backwards compatibility with rest of code)
+      // Create map: dim_area_id -> area info (for backwards compatibility with rest of code)
       const expansionAreaInfo = new Map<number, any>();
       for (const [dimAreaId, productionAreaId] of dimToProductionMap) {
         const areaInfo = productionAreaInfo.get(productionAreaId);
@@ -2220,15 +2242,15 @@ router.get('/v2/hierarchy', async (req, res) => {
         }
       }
 
-      // Group expansion targets by (club_id, expansion_area_id)
+      // Group expansion targets by (club_id, expansion_dim_area_id)
       const expansionsByClubArea = new Map<string, { club: any, targets: any[], areaInfo: any }>();
-      for (const { club, target, expansionAreaId } of expansionTargets) {
-        const key = `${club.club_id}-${expansionAreaId}`;
+      for (const { club, target, expansionDimAreaId } of expansionTargets) {
+        const key = `${club.club_id}-${expansionDimAreaId}`;
         if (!expansionsByClubArea.has(key)) {
           expansionsByClubArea.set(key, {
             club,
             targets: [],
-            areaInfo: expansionAreaInfo.get(expansionAreaId)
+            areaInfo: expansionAreaInfo.get(expansionDimAreaId)
           });
         }
         expansionsByClubArea.get(key)!.targets.push(target);
@@ -2431,19 +2453,28 @@ router.get('/v2/hierarchy', async (req, res) => {
       `;
       const areaInfoResult = await queryProduction(areaInfoQuery);
       const areaNameToInfo = new Map(areaInfoResult.rows.map((a: any) => [a.name.toLowerCase(), a]));
+      // Also create map by production area ID for quick lookup
+      const areaIdToInfo = new Map(areaInfoResult.rows.map((a: any) => [parseInt(a.id), a]));
+
+      // Get dim_areas mapping for resolving dim_area_id to production_area_id
+      const dimAreasMapQuery = `SELECT id as dim_area_id, production_area_id FROM dim_areas`;
+      const dimAreasMapResult = await queryLocal(dimAreasMapQuery);
+      const dimToProductionAreaMap = new Map(dimAreasMapResult.rows.map((a: any) => [parseInt(a.dim_area_id), parseInt(a.production_area_id)]));
 
       for (const launch of launchesData) {
         const activityId = activityNameToId.get(launch.activity_name);
         if (!activityId) continue; // Skip if activity not found
 
-        // Get launch target (may have area_id)
+        // Get launch target (may have area_id which is dim_areas.id)
         const launchTarget = launchTargetsMap.get(launch.launch_id);
-        const targetAreaId = launchTarget?.area_id ? parseInt(launchTarget.area_id) : null;
+        const dimAreaId = launchTarget?.area_id ? parseInt(launchTarget.area_id) : null;
+        // Resolve dim_areas.id to production_area_id
+        const targetAreaId = dimAreaId ? dimToProductionAreaMap.get(dimAreaId) : null;
 
-        // Get area info - try by area_id from target first, then by area name
+        // Get area info - try by production area_id from target first, then by area name
         // This ensures launches are placed in the correct city/area hierarchy
         let areaInfo = targetAreaId ?
-          areaInfoResult.rows.find((a: any) => parseInt(a.id) === targetAreaId) :
+          areaIdToInfo.get(targetAreaId) :
           areaNameToInfo.get((launch.planned_area || '').toLowerCase());
 
         if (!areaInfo) {
