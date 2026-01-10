@@ -1403,13 +1403,13 @@ function LaunchModal({ isOpen, onClose, context, onSave }: LaunchModalProps) {
   const [loadingDayTypes, setLoadingDayTypes] = useState(false)
 
   // City and Area states (changeable)
-  // Note: selectedCityId and selectedAreaId are dim_* IDs, resolved from production IDs in context
+  // Note: selectedCityId and selectedAreaId are production IDs (using scaling-tasks/filters API)
   const [selectedCityId, setSelectedCityId] = useState<number | undefined>()
   const [selectedCityName, setSelectedCityName] = useState<string>('')
   const [selectedAreaId, setSelectedAreaId] = useState<number | undefined>()
   const [selectedAreaName, setSelectedAreaName] = useState<string>('')
-  const [cities, setCities] = useState<{ id: number; name: string; production_city_id?: number }[]>([])
-  const [areas, setAreas] = useState<{ id: number; name: string; production_area_id?: number }[]>([])
+  const [cities, setCities] = useState<{ id: number; name: string }[]>([])
+  const [areas, setAreas] = useState<{ id: number; name: string }[]>([])
   const [loadingCities, setLoadingCities] = useState(false)
   const [loadingAreas, setLoadingAreas] = useState(false)
 
@@ -1434,66 +1434,46 @@ function LaunchModal({ isOpen, onClose, context, onSave }: LaunchModalProps) {
       .catch(console.error)
   }, [])
 
-  // Fetch all cities on mount
+  // Fetch all cities on mount - uses scaling-tasks/filters API which returns production IDs
   useEffect(() => {
     if (!isOpen) return
     setLoadingCities(true)
-    fetch('/api/targets/dimensions/city')
+    fetch('/api/scaling-tasks/filters/cities')
       .then(res => res.json())
       .then(data => {
-        if (data.success && data.values) {
-          const cityList = data.values.map((c: any) => ({
+        if (data.success && data.options) {
+          const cityList = data.options.map((c: any) => ({
             id: c.id,
-            name: c.name || c.city_name,
-            production_city_id: c.production_city_id
+            name: c.name
           })).sort((a: any, b: any) => a.name.localeCompare(b.name))
           setCities(cityList)
-
-          // If context has city_id (production ID), find matching dim_cities.id
-          if (context?.city_id && !selectedCityId) {
-            const matchingCity = cityList.find((c: any) => c.production_city_id === context.city_id)
-            if (matchingCity) {
-              setSelectedCityId(matchingCity.id)
-              setSelectedCityName(matchingCity.name)
-            }
-          }
         }
       })
       .catch(console.error)
       .finally(() => setLoadingCities(false))
-  }, [isOpen, context?.city_id])
+  }, [isOpen])
 
-  // Fetch areas when city changes
+  // Fetch areas when city changes - uses scaling-tasks/filters API which returns production IDs
   useEffect(() => {
     if (!isOpen || !selectedCityId) {
       setAreas([])
       return
     }
     setLoadingAreas(true)
-    fetch(`/api/targets/dimensions/area?city_id=${selectedCityId}`)
+    fetch(`/api/scaling-tasks/filters/areas?city_ids=${selectedCityId}`)
       .then(res => res.json())
       .then(data => {
-        if (data.success && data.values) {
-          const areaList = data.values.map((a: any) => ({
+        if (data.success && data.options) {
+          const areaList = data.options.map((a: any) => ({
             id: a.id,
-            name: a.name || a.area_name,
-            production_area_id: a.production_area_id
+            name: a.name
           }))
           setAreas(areaList)
-
-          // If context has area_id (production ID), find matching dim_areas.id
-          if (context?.area_id && !selectedAreaId) {
-            const matchingArea = areaList.find((a: any) => a.production_area_id === context.area_id)
-            if (matchingArea) {
-              setSelectedAreaId(matchingArea.id)
-              setSelectedAreaName(matchingArea.name)
-            }
-          }
         }
       })
       .catch(console.error)
       .finally(() => setLoadingAreas(false))
-  }, [isOpen, selectedCityId, context?.area_id])
+  }, [isOpen, selectedCityId])
 
   // Fetch day types when modal opens
   useEffect(() => {
@@ -1542,17 +1522,15 @@ function LaunchModal({ isOpen, onClose, context, onSave }: LaunchModalProps) {
   }, [activityName, selectedCityName, selectedAreaName])
 
   // Reset form when modal opens
-  // Note: city_id and area_id are NOT set directly from context because context has production IDs
-  // while dropdowns use dim_* IDs. The city/area fetch effects resolve production IDs to dim_* IDs.
+  // Note: city_id and area_id are production IDs - set directly from context
   useEffect(() => {
     if (isOpen && context) {
       setClubName('')
       setActivityName(context.activity_name || '')
-      // Don't set selectedCityId/selectedAreaId here - they're resolved from production IDs
-      // in the city/area fetch effects. Only set the names for display.
-      setSelectedCityId(undefined)
+      // Set city/area IDs directly from context (they're production IDs, matching the API)
+      setSelectedCityId(context.city_id)
       setSelectedCityName(context.city_name || '')
-      setSelectedAreaId(undefined)
+      setSelectedAreaId(context.area_id)
       setSelectedAreaName(context.area_name || '')
       setTargetMeetups(6)
       setMeetupCost(200)

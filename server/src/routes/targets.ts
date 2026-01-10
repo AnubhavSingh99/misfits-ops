@@ -2186,18 +2186,39 @@ router.get('/v2/hierarchy', async (req, res) => {
 
     // Process expansion targets if any
     if (expansionTargets.length > 0) {
-      // Get unique expansion area IDs
-      const expansionAreaIds = [...new Set(expansionTargets.map(e => e.expansionAreaId))];
+      // Get unique expansion area IDs (these are dim_areas.id values)
+      const expansionDimAreaIds = [...new Set(expansionTargets.map(e => e.expansionAreaId))];
 
-      // Fetch area info from production for expansion areas
+      // First, resolve dim_areas.id to production_area_id
+      const dimAreasQuery = `
+        SELECT id as dim_area_id, production_area_id
+        FROM dim_areas
+        WHERE id = ANY($1)
+      `;
+      const dimAreasResult = await queryLocal(dimAreasQuery, [expansionDimAreaIds]);
+      const dimToProductionMap = new Map(dimAreasResult.rows.map((a: any) => [parseInt(a.dim_area_id), parseInt(a.production_area_id)]));
+
+      // Get production area IDs for querying production database
+      const productionAreaIds = [...new Set(dimAreasResult.rows.map((a: any) => parseInt(a.production_area_id)))];
+
+      // Fetch area info from production for expansion areas using production_area_id
       const areaInfoQuery = `
         SELECT ar.id, ar.name as area_name, ci.id as city_id, ci.name as city_name
         FROM area ar
         JOIN city ci ON ar.city_id = ci.id
         WHERE ar.id = ANY($1)
       `;
-      const areaInfoResult = await queryProduction(areaInfoQuery, [expansionAreaIds]);
-      const expansionAreaInfo = new Map(areaInfoResult.rows.map((a: any) => [parseInt(a.id), a]));
+      const areaInfoResult = await queryProduction(areaInfoQuery, [productionAreaIds]);
+      // Map by production area ID, but we'll look up by dim_area_id
+      const productionAreaInfo = new Map(areaInfoResult.rows.map((a: any) => [parseInt(a.id), a]));
+      // Create final map: dim_area_id -> area info (for backwards compatibility with rest of code)
+      const expansionAreaInfo = new Map<number, any>();
+      for (const [dimAreaId, productionAreaId] of dimToProductionMap) {
+        const areaInfo = productionAreaInfo.get(productionAreaId);
+        if (areaInfo) {
+          expansionAreaInfo.set(dimAreaId, areaInfo);
+        }
+      }
 
       // Group expansion targets by (club_id, expansion_area_id)
       const expansionsByClubArea = new Map<string, { club: any, targets: any[], areaInfo: any }>();
