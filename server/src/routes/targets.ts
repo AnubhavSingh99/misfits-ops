@@ -4626,10 +4626,10 @@ router.get('/clubs/:clubId/meetup-details', async (req, res) => {
         e.ticket_price as price,
         COUNT(DISTINCT CASE WHEN b.booking_status NOT IN ('DEREGISTERED', 'INITIATED') THEN b.id END) as total_bookings,
         COUNT(DISTINCT CASE WHEN b.booking_status = 'WAITLISTED' THEN b.id END) as waitlist_count,
-        COUNT(DISTINCT CASE WHEN b.booking_status = 'NO_SHOW' THEN b.id END) as no_show_count,
+        COUNT(DISTINCT CASE WHEN b.booking_status = 'NOT_ATTENDED' THEN b.id END) as no_show_count,
         COALESCE(SUM(CASE WHEN p.state = 'COMPLETED' THEN p.amount / 100.0 ELSE 0 END), 0) as revenue,
         COALESCE(SUM(CASE WHEN p.state = 'PENDING' OR p.state IS NULL THEN
-          CASE WHEN b.booking_status IN ('CONFIRMED', 'CHECKED_IN') THEN e.ticket_price / 100.0 ELSE 0 END
+          CASE WHEN b.booking_status IN ('REGISTERED', 'ATTENDED') THEN e.ticket_price / 100.0 ELSE 0 END
         ELSE 0 END), 0) as pending_payment
       FROM event e
       LEFT JOIN booking b ON b.event_id = e.pk AND b.booking_status NOT IN ('DEREGISTERED', 'INITIATED')
@@ -4847,10 +4847,10 @@ router.get('/clubs/:clubId/meetup-details', async (req, res) => {
       SELECT
         COUNT(DISTINCT e.pk) as meetup_count,
         COUNT(DISTINCT CASE WHEN b.booking_status NOT IN ('DEREGISTERED', 'INITIATED') THEN b.id END) as booking_count,
-        COUNT(DISTINCT CASE WHEN b.booking_status = 'NO_SHOW' THEN b.id END) as no_show_count,
+        COUNT(DISTINCT CASE WHEN b.booking_status = 'NOT_ATTENDED' THEN b.id END) as no_show_count,
         COALESCE(SUM(CASE WHEN p.state = 'COMPLETED' THEN p.amount / 100.0 ELSE 0 END), 0) as revenue,
         COALESCE(SUM(CASE WHEN p.state = 'PENDING' OR p.state IS NULL THEN
-          CASE WHEN b.booking_status IN ('CONFIRMED', 'CHECKED_IN') THEN e.ticket_price / 100.0 ELSE 0 END
+          CASE WHEN b.booking_status IN ('REGISTERED', 'ATTENDED') THEN e.ticket_price / 100.0 ELSE 0 END
         ELSE 0 END), 0) as pending_payment
       FROM event e
       LEFT JOIN booking b ON b.event_id = e.pk AND b.booking_status NOT IN ('DEREGISTERED', 'INITIATED')
