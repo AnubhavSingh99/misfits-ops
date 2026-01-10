@@ -1872,8 +1872,27 @@ router.put('/launches/:launchId/dimensional/:targetId/progress', async (req, res
 // GET /api/targets/v2/hierarchy - Get full hierarchy for V2 dashboard
 router.get('/v2/hierarchy', async (req, res) => {
   try {
-    const { activity_id, city_id, area_id, include_launches, targets_only, use_auto_matching, hierarchy_order } = req.query;
+    const { activity_id, city_id, area_id, include_launches, targets_only, use_auto_matching, hierarchy_order, week_start, week_end } = req.query;
     const autoMatchingEnabled = use_auto_matching === 'true';
+
+    // Parse week bounds (defaults to last completed week if not provided)
+    // week_start and week_end are ISO date strings (YYYY-MM-DD)
+    const weekStartDate = week_start && typeof week_start === 'string'
+      ? new Date(week_start)
+      : null;
+    const weekEndDate = week_end && typeof week_end === 'string'
+      ? new Date(week_end)
+      : null;
+
+    // SQL date expressions - use provided dates or default to last completed week
+    const weekStartSQL = weekStartDate
+      ? `'${weekStartDate.toISOString().split('T')[0]}'::date`
+      : `DATE_TRUNC('week', CURRENT_DATE)::date - 7`;
+    const weekEndSQL = weekEndDate
+      ? `'${weekEndDate.toISOString().split('T')[0]}'::date`
+      : `DATE_TRUNC('week', CURRENT_DATE)::date`;
+
+    logger.info(`V2 Hierarchy request with week: ${weekStartDate?.toISOString() || 'default'} to ${weekEndDate?.toISOString() || 'default'}`);
 
     // Parse hierarchy_order parameter (comma-separated list of levels)
     // Valid levels: activity, city, area
@@ -1921,8 +1940,8 @@ router.get('/v2/hierarchy', async (req, res) => {
         JOIN city ci ON ar.city_id = ci.id
         ORDER BY e.club_id, e.start_time DESC
       ),
-      -- Main club metrics with LAST COMPLETED WEEK meetups and revenue
-      -- Last completed week = Monday to Sunday of previous week
+      -- Main club metrics with meetups and revenue for selected week
+      -- Week bounds are parameterized (defaults to last completed week)
       club_metrics AS (
         SELECT
           c.pk as club_id,
@@ -1930,16 +1949,16 @@ router.get('/v2/hierarchy', async (req, res) => {
           a.id as activity_id,
           a.name as activity_name,
           COUNT(DISTINCT CASE
-            WHEN e.start_time >= DATE_TRUNC('week', CURRENT_DATE) - INTERVAL '1 week'
-            AND e.start_time < DATE_TRUNC('week', CURRENT_DATE)
+            WHEN e.start_time >= ${weekStartSQL}
+            AND e.start_time < ${weekEndSQL}
             AND e.state = 'CREATED'
             THEN e.pk
           END) as current_meetups,
           COALESCE(SUM(
             CASE
               WHEN p.state = 'COMPLETED'
-              AND e.start_time >= DATE_TRUNC('week', CURRENT_DATE) - INTERVAL '1 week'
-              AND e.start_time < DATE_TRUNC('week', CURRENT_DATE)
+              AND e.start_time >= ${weekStartSQL}
+              AND e.start_time < ${weekEndSQL}
               AND e.state = 'CREATED'
               THEN p.amount / 100.0
               ELSE 0
@@ -2122,7 +2141,12 @@ router.get('/v2/hierarchy', async (req, res) => {
       for (let i = 0; i < clubsWithTargets.length; i += batchSize) {
         const batch = clubsWithTargets.slice(i, i + batchSize);
         const results = await Promise.all(
-          batch.map(club => matchClubMeetups(club.club_id, club.club_name))
+          batch.map(club => matchClubMeetups(
+            club.club_id,
+            club.club_name,
+            weekStartDate || undefined,
+            weekEndDate || undefined
+          ))
         );
         for (const result of results) {
           autoMatchResults.set(result.club_id, result);
@@ -4194,6 +4218,7 @@ router.get('/picker/clubs', async (req, res) => {
 router.get('/clubs/:clubId/meetup-details', async (req, res) => {
   try {
     const clubId = parseInt(req.params.clubId);
+    const { week_start, week_end } = req.query;
 
     if (isNaN(clubId)) {
       return res.status(400).json({
@@ -4202,8 +4227,24 @@ router.get('/clubs/:clubId/meetup-details', async (req, res) => {
       });
     }
 
+    // Parse week bounds (defaults to last completed week if not provided)
+    const weekStartDate = week_start && typeof week_start === 'string'
+      ? new Date(week_start)
+      : undefined;
+    const weekEndDate = week_end && typeof week_end === 'string'
+      ? new Date(week_end)
+      : undefined;
+
+    // SQL date expressions for the query
+    const weekStartSQL = weekStartDate
+      ? `'${weekStartDate.toISOString().split('T')[0]}'::date`
+      : `DATE_TRUNC('week', CURRENT_DATE)::date - 7`;
+    const weekEndSQL = weekEndDate
+      ? `'${weekEndDate.toISOString().split('T')[0]}'::date`
+      : `DATE_TRUNC('week', CURRENT_DATE)::date`;
+
     // Use the matching service - same logic as the main dashboard
-    const matchResult = await matchClubMeetups(clubId);
+    const matchResult = await matchClubMeetups(clubId, '', weekStartDate, weekEndDate);
 
     // Build a map of event_id -> matched target
     const eventToTarget = new Map<number, { id: number; name: string | null }>();
@@ -4262,8 +4303,8 @@ router.get('/clubs/:clubId/meetup-details', async (req, res) => {
       LEFT JOIN transaction t ON t.entity_id = b.id AND t.entity_type = 'BOOKING'
       LEFT JOIN payment p ON p.pk = t.payment_id
       WHERE e.club_id = $1
-        AND e.start_time >= DATE_TRUNC('week', CURRENT_DATE) - INTERVAL '1 week'
-        AND e.start_time < DATE_TRUNC('week', CURRENT_DATE)
+        AND e.start_time >= ${weekStartSQL}
+        AND e.start_time < ${weekEndSQL}
         AND e.state = 'CREATED'
       GROUP BY e.pk, e.name, e.start_time, e.max_people, e.ticket_price
       ORDER BY e.start_time DESC

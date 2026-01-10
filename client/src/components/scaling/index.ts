@@ -14,4 +14,5 @@ export { StageInfoModal, InfoIconButton } from './StageInfoModal';
 export { MeetupDetailsTooltip } from './MeetupDetailsTooltip';
 export { ExpandClubModal, type ExpandClubTargetData } from './ExpandClubModal';
 export { AddChoiceModal } from './AddChoiceModal';
+export { WeekSelector, getWeekBounds, formatWeekLabel, type WeekOption } from './WeekSelector';
 export * from './taskRollup';

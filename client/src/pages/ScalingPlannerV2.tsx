@@ -33,7 +33,7 @@ import type {
   ValidationStatus,
   ScalingTaskSummary
 } from '../../shared/types'
-import { SprintViewModal, TaskSummaryCell, ScalingTaskCreateModal, SummaryTiles, HierarchyFilterBar, HierarchyRollupHeader, RevenueStatusPills, DayTypeTags, StageInfoModal, InfoIconButton, buildRolledUpSummaryMap, buildSummaryKey, type HierarchyFilters, type HierarchyLevel, MeetupDetailsTooltip, ExpandClubModal, AddChoiceModal, type ExpandClubTargetData } from '../components/scaling'
+import { SprintViewModal, TaskSummaryCell, ScalingTaskCreateModal, SummaryTiles, HierarchyFilterBar, HierarchyRollupHeader, RevenueStatusPills, DayTypeTags, StageInfoModal, InfoIconButton, buildRolledUpSummaryMap, buildSummaryKey, type HierarchyFilters, type HierarchyLevel, MeetupDetailsTooltip, ExpandClubModal, AddChoiceModal, type ExpandClubTargetData, WeekSelector, getWeekBounds, formatWeekLabel, type WeekOption } from '../components/scaling'
 import { getTeamForClub, type TeamKey } from '../../shared/teamConfig'
 import { DimensionalTargetsService } from '../services/api'
 
@@ -1833,9 +1833,10 @@ interface HierarchyRowProps {
   onEditStages: (node: HierarchyNode) => void
   onOpenSprint: (node: HierarchyNode) => void  // For opening sprint modal
   taskSummary: ScalingTaskSummary | null       // Task summary for this node
+  weekBounds: { start: Date; end: Date }       // Week bounds for tooltip
 }
 
-function HierarchyRow({ node, level, expanded, onToggle, onEditTarget, onDeleteTarget, onAddAtAreaLevel, onExpandClub, onCreateTask, onEditStages, onOpenSprint, taskSummary }: HierarchyRowProps) {
+function HierarchyRow({ node, level, expanded, onToggle, onEditTarget, onDeleteTarget, onAddAtAreaLevel, onExpandClub, onCreateTask, onEditStages, onOpenSprint, taskSummary, weekBounds }: HierarchyRowProps) {
   const hasChildren = node.children && node.children.length > 0
   const isLaunch = node.is_launch || node.type === 'launch'
   const isTarget = node.type === 'target'
@@ -1933,6 +1934,9 @@ function HierarchyRow({ node, level, expanded, onToggle, onEditTarget, onDeleteT
             clubName={node.name}
             currentMeetups={node.current_meetups}
             currentRevenue={node.current_revenue}
+            weekLabel={formatWeekLabel(weekBounds.start, weekBounds.end)}
+            weekStart={weekBounds.start.toISOString().split('T')[0]}
+            weekEnd={weekBounds.end.toISOString().split('T')[0]}
           >
             <div className="hover:bg-gray-100 rounded px-1 -mx-1 transition-colors">
               <div className="text-gray-800 font-mono">{node.current_meetups}</div>
@@ -2153,6 +2157,16 @@ export default function ScalingPlannerV2() {
   const [enabledLevels, setEnabledLevels] = useState<Set<HierarchyLevel>>(new Set(['activity', 'city', 'area']))
   const [draggingLevel, setDraggingLevel] = useState<HierarchyLevel | null>(null)
 
+  // Week selector state
+  const [selectedWeek, setSelectedWeek] = useState<WeekOption>('last_completed')
+  const [customWeekStart, setCustomWeekStart] = useState<Date | null>(null)
+
+  // Compute week bounds from selection
+  const weekBounds = useMemo(() =>
+    getWeekBounds(selectedWeek, customWeekStart || undefined),
+    [selectedWeek, customWeekStart]
+  )
+
   // Get enabled levels in order for API call
   const enabledHierarchyOrder = useMemo(() => {
     return hierarchyLevels.filter(l => enabledLevels.has(l))
@@ -2251,6 +2265,9 @@ export default function ScalingPlannerV2() {
       if (enabledHierarchyOrder.length > 0) {
         hierarchyParams.append('hierarchy_order', enabledHierarchyOrder.join(','))
       }
+      // Add week params
+      hierarchyParams.append('week_start', weekBounds.start.toISOString().split('T')[0])
+      hierarchyParams.append('week_end', weekBounds.end.toISOString().split('T')[0])
 
       const [hierarchyRes, trendsRes] = await Promise.all([
         fetch(`/api/targets/v2/hierarchy?${hierarchyParams}`),
@@ -2286,12 +2303,12 @@ export default function ScalingPlannerV2() {
     } finally {
       setLoading(false)
     }
-  }, [includeLaunches, enabledHierarchyOrder, hierarchy.length])
+  }, [includeLaunches, enabledHierarchyOrder, hierarchy.length, weekBounds])
 
   useEffect(() => {
     fetchData()
     fetchTaskSummaries()
-  }, [includeLaunches, enabledHierarchyOrder])
+  }, [includeLaunches, enabledHierarchyOrder, selectedWeek, customWeekStart])
 
   // Hierarchy order handlers
   const handleDragStart = (level: HierarchyLevel) => {
@@ -3095,13 +3112,21 @@ export default function ScalingPlannerV2() {
             </h1>
             <p className="text-gray-500">Track targets across activities, cities, and areas</p>
           </div>
-          <button
-            onClick={fetchData}
-            className="p-2 rounded-lg bg-white hover:bg-gray-100 text-gray-600
-              hover:text-gray-900 transition-all border border-gray-200 shadow-sm"
-          >
-            <RefreshCw size={20} />
-          </button>
+          <div className="flex items-center gap-3">
+            <WeekSelector
+              selectedWeek={selectedWeek}
+              onWeekChange={setSelectedWeek}
+              weekBounds={weekBounds}
+              onCustomWeekChange={(start) => setCustomWeekStart(start)}
+            />
+            <button
+              onClick={() => fetchData()}
+              className="p-2 rounded-lg bg-white hover:bg-gray-100 text-gray-600
+                hover:text-gray-900 transition-all border border-gray-200 shadow-sm"
+            >
+              <RefreshCw size={20} />
+            </button>
+          </div>
         </div>
 
         {/* Summary Tiles - uses filtered totals when filters are active */}
@@ -3216,6 +3241,7 @@ export default function ScalingPlannerV2() {
                       onEditStages={handleEditStages}
                       onOpenSprint={(n) => setSprintNode(n)}
                       taskSummary={getTaskSummary(node)}
+                      weekBounds={weekBounds}
                     />
                   ))
                 )}

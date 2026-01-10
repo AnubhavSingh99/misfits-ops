@@ -29,6 +29,9 @@ interface MeetupDetailsTooltipProps {
   currentMeetups: number;
   currentRevenue: number;
   children: React.ReactNode;
+  weekLabel?: string;   // e.g., "Jan 6 - Jan 12"
+  weekStart?: string;   // ISO date string e.g., "2026-01-06"
+  weekEnd?: string;     // ISO date string e.g., "2026-01-13"
 }
 
 // Format currency in compact form
@@ -59,7 +62,10 @@ export function MeetupDetailsTooltip({
   clubName,
   currentMeetups,
   currentRevenue,
-  children
+  children,
+  weekLabel,
+  weekStart,
+  weekEnd
 }: MeetupDetailsTooltipProps) {
   const [isVisible, setIsVisible] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -80,7 +86,11 @@ export function MeetupDetailsTooltip({
     setError(null);
 
     try {
-      const response = await fetch(`/api/targets/clubs/${clubId}/meetup-details`);
+      let url = `/api/targets/clubs/${clubId}/meetup-details`;
+      if (weekStart && weekEnd) {
+        url += `?week_start=${weekStart}&week_end=${weekEnd}`;
+      }
+      const response = await fetch(url);
       if (!response.ok) throw new Error('Failed to fetch');
       const result = await response.json();
       setData(result);
@@ -89,7 +99,7 @@ export function MeetupDetailsTooltip({
     } finally {
       setIsLoading(false);
     }
-  }, [clubId, data, isLoading]);
+  }, [clubId, weekStart, weekEnd, data, isLoading]);
 
   // Calculate position
   const updatePosition = useCallback(() => {
@@ -197,7 +207,9 @@ export function MeetupDetailsTooltip({
               <span className="text-sm font-medium text-gray-700 truncate max-w-[260px]">
                 {truncateName(clubName, 32)}
               </span>
-              <span className="text-[10px] text-gray-400 uppercase tracking-wider">Last Week</span>
+              <span className="text-[10px] text-gray-400 uppercase tracking-wider">
+                {weekLabel || 'Last Week'}
+              </span>
             </div>
 
             {/* Content */}
@@ -213,7 +225,7 @@ export function MeetupDetailsTooltip({
                 </div>
               ) : data?.meetups.length === 0 ? (
                 <div className="flex items-center justify-center py-8 text-xs text-gray-400">
-                  No meetups last week
+                  No meetups {weekLabel ? `for ${weekLabel}` : 'last week'}
                 </div>
               ) : (
                 <>
