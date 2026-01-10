@@ -2324,7 +2324,8 @@ export default function ScalingPlannerV2() {
     cities: [],
     areas: [],
     clubs: [],
-    teams: []
+    teams: [],
+    health: []
   })
 
   // Hierarchy order state (drag-drop reorder + enable/disable)
