@@ -2068,12 +2068,9 @@ function HierarchyRow({ node, level, expanded, onToggle, onEditTarget, onDeleteT
               />
             </div>
           </MeetupDetailsTooltip>
-        ) : node.health_distribution ? (
-          // Roll-up level: show distribution bar with green/total count
-          <HealthDistributionBar distribution={node.health_distribution} />
         ) : node.health_status ? (
-          // Fallback: single health dot if no distribution data
-          <div className="flex justify-center">
+          // Roll-up level: show health dot with tooltip
+          <div className="flex justify-center" onClick={(e) => e.stopPropagation()}>
             <HealthDot
               status={node.health_status as HealthStatus}
               score={node.health_score}
