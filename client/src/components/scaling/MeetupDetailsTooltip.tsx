@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { Loader2, ChevronDown, TrendingUp, TrendingDown, Minus, AlertTriangle, Calendar, Users, DollarSign, Star, Clock, AlertCircle } from 'lucide-react';
+import { Loader2, ChevronDown, TrendingUp, TrendingDown, Minus, AlertTriangle, Calendar, Users, DollarSign, Star, Clock, AlertCircle, Info, Banknote } from 'lucide-react';
 import { getWeekBounds, formatWeekLabel, type WeekOption } from './WeekSelector';
 
 interface MeetupDetail {
@@ -67,6 +67,7 @@ interface MeetupDetailsResponse {
   club_id: number;
   meetups: MeetupDetail[];
   summary?: SummaryData;
+  l4w_pending_payments?: number;
   total_meetups: number;
   total_revenue: number;
   total_waitlist: number;
@@ -276,8 +277,50 @@ function HealthMetricCard({
   );
 }
 
+// Info tooltip for pending payments definition
+function PendingInfoTooltip() {
+  const [show, setShow] = useState(false);
+  const [pos, setPos] = useState({ top: 0, left: 0 });
+  const btnRef = useRef<HTMLButtonElement>(null);
+
+  const handleMouseEnter = () => {
+    if (btnRef.current) {
+      const rect = btnRef.current.getBoundingClientRect();
+      setPos({ top: rect.bottom + 4, left: rect.left });
+      setShow(true);
+    }
+  };
+
+  return (
+    <>
+      <button
+        ref={btnRef}
+        onMouseEnter={handleMouseEnter}
+        onMouseLeave={() => setShow(false)}
+        className="p-0.5 rounded hover:bg-gray-200 transition-colors"
+      >
+        <Info size={10} className="text-gray-400" />
+      </button>
+      {show && createPortal(
+        <div
+          className="fixed z-[10000] pointer-events-none"
+          style={{ top: pos.top, left: pos.left }}
+        >
+          <div className="w-56 px-2.5 py-2 rounded-lg bg-gray-900 text-white text-[10px] leading-relaxed shadow-xl">
+            <div className="font-semibold mb-1">Pending Payments</div>
+            <div className="text-gray-300">
+              Amount owed by users who attended (REGISTERED or ATTENDED status) but haven't completed payment yet.
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+    </>
+  );
+}
+
 // Summary section with key metrics
-function SummarySection({ summary }: { summary: SummaryData }) {
+function SummarySection({ summary, l4wPending }: { summary: SummaryData; l4wPending?: number }) {
   return (
     <div className="px-4 py-3 border-b border-gray-100 bg-gradient-to-br from-slate-50/80 to-white">
       <div className="flex items-center gap-2 mb-3">
@@ -332,6 +375,22 @@ function SummarySection({ summary }: { summary: SummaryData }) {
           icon={Star}
         />
       </div>
+
+      {/* L4W Pending Payments - highlighted row */}
+      {l4wPending !== undefined && l4wPending > 0 && (
+        <div className="mt-3 pt-3 border-t border-amber-200/60">
+          <div className="flex items-center justify-between px-2 py-2 rounded-lg bg-amber-50/80 border border-amber-200/50">
+            <div className="flex items-center gap-2">
+              <Banknote size={14} className="text-amber-600" />
+              <span className="text-[10px] font-semibold text-amber-800 uppercase tracking-wider">L4W Pending</span>
+              <PendingInfoTooltip />
+            </div>
+            <span className="text-base font-bold text-amber-700 tabular-nums">
+              {formatCurrency(l4wPending)}
+            </span>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -614,14 +673,8 @@ export function MeetupDetailsTooltip({
               </div>
             ) : (
               <>
-                {/* Summary Section */}
-                {data?.summary && <SummarySection summary={data.summary} />}
-
-                {/* Health Section */}
-                {data?.health && <HealthSection health={data.health} />}
-
-                {/* Meetups List */}
-                <div className="max-h-[200px] overflow-y-auto">
+                {/* Meetups List - First */}
+                <div className="max-h-[180px] overflow-y-auto">
                   {data?.meetups.length === 0 ? (
                     <div className="flex items-center justify-center py-8 text-sm text-gray-400">
                       No meetups for {effectiveWeekLabel}
@@ -711,6 +764,12 @@ export function MeetupDetailsTooltip({
                     </>
                   )}
                 </div>
+
+                {/* Health Section - Second */}
+                {data?.health && <HealthSection health={data.health} />}
+
+                {/* Summary Section - Third */}
+                {data?.summary && <SummarySection summary={data.summary} l4wPending={data.l4w_pending_payments} />}
               </>
             )}
           </div>

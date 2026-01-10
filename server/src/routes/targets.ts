@@ -4847,6 +4847,7 @@ router.get('/clubs/:clubId/meetup-details', async (req, res) => {
       SELECT
         COUNT(DISTINCT e.pk) as meetup_count,
         COUNT(DISTINCT CASE WHEN b.booking_status NOT IN ('DEREGISTERED', 'INITIATED') THEN b.id END) as booking_count,
+        COUNT(DISTINCT CASE WHEN b.booking_status = 'WAITLISTED' THEN b.id END) as waitlist_count,
         COUNT(DISTINCT CASE WHEN b.booking_status = 'NOT_ATTENDED' THEN b.id END) as no_show_count,
         COALESCE(SUM(CASE WHEN p.state = 'COMPLETED' THEN p.amount / 100.0 ELSE 0 END), 0) as revenue,
         COALESCE(SUM(CASE WHEN p.state = 'PENDING' OR p.state IS NULL THEN
@@ -4865,6 +4866,24 @@ router.get('/clubs/:clubId/meetup-details', async (req, res) => {
     const prevWeekTotalsResult = await queryProduction(prevWeekTotalsQuery, [clubId]);
     const prevWeekTotals = prevWeekTotalsResult.rows[0] || {};
 
+    // Fetch last 4 weeks pending payments (from 4 weeks before selected week end)
+    const l4wPendingQuery = `
+      SELECT
+        COALESCE(SUM(CASE WHEN p.state = 'PENDING' OR p.state IS NULL THEN
+          CASE WHEN b.booking_status IN ('REGISTERED', 'ATTENDED') THEN e.ticket_price / 100.0 ELSE 0 END
+        ELSE 0 END), 0) as pending_payment
+      FROM event e
+      LEFT JOIN booking b ON b.event_id = e.pk AND b.booking_status NOT IN ('DEREGISTERED', 'INITIATED')
+      LEFT JOIN transaction t ON t.entity_id = b.id AND t.entity_type = 'BOOKING'
+      LEFT JOIN payment p ON p.pk = t.payment_id
+      WHERE e.club_id = $1
+        AND e.start_time >= ${weekEndSQL} - INTERVAL '4 weeks'
+        AND e.start_time < ${weekEndSQL}
+        AND e.state = 'CREATED'
+    `;
+    const l4wPendingResult = await queryProduction(l4wPendingQuery, [clubId]);
+    const l4wPendingPayments = parseFloat(l4wPendingResult.rows[0]?.pending_payment) || 0;
+
     // Calculate current week totals
     const currentTotals = {
       meetups: meetups.length,
@@ -4878,6 +4897,7 @@ router.get('/clubs/:clubId/meetup-details', async (req, res) => {
     const prevTotals = {
       meetups: parseInt(prevWeekTotals.meetup_count) || 0,
       bookings: parseInt(prevWeekTotals.booking_count) || 0,
+      waitlist: parseInt(prevWeekTotals.waitlist_count) || 0,
       no_shows: parseInt(prevWeekTotals.no_show_count) || 0,
       revenue: parseFloat(prevWeekTotals.revenue) || 0,
       pending: parseFloat(prevWeekTotals.pending_payment) || 0
@@ -4900,6 +4920,7 @@ router.get('/clubs/:clubId/meetup-details', async (req, res) => {
         current: {
           meetups: currentTotals.meetups,
           bookings: currentTotals.bookings,
+          waitlist: currentTotals.waitlist,
           no_show_pct: currentNoShowPct,
           revenue: currentTotals.revenue,
           pending: currentTotals.pending,
@@ -4908,6 +4929,7 @@ router.get('/clubs/:clubId/meetup-details', async (req, res) => {
         previous: {
           meetups: prevTotals.meetups,
           bookings: prevTotals.bookings,
+          waitlist: prevTotals.waitlist,
           no_show_pct: prevNoShowPct,
           revenue: prevTotals.revenue,
           pending: prevTotals.pending,
@@ -4916,12 +4938,15 @@ router.get('/clubs/:clubId/meetup-details', async (req, res) => {
         change: {
           meetups: currentTotals.meetups - prevTotals.meetups,
           bookings: currentTotals.bookings - prevTotals.bookings,
+          waitlist: currentTotals.waitlist - prevTotals.waitlist,
           no_show_pct: Math.round((currentNoShowPct - prevNoShowPct) * 10) / 10,
           revenue: currentTotals.revenue - prevTotals.revenue,
           pending: currentTotals.pending - prevTotals.pending,
           rating: Math.round((avgRating - prevAvgRating) * 100) / 100
         }
       },
+      // Last 4 weeks pending payments (for collection focus)
+      l4w_pending_payments: l4wPendingPayments,
       // Legacy fields for backwards compatibility
       total_meetups: meetups.length,
       total_revenue: currentTotals.revenue,

@@ -78,24 +78,26 @@ export function HealthDot({
   }, []);
 
   return (
-    <div className="relative">
+    <div className="relative inline-flex items-center justify-center">
+      {/* Larger hitbox wrapper for easier hovering */}
       <button
         ref={dotRef}
         onClick={onClick}
         onMouseEnter={handleMouseEnter}
         onMouseLeave={handleMouseLeave}
-        className={`
+        className="p-1.5 -m-1.5 cursor-pointer group"
+      >
+        <div className={`
           ${sizeClasses[size]}
           ${colors.bg}
           rounded-full
           ring-1 ring-white
-          cursor-pointer
           transition-all duration-200 ease-out
-          hover:scale-125 hover:ring-2 ${colors.ring}
+          group-hover:scale-125 group-hover:ring-2 ${colors.ring}
           ${colors.glow}
           ${className}
-        `}
-      />
+        `} />
+      </button>
 
       {/* Portal-based tooltip to escape overflow containers */}
       {showTooltip && isHovered && createPortal(
