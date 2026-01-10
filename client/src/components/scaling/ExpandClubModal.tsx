@@ -159,11 +159,11 @@ export function ExpandClubModal({ isOpen, onClose, onSave, context }: ExpandClub
     fetchCities()
   }, [isOpen, selectedActivityId])
 
-  // Fetch areas (filtered by activity and city) - uses production IDs
+  // Fetch areas (filtered by city only) - allows selecting ANY area in the city for expansion
   useEffect(() => {
     if (!isOpen) return
 
-    if (!selectedActivityId || !selectedCityId) {
+    if (!selectedCityId) {
       setAreas([])
       return
     }
@@ -171,7 +171,8 @@ export function ExpandClubModal({ isOpen, onClose, onSave, context }: ExpandClub
     const fetchAreas = async () => {
       setLoadingAreas(true)
       try {
-        const res = await fetch(`${API_BASE}/scaling-tasks/filters/areas?activity_ids=${selectedActivityId}&city_ids=${selectedCityId}`)
+        // Only filter by city - show ALL areas in the city for expansion target
+        const res = await fetch(`${API_BASE}/scaling-tasks/filters/areas?city_ids=${selectedCityId}`)
         const data = await res.json()
         if (data.success && data.options) {
           setAreas(data.options)
@@ -184,9 +185,10 @@ export function ExpandClubModal({ isOpen, onClose, onSave, context }: ExpandClub
     }
 
     fetchAreas()
-  }, [isOpen, selectedActivityId, selectedCityId])
+  }, [isOpen, selectedCityId])
 
-  // Fetch clubs (filtered by activity, city, and optionally area) - uses production IDs
+  // Fetch clubs (filtered by activity + city only) - NOT by area
+  // This is for "expand existing club to new area" - club list shouldn't change when area changes
   useEffect(() => {
     if (!isOpen) return
 
@@ -201,7 +203,7 @@ export function ExpandClubModal({ isOpen, onClose, onSave, context }: ExpandClub
         const params = new URLSearchParams()
         params.append('activity_ids', String(selectedActivityId))
         if (selectedCityId) params.append('city_ids', String(selectedCityId))
-        if (selectedAreaId) params.append('area_ids', String(selectedAreaId))
+        // NOTE: Intentionally NOT filtering by area - clubs should be visible for expansion regardless of target area
 
         const res = await fetch(`${API_BASE}/scaling-tasks/filters/clubs?${params}`)
         const data = await res.json()
@@ -214,7 +216,7 @@ export function ExpandClubModal({ isOpen, onClose, onSave, context }: ExpandClub
             activity_name: '',
             city_id: selectedCityId || 0,
             city_name: '',
-            area_id: selectedAreaId || 0,
+            area_id: 0, // Club's original area - not relevant for expansion
             area_name: ''
           })))
         }
@@ -226,7 +228,7 @@ export function ExpandClubModal({ isOpen, onClose, onSave, context }: ExpandClub
     }
 
     fetchClubs()
-  }, [isOpen, selectedActivityId, selectedCityId, selectedAreaId])
+  }, [isOpen, selectedActivityId, selectedCityId]) // NOT dependent on selectedAreaId
 
   // Fetch meetup defaults when club changes
   useEffect(() => {
