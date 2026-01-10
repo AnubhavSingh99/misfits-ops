@@ -3007,16 +3007,26 @@ export default function ScalingPlannerV2() {
     return sortHierarchy(filteredHierarchy, sortState)
   }, [filteredHierarchy, sortState])
 
-  // Sort handler - cycles: null → asc → desc → null
+  // Sort handler - cycles differ by column type:
+  // Numeric columns: null → desc → asc → null (highest first)
+  // Text columns (name): null → asc → desc → null (A-Z first)
   const handleSort = useCallback((column: SortColumn) => {
     setSortState(prev => {
+      const isTextColumn = column === 'name'
+
       if (prev.column !== column) {
-        // New column - start with ascending
-        return { column, direction: 'asc' }
+        // New column - start with desc for numeric, asc for text
+        return { column, direction: isTextColumn ? 'asc' : 'desc' }
       }
-      if (prev.direction === 'asc') {
-        return { column, direction: 'desc' }
+
+      if (isTextColumn) {
+        // Text: asc → desc → null
+        if (prev.direction === 'asc') return { column, direction: 'desc' }
+      } else {
+        // Numeric: desc → asc → null
+        if (prev.direction === 'desc') return { column, direction: 'asc' }
       }
+
       // Reset to no sort
       return { column: null, direction: null }
     })
