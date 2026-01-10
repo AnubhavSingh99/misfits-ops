@@ -4295,11 +4295,11 @@ router.get('/clubs/:clubId/meetup-details', async (req, res) => {
         e.start_time as event_date,
         e.max_people as capacity,
         e.ticket_price as price,
-        COUNT(DISTINCT b.id) as total_bookings,
+        COUNT(DISTINCT CASE WHEN b.booking_status NOT IN ('DEREGISTERED', 'INITIATED') THEN b.id END) as total_bookings,
         COUNT(DISTINCT CASE WHEN b.booking_status = 'WAITLISTED' THEN b.id END) as waitlist_count,
         COALESCE(SUM(CASE WHEN p.state = 'COMPLETED' THEN p.amount / 100.0 ELSE 0 END), 0) as revenue
       FROM event e
-      LEFT JOIN booking b ON b.event_id = e.pk
+      LEFT JOIN booking b ON b.event_id = e.pk AND b.booking_status NOT IN ('DEREGISTERED', 'INITIATED')
       LEFT JOIN transaction t ON t.entity_id = b.id AND t.entity_type = 'BOOKING'
       LEFT JOIN payment p ON p.pk = t.payment_id
       WHERE e.club_id = $1
