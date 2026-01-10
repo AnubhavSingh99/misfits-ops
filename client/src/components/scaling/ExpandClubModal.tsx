@@ -291,9 +291,18 @@ export function ExpandClubModal({ isOpen, onClose, onSave, context }: ExpandClub
     setSelectedClubId(undefined)
   }
 
+  // All required fields: Club, Area, Target Meetups, Cost, Capacity
+  const canSave = selectedClubId && selectedAreaId && targetMeetups > 0 && meetupCost > 0 && meetupCapacity > 0
+
   const handleSave = async () => {
-    if (!selectedClubId || !selectedAreaId) {
-      setError('Please select a club and area')
+    if (!canSave) {
+      const missing: string[] = []
+      if (!selectedClubId) missing.push('Club')
+      if (!selectedAreaId) missing.push('Area')
+      if (targetMeetups <= 0) missing.push('Target Meetups')
+      if (meetupCost <= 0) missing.push('Cost')
+      if (meetupCapacity <= 0) missing.push('Capacity')
+      setError(`Required: ${missing.join(', ')}`)
       return
     }
 
@@ -319,8 +328,6 @@ export function ExpandClubModal({ isOpen, onClose, onSave, context }: ExpandClub
   }
 
   if (!isOpen) return null
-
-  const canSave = selectedClubId && selectedAreaId
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
@@ -388,7 +395,7 @@ export function ExpandClubModal({ isOpen, onClose, onSave, context }: ExpandClub
               {/* Area Filter */}
               <div>
                 <label className="block text-xs font-medium text-gray-500 mb-1">
-                  Area <span className="text-gray-400">(target)</span>
+                  Area <span className="text-red-500">*</span>
                 </label>
                 <select
                   value={selectedAreaId || ''}
@@ -406,7 +413,7 @@ export function ExpandClubModal({ isOpen, onClose, onSave, context }: ExpandClub
 
               {/* Club Selector */}
               <div>
-                <label className="block text-xs font-medium text-gray-500 mb-1">Club</label>
+                <label className="block text-xs font-medium text-gray-500 mb-1">Club <span className="text-red-500">*</span></label>
                 <select
                   value={selectedClubId || ''}
                   onChange={(e) => setSelectedClubId(e.target.value ? parseInt(e.target.value) : undefined)}
@@ -477,7 +484,7 @@ export function ExpandClubModal({ isOpen, onClose, onSave, context }: ExpandClub
 
             {/* Target Meetups */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Target Meetups</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Target Meetups <span className="text-red-500">*</span></label>
               <input
                 type="number"
                 min="1"
@@ -491,7 +498,7 @@ export function ExpandClubModal({ isOpen, onClose, onSave, context }: ExpandClub
             {/* Cost & Capacity */}
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Cost/Meetup (₹)</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Cost/Meetup (₹) <span className="text-red-500">*</span></label>
                 <input
                   type="number"
                   min="0"
@@ -503,7 +510,7 @@ export function ExpandClubModal({ isOpen, onClose, onSave, context }: ExpandClub
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Capacity</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Capacity <span className="text-red-500">*</span></label>
                 <input
                   type="number"
                   min="1"

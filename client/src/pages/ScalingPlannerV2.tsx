@@ -1544,8 +1544,14 @@ function LaunchModal({ isOpen, onClose, context, onSave }: LaunchModalProps) {
 
   if (!isOpen || !context) return null
 
-  // All fields are changeable - need activity for validation
-  const canSave = activityName.trim().length > 0
+  // All required fields must be filled: Activity, City, Area, Name, Target Meetups, Cost, Capacity
+  const canSave = activityName.trim().length > 0 &&
+    selectedCityId !== undefined &&
+    selectedAreaId !== undefined &&
+    clubName.trim().length > 0 &&
+    targetMeetups > 0 &&
+    meetupCost > 0 &&
+    meetupCapacity > 0
 
   // Handle city change
   const handleCityChange = (cityId: number | undefined) => {
@@ -1566,7 +1572,15 @@ function LaunchModal({ isOpen, onClose, context, onSave }: LaunchModalProps) {
 
   const handleSave = async () => {
     if (!canSave) {
-      setError('Activity is required')
+      const missing: string[] = []
+      if (!activityName.trim()) missing.push('Activity')
+      if (!selectedCityId) missing.push('City')
+      if (!selectedAreaId) missing.push('Area')
+      if (!clubName.trim()) missing.push('Club Name')
+      if (targetMeetups <= 0) missing.push('Target Meetups')
+      if (meetupCost <= 0) missing.push('Cost')
+      if (meetupCapacity <= 0) missing.push('Capacity')
+      setError(`Required: ${missing.join(', ')}`)
       return
     }
 
@@ -1639,7 +1653,7 @@ function LaunchModal({ isOpen, onClose, context, onSave }: LaunchModalProps) {
 
             {/* City - Dropdown (all cities available) */}
             <div>
-              <label className="block text-xs font-medium text-gray-500 mb-1">City</label>
+              <label className="block text-xs font-medium text-gray-500 mb-1">City <span className="text-red-500">*</span></label>
               <select
                 value={selectedCityId || ''}
                 onChange={(e) => handleCityChange(e.target.value ? parseInt(e.target.value) : undefined)}
@@ -1656,7 +1670,7 @@ function LaunchModal({ isOpen, onClose, context, onSave }: LaunchModalProps) {
 
             {/* Area - Dropdown (filtered by city) */}
             <div>
-              <label className="block text-xs font-medium text-gray-500 mb-1">Area</label>
+              <label className="block text-xs font-medium text-gray-500 mb-1">Area <span className="text-red-500">*</span></label>
               <select
                 value={selectedAreaId || ''}
                 onChange={(e) => handleAreaChange(e.target.value ? parseInt(e.target.value) : undefined)}
@@ -1695,7 +1709,7 @@ function LaunchModal({ isOpen, onClose, context, onSave }: LaunchModalProps) {
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              Club Name <span className="text-gray-400">(optional)</span>
+              Club Name <span className="text-red-500">*</span>
             </label>
             <input
               type="text"
@@ -1712,7 +1726,7 @@ function LaunchModal({ isOpen, onClose, context, onSave }: LaunchModalProps) {
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              Target Meetups
+              Target Meetups <span className="text-red-500">*</span>
             </label>
             <input
               type="number"
@@ -1727,7 +1741,7 @@ function LaunchModal({ isOpen, onClose, context, onSave }: LaunchModalProps) {
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                Cost per Meetup (₹)
+                Cost per Meetup (₹) <span className="text-red-500">*</span>
               </label>
               <input
                 type="number"
@@ -1741,7 +1755,7 @@ function LaunchModal({ isOpen, onClose, context, onSave }: LaunchModalProps) {
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                Capacity/Meetup
+                Capacity/Meetup <span className="text-red-500">*</span>
               </label>
               <input
                 type="number"
@@ -2039,9 +2053,10 @@ function HierarchyRow({ node, level, expanded, onToggle, onEditTarget, onDeleteT
               </button>
             </Tooltip>
           )}
-          {/* Plus button: Area level = Choice Modal, Club level = Expand Club Modal */}
-          {node.type === 'area' && (
-            <Tooltip text="Add Club/Target" position="left">
+          {/* Plus button: All levels open Choice Modal (New Launch vs Expand Club) */}
+          {/* Club level for existing clubs goes directly to Expand Club modal */}
+          {(node.type === 'activity' || node.type === 'city' || node.type === 'area') && (
+            <Tooltip text="Add Target" position="left">
               <button
                 onClick={(e) => {
                   e.stopPropagation()
