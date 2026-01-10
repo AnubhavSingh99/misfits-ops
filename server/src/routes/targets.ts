@@ -2120,7 +2120,7 @@ router.get('/v2/hierarchy', async (req, res) => {
           e.pk as event_id,
           e.max_people as capacity,
           COUNT(DISTINCT CASE
-            WHEN b.state NOT IN ('DEREGISTERED', 'INITIATED', 'WAITLISTED')
+            WHEN b.booking_status NOT IN ('DEREGISTERED', 'INITIATED', 'WAITLISTED')
             THEN b.id
           END) as bookings_count
         FROM event e
@@ -2153,7 +2153,7 @@ router.get('/v2/hierarchy', async (req, res) => {
         WHERE e.start_time >= ${weekStartSQL}
           AND e.start_time < ${weekEndSQL}
           AND e.state = 'CREATED'
-          AND b.state NOT IN ('DEREGISTERED', 'INITIATED', 'WAITLISTED')
+          AND b.booking_status NOT IN ('DEREGISTERED', 'INITIATED', 'WAITLISTED')
       ),
       previous_users AS (
         SELECT DISTINCT
@@ -2164,7 +2164,7 @@ router.get('/v2/hierarchy', async (req, res) => {
         WHERE e.start_time >= ${weekStartSQL} - INTERVAL '4 weeks'
           AND e.start_time < ${weekStartSQL}
           AND e.state = 'CREATED'
-          AND b.state NOT IN ('DEREGISTERED', 'INITIATED', 'WAITLISTED')
+          AND b.booking_status NOT IN ('DEREGISTERED', 'INITIATED', 'WAITLISTED')
       ),
       club_repeat AS (
         SELECT
