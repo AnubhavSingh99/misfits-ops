@@ -268,11 +268,14 @@ export function ExpandClubModal({ isOpen, onClose, onSave, context }: ExpandClub
   }, [selectedClub])
 
   // Initialize from context when modal opens
+  // NOTE: Do NOT set selectedCityId/selectedAreaId here - they use production IDs
+  // which need to be resolved to dim_* IDs by the fetch effects
   useEffect(() => {
     if (isOpen && context) {
       setSelectedActivityId(context.activity_id)
-      setSelectedCityId(context.city_id)
-      setSelectedAreaId(context.area_id)
+      // Reset city/area to undefined so fetch effects can re-resolve from production IDs
+      setSelectedCityId(undefined)
+      setSelectedAreaId(undefined)
       setSelectedClubId(context.club_id)
       setTargetMeetups(4)
       setMeetupCost(200)
