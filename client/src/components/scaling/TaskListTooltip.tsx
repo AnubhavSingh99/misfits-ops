@@ -386,33 +386,38 @@ export function TaskListTooltip({ node, taskSummary, children, onRefreshTasks }:
   const handleStatusChange = async (task: ScalingTask, newStatus: ScalingTask['status']) => {
     console.log('handleStatusChange called:', task.id, 'from', task.status, 'to', newStatus);
 
+    const originalStatus = task.status;
+
     // Optimistically update UI first
     setTasks(prev => prev.map(t =>
       t.id === task.id ? { ...t, status: newStatus } : t
     ));
 
     try {
-      const response = await fetch(`${API_BASE}/scaling-tasks/${task.id}/status`, {
+      // Use the general task update endpoint (not /status)
+      const response = await fetch(`${API_BASE}/scaling-tasks/${task.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: newStatus })
       });
 
-      if (response.ok) {
+      const data = await response.json();
+
+      if (response.ok && data.success) {
         console.log('Status updated successfully');
         onRefreshTasks?.();
       } else {
         // Revert on failure
-        console.error('Status update failed:', response.status);
+        console.error('Status update failed:', response.status, data);
         setTasks(prev => prev.map(t =>
-          t.id === task.id ? { ...t, status: task.status } : t
+          t.id === task.id ? { ...t, status: originalStatus } : t
         ));
       }
     } catch (err) {
       console.error('Failed to update task status:', err);
       // Revert on error
       setTasks(prev => prev.map(t =>
-        t.id === task.id ? { ...t, status: task.status } : t
+        t.id === task.id ? { ...t, status: originalStatus } : t
       ));
     }
   };
