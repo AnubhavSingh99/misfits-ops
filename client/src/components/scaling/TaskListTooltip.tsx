@@ -143,24 +143,26 @@ function HoverableDescription({ description, maxLength = 100, inline = false }: 
   const displayText = needsTruncation ? description.slice(0, maxLength) + '...' : description;
 
   const handleMouseEnter = () => {
-    if (ref.current && needsTruncation) {
+    if (ref.current) {
       setRect(ref.current.getBoundingClientRect());
       setIsHovered(true);
     }
   };
 
   return (
-    <>
+    <span className={inline ? 'inline' : 'block'}>
       <span
         ref={ref}
-        className={`text-[10px] text-gray-400 truncate ${inline ? 'flex-shrink min-w-0' : 'mt-0.5 block'} ${needsTruncation ? 'cursor-help' : ''}`}
+        className={`text-[10px] text-gray-400 ${inline ? '' : 'block'} ${needsTruncation ? 'cursor-help' : ''}`}
         onMouseEnter={handleMouseEnter}
         onMouseLeave={() => setIsHovered(false)}
       >
         {displayText}
       </span>
-      <DescriptionTooltip text={description} targetRect={rect} visible={isHovered} />
-    </>
+      {needsTruncation && (
+        <DescriptionTooltip text={description} targetRect={rect} visible={isHovered} />
+      )}
+    </span>
   );
 }
 

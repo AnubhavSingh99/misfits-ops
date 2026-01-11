@@ -87,24 +87,26 @@ function HoverableDescription({ description, maxLength = 60 }: { description: st
   const displayText = needsTruncation ? description.slice(0, maxLength) + '...' : description;
 
   const handleMouseEnter = () => {
-    if (ref.current && needsTruncation) {
+    if (ref.current) {
       setRect(ref.current.getBoundingClientRect());
       setIsHovered(true);
     }
   };
 
   return (
-    <>
+    <span className="block relative">
       <span
         ref={ref}
-        className={`text-xs text-gray-500 truncate max-w-[200px] ${needsTruncation ? 'cursor-help' : ''}`}
+        className={`text-xs text-gray-500 block ${needsTruncation ? 'cursor-help' : ''}`}
         onMouseEnter={handleMouseEnter}
         onMouseLeave={() => setIsHovered(false)}
       >
         {renderWithLinks(displayText)}
       </span>
-      <DescriptionTooltip text={description} targetRect={rect} visible={isHovered} />
-    </>
+      {needsTruncation && (
+        <DescriptionTooltip text={description} targetRect={rect} visible={isHovered} />
+      )}
+    </span>
   );
 }
 
@@ -450,10 +452,11 @@ export function ScalingTaskTileV2({
             </h4>
           </div>
 
+          {task.description && (
+            <HoverableDescription description={task.description} maxLength={80} />
+          )}
+
           <div className="flex items-center gap-1.5 flex-wrap">
-            {task.description && (
-              <HoverableDescription description={task.description} maxLength={60} />
-            )}
 
             {task.activity_name && (
               <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[9px] font-medium bg-violet-100 text-violet-700">
