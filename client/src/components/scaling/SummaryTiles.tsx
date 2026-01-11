@@ -62,9 +62,8 @@ const getCurrentMonthLabel = (): string => {
   return now.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
 }
 
-// Monthly Revenue Tile Component - Clean number display
+// Monthly Revenue Tile Component
 function MonthlyRevenueTile({ monthlyRevenue }: { monthlyRevenue?: MonthlyRevenueData[] }) {
-  // If no data, show placeholder
   if (!monthlyRevenue || monthlyRevenue.length === 0) {
     return (
       <div className="bg-white rounded-xl border border-gray-100 p-3 md:p-4 shadow-sm hover:shadow-md transition-shadow">
@@ -79,40 +78,24 @@ function MonthlyRevenueTile({ monthlyRevenue }: { monthlyRevenue?: MonthlyRevenu
     )
   }
 
-  // Find max revenue to highlight best month
-  const maxRevenue = Math.max(...monthlyRevenue.map(m => m.revenue))
-
   return (
     <div className="bg-white rounded-xl border border-gray-100 p-3 md:p-4 shadow-sm hover:shadow-md transition-shadow">
-      <div className="flex items-center gap-2 mb-3">
+      <div className="flex items-center gap-2 mb-4">
         <Calendar size={14} className="text-amber-500" />
         <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">
           Actual Revenue Trend
         </span>
       </div>
 
-      {/* Month grid */}
-      <div className="grid grid-cols-7 gap-1">
+      <div className="flex justify-between">
         {monthlyRevenue.map((month) => {
-          const isBest = month.revenue === maxRevenue && month.revenue > 0
           const isZero = month.revenue === 0
-
           return (
-            <div
-              key={`${month.month}-${month.year}`}
-              className={`text-center py-1.5 px-0.5 rounded-lg transition-colors ${
-                isBest ? 'bg-amber-50' : ''
-              }`}
-            >
-              <div className={`text-[10px] md:text-xs font-bold ${
-                isZero ? 'text-gray-300' :
-                isBest ? 'text-amber-600' : 'text-gray-700'
-              }`}>
+            <div key={`${month.month}-${month.year}`} className="text-center flex-1">
+              <div className={`text-sm font-semibold tabular-nums ${isZero ? 'text-gray-300' : 'text-gray-800'}`}>
                 {formatCurrency(month.revenue)}
               </div>
-              <div className={`text-[9px] mt-0.5 ${
-                isBest ? 'text-amber-500 font-medium' : 'text-gray-400'
-              }`}>
+              <div className="text-[10px] text-gray-400 mt-1">
                 {month.month}
               </div>
             </div>
