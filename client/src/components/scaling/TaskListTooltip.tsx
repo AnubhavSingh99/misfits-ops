@@ -257,59 +257,91 @@ export function TaskListTooltip({ node, taskSummary, children, onRefreshTasks }:
 
       {/* Portal tooltip */}
       {isHovered && tooltipRect && createPortal(
-        <div
-          className="fixed z-[9999] pointer-events-auto"
-          style={{
-            left: Math.min(tooltipRect.left, window.innerWidth - 340),
-            top: tooltipRect.bottom + 8,
-            width: 320
-          }}
-          onMouseEnter={() => setIsHovered(true)}
-          onMouseLeave={handleMouseLeave}
-        >
-          <div className="bg-white rounded-xl shadow-2xl border border-gray-200 overflow-hidden animate-in fade-in zoom-in-95 duration-150">
-            {/* Header */}
-            <div className="px-3 py-2 bg-gray-50 border-b border-gray-100">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-gray-700">
-                  Tasks ({totalTasks})
-                </span>
-                <span className="text-[10px] text-gray-500">
-                  {node.name}
-                </span>
+        (() => {
+          const tooltipWidth = 320;
+          const tooltipHeight = 350; // Approximate max height
+          const viewportPadding = 16;
+
+          // Calculate left position
+          let left = Math.min(tooltipRect.left, window.innerWidth - tooltipWidth - viewportPadding);
+          left = Math.max(viewportPadding, left);
+
+          // Calculate available space above and below
+          const spaceBelow = window.innerHeight - tooltipRect.bottom - viewportPadding;
+          const spaceAbove = tooltipRect.top - viewportPadding;
+
+          // Determine if tooltip should show above or below
+          const showAbove = spaceBelow < tooltipHeight && spaceAbove > spaceBelow;
+
+          // Calculate top position
+          let top = showAbove
+            ? Math.max(viewportPadding, tooltipRect.top - tooltipHeight - 8)
+            : tooltipRect.bottom + 8;
+
+          // If showing below but would overflow, cap it
+          if (!showAbove && top + tooltipHeight > window.innerHeight - viewportPadding) {
+            top = Math.max(viewportPadding, window.innerHeight - tooltipHeight - viewportPadding);
+          }
+
+          const arrowLeft = Math.max(20, Math.min(tooltipRect.left + tooltipRect.width / 2 - left, tooltipWidth - 20));
+
+          return (
+            <div
+              className="fixed z-[9999] pointer-events-auto"
+              style={{
+                left,
+                top,
+                width: tooltipWidth,
+                maxHeight: `calc(100vh - ${viewportPadding * 2}px)`
+              }}
+              onMouseEnter={() => setIsHovered(true)}
+              onMouseLeave={handleMouseLeave}
+            >
+              <div className="bg-white rounded-xl shadow-2xl border border-gray-200 overflow-hidden animate-in fade-in zoom-in-95 duration-150 flex flex-col max-h-[inherit]">
+                {/* Header */}
+                <div className="px-3 py-2 bg-gray-50 border-b border-gray-100 flex-shrink-0">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold text-gray-700">
+                      Tasks ({totalTasks})
+                    </span>
+                    <span className="text-[10px] text-gray-500">
+                      {node.name}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Content */}
+                <div className="p-2 overflow-y-auto flex-1 min-h-0">
+                  {loading ? (
+                    <div className="flex items-center justify-center py-6">
+                      <Loader2 className="h-5 w-5 animate-spin text-gray-400" />
+                    </div>
+                  ) : error ? (
+                    <div className="text-center py-4 text-xs text-red-500">{error}</div>
+                  ) : tasks.length === 0 ? (
+                    <div className="text-center py-4 text-xs text-gray-500">No tasks found</div>
+                  ) : (
+                    <div className="space-y-2">
+                      {tasks.map(task => (
+                        <CompactTaskTile
+                          key={task.id}
+                          task={task}
+                          onStatusChange={handleStatusChange}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
-            </div>
 
-            {/* Content */}
-            <div className="p-2 max-h-[400px] overflow-y-auto">
-              {loading ? (
-                <div className="flex items-center justify-center py-6">
-                  <Loader2 className="h-5 w-5 animate-spin text-gray-400" />
-                </div>
-              ) : error ? (
-                <div className="text-center py-4 text-xs text-red-500">{error}</div>
-              ) : tasks.length === 0 ? (
-                <div className="text-center py-4 text-xs text-gray-500">No tasks found</div>
-              ) : (
-                <div className="space-y-2">
-                  {tasks.map(task => (
-                    <CompactTaskTile
-                      key={task.id}
-                      task={task}
-                      onStatusChange={handleStatusChange}
-                    />
-                  ))}
-                </div>
-              )}
+              {/* Arrow */}
+              <div
+                className={`absolute border-8 border-transparent ${showAbove ? '-bottom-2 border-t-white' : '-top-2 border-b-white'}`}
+                style={{ left: arrowLeft }}
+              />
             </div>
-          </div>
-
-          {/* Arrow */}
-          <div
-            className="absolute -top-2 border-8 border-transparent border-b-white"
-            style={{ left: Math.max(20, Math.min(tooltipRect.left + tooltipRect.width / 2 - tooltipRect.left, 300)) }}
-          />
-        </div>,
+          );
+        })(),
         document.body
       )}
     </div>

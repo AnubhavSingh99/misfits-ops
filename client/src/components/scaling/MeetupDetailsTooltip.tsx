@@ -635,7 +635,7 @@ export function MeetupDetailsTooltip({
   const [isLoading, setIsLoading] = useState(false);
   const [data, setData] = useState<MeetupDetailsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [position, setPosition] = useState({ top: 0, left: 0, arrowLeft: 0 });
+  const [position, setPosition] = useState({ top: 0, left: 0, arrowLeft: 0, showAbove: false });
   const [showWeekDropdown, setShowWeekDropdown] = useState(false);
   const [localWeekOption, setLocalWeekOption] = useState<ExtendedWeekOption | null>(null);
 
@@ -692,26 +692,47 @@ export function MeetupDetailsTooltip({
     const rect = triggerRef.current.getBoundingClientRect();
     // Responsive width: 550px on desktop, viewport width minus padding on mobile
     const tooltipWidth = Math.min(550, window.innerWidth - 32);
-    const tooltipHeight = 420;
+    const tooltipHeight = 480; // Approximate max height
+    const viewportPadding = 16;
 
     const idealLeft = rect.left + rect.width / 2 - tooltipWidth / 2;
     let left = idealLeft;
-    let top = rect.bottom + 8;
 
-    // Ensure tooltip stays within viewport
-    if (left < 16) left = 16;
-    if (left + tooltipWidth > window.innerWidth - 16) {
-      left = window.innerWidth - tooltipWidth - 16;
+    // Ensure tooltip stays within horizontal viewport
+    if (left < viewportPadding) left = viewportPadding;
+    if (left + tooltipWidth > window.innerWidth - viewportPadding) {
+      left = window.innerWidth - tooltipWidth - viewportPadding;
     }
 
     const triggerCenterX = rect.left + rect.width / 2;
     const arrowLeft = Math.max(20, Math.min(tooltipWidth - 20, triggerCenterX - left));
 
-    if (top + tooltipHeight > window.innerHeight - 16) {
+    // Calculate available space above and below
+    const spaceBelow = window.innerHeight - rect.bottom - viewportPadding;
+    const spaceAbove = rect.top - viewportPadding;
+
+    let top: number;
+    let showAbove = false;
+
+    // Prefer showing below, but switch to above if more space
+    if (spaceBelow >= tooltipHeight || spaceBelow >= spaceAbove) {
+      // Show below - constrain to viewport
+      top = rect.bottom + 8;
+      // If would overflow, cap it
+      if (top + tooltipHeight > window.innerHeight - viewportPadding) {
+        top = Math.max(viewportPadding, window.innerHeight - tooltipHeight - viewportPadding);
+      }
+    } else {
+      // Show above
+      showAbove = true;
       top = rect.top - tooltipHeight - 8;
+      // If would overflow top, cap it
+      if (top < viewportPadding) {
+        top = viewportPadding;
+      }
     }
 
-    setPosition({ top, left, arrowLeft });
+    setPosition({ top, left, arrowLeft, showAbove } as any);
   }, []);
 
   const handleMouseEnter = () => {
@@ -779,9 +800,9 @@ export function MeetupDetailsTooltip({
             animation: 'tooltipFadeIn 0.15s ease-out'
           }}
         >
-          <div className="w-[calc(100vw-32px)] sm:w-[550px] max-w-[550px] bg-white rounded-xl shadow-xl border border-gray-200/80 overflow-hidden">
+          <div className="w-[calc(100vw-32px)] sm:w-[550px] max-w-[550px] max-h-[calc(100vh-32px)] bg-white rounded-xl shadow-xl border border-gray-200/80 overflow-hidden flex flex-col">
             {/* Header */}
-            <div className="px-4 py-2.5 border-b border-gray-100 flex items-center justify-between bg-white">
+            <div className="px-4 py-2.5 border-b border-gray-100 flex items-center justify-between bg-white flex-shrink-0 relative z-30">
               <span className="text-sm font-semibold text-gray-800 truncate max-w-[320px]">
                 {truncateName(clubName, 40)}
               </span>
@@ -800,7 +821,7 @@ export function MeetupDetailsTooltip({
                   <ChevronDown size={10} className={`transition-transform ${showWeekDropdown ? 'rotate-180' : ''}`} />
                 </button>
                 {showWeekDropdown && (
-                  <div className="absolute right-0 top-full mt-1 z-10
+                  <div className="absolute right-0 top-full mt-1 z-50
                     bg-white rounded-lg shadow-lg border border-gray-200
                     py-1 min-w-[120px] animate-in fade-in slide-in-from-top-1 duration-150">
                     {weekOptions.map((option) => (
@@ -845,13 +866,13 @@ export function MeetupDetailsTooltip({
                   ) : (
                     <>
                       {/* Section Header */}
-                      <div className="px-4 py-2 bg-white border-b border-gray-100 flex items-center justify-between sticky top-0 z-10">
+                      <div className="px-4 py-2 bg-white border-b border-gray-100 flex items-center justify-between sticky top-0 z-[5]">
                         <span className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider">Meetups</span>
                         <span className="text-[10px] text-gray-400">{data?.meetups.length} this week</span>
                       </div>
 
                       {/* Column Headers - wider first column */}
-                      <div className="grid grid-cols-[1.5fr_70px_50px_60px_60px_80px] gap-2 px-4 py-1.5 bg-gray-50 border-b border-gray-100 sticky top-[33px] z-10">
+                      <div className="grid grid-cols-[1.5fr_70px_50px_60px_60px_80px] gap-2 px-4 py-1.5 bg-gray-50 border-b border-gray-100 sticky top-[33px] z-[5]">
                         <span className="text-[9px] font-semibold text-gray-400 uppercase tracking-wider">Meetup</span>
                         <span className="text-[9px] font-semibold text-gray-400 uppercase tracking-wider text-center">Date</span>
                         <span className="text-[9px] font-semibold text-gray-400 uppercase tracking-wider text-center">Price</span>

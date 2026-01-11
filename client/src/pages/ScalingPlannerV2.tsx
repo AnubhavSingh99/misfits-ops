@@ -2036,7 +2036,7 @@ function HierarchyRow({ node, level, expanded, onToggle, onEditTarget, onDeleteT
             )}
           </div>
           {node.club_count !== undefined && node.type !== 'club' && (
-            <span className="text-xs text-gray-500 bg-gray-200 px-2 py-0.5 rounded-full">
+            <span className="text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded-full whitespace-nowrap flex-shrink-0">
               {node.club_count} {node.club_count === 1 ? 'club' : 'clubs'}
             </span>
           )}
