@@ -4,17 +4,11 @@ import {
   Loader2,
   MessageSquare,
   Check,
-  X,
-  Send,
-  Pencil,
-  Copy,
   ChevronDown,
   Activity,
   Building2,
   MapPin,
-  Home,
-  Calendar,
-  Plus
+  Home
 } from 'lucide-react';
 import type { ScalingTask, HierarchyNode, ScalingTaskSummary } from '../../../../shared/types';
 import { TEAMS, getTeamByMember, type TeamKey } from '../../../../shared/teamConfig';
@@ -105,32 +99,17 @@ function getTeamAccent(teamLead: string | null | undefined): string {
   return TEAMS[teamKey]?.color.accent || '#94a3b8';
 }
 
-// Enhanced Compact Task Tile - matches Sprint Modal design
-function EnhancedTaskTile({
+// Compact Task Tile for Tooltip - horizontal layout
+function CompactTaskTile({
   task,
-  onStatusChange,
-  onRefresh
+  onStatusChange
 }: {
   task: ScalingTask;
   onStatusChange?: (task: ScalingTask, newStatus: ScalingTask['status']) => void;
-  onRefresh?: () => void;
 }) {
   const [statusDropdownOpen, setStatusDropdownOpen] = useState(false);
-  const [commentsExpanded, setCommentsExpanded] = useState(false);
-  const [comments, setComments] = useState<Comment[]>([]);
-  const [loadingComments, setLoadingComments] = useState(false);
-  const [commentsFetched, setCommentsFetched] = useState(false);
-  const [newComment, setNewComment] = useState('');
-  const [submittingComment, setSubmittingComment] = useState(false);
-  const [commentAuthor, setCommentAuthor] = useState(task.assigned_to_name || 'User');
-  const [authorDropdownOpen, setAuthorDropdownOpen] = useState(false);
-  const [assignees, setAssignees] = useState<{ id: number; name: string }[]>([]);
-  const [assigneesFetched, setAssigneesFetched] = useState(false);
-
   const statusButtonRef = useRef<HTMLButtonElement>(null);
-  const authorButtonRef = useRef<HTMLButtonElement>(null);
   const [dropdownPosition, setDropdownPosition] = useState({ top: 0, left: 0 });
-  const [authorDropdownPosition, setAuthorDropdownPosition] = useState({ top: 0, left: 0 });
 
   const currentStatus = STATUS_OPTIONS.find(s => s.value === task.status) || STATUS_OPTIONS[0];
   const accentColor = getTeamAccent(task.assigned_team_lead);
@@ -139,22 +118,15 @@ function EnhancedTaskTile({
     ? `${STAGE_DISPLAY[task.source_stage]}→${STAGE_DISPLAY[task.target_stage]}`
     : null;
 
-  // Update dropdown positions
+  // Update dropdown position
   useEffect(() => {
     if (statusDropdownOpen && statusButtonRef.current) {
       const rect = statusButtonRef.current.getBoundingClientRect();
-      setDropdownPosition({ top: rect.bottom + 4, left: rect.right - 140 });
+      setDropdownPosition({ top: rect.bottom + 4, left: rect.right - 130 });
     }
   }, [statusDropdownOpen]);
 
-  useEffect(() => {
-    if (authorDropdownOpen && authorButtonRef.current) {
-      const rect = authorButtonRef.current.getBoundingClientRect();
-      setAuthorDropdownPosition({ top: rect.bottom + 4, left: rect.left });
-    }
-  }, [authorDropdownOpen]);
-
-  // Close dropdowns on outside click
+  // Close dropdown on outside click
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       if (statusButtonRef.current && !statusButtonRef.current.contains(e.target as Node)) {
@@ -167,81 +139,6 @@ function EnhancedTaskTile({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [statusDropdownOpen, task.id]);
 
-  useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
-      if (authorButtonRef.current && !authorButtonRef.current.contains(e.target as Node)) {
-        const dropdown = document.getElementById(`tooltip-author-dropdown-${task.id}`);
-        if (dropdown && dropdown.contains(e.target as Node)) return;
-        setAuthorDropdownOpen(false);
-      }
-    };
-    if (authorDropdownOpen) document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [authorDropdownOpen, task.id]);
-
-  // Fetch assignees when comments expanded
-  useEffect(() => {
-    if (commentsExpanded && !assigneesFetched) {
-      fetchAssignees();
-    }
-  }, [commentsExpanded, assigneesFetched]);
-
-  const fetchAssignees = async () => {
-    try {
-      const res = await fetch(`${API_BASE}/scaling-tasks/assignees/list`);
-      const data = await res.json();
-      if (data.success && data.assignees) setAssignees(data.assignees);
-      setAssigneesFetched(true);
-    } catch (err) {
-      console.error('Failed to fetch assignees:', err);
-      setAssigneesFetched(true);
-    }
-  };
-
-  // Fetch comments when expanded
-  useEffect(() => {
-    if (commentsExpanded && !commentsFetched) {
-      fetchComments();
-    }
-  }, [commentsExpanded, commentsFetched]);
-
-  const fetchComments = async () => {
-    setLoadingComments(true);
-    try {
-      const res = await fetch(`${API_BASE}/scaling-tasks/${task.id}/comments`);
-      const data = await res.json();
-      if (data.success) setComments(data.comments || []);
-      setCommentsFetched(true);
-    } catch (err) {
-      console.error('Failed to fetch comments:', err);
-      setCommentsFetched(true);
-    } finally {
-      setLoadingComments(false);
-    }
-  };
-
-  const handleAddComment = async () => {
-    if (!newComment.trim() || submittingComment) return;
-    setSubmittingComment(true);
-    try {
-      const res = await fetch(`${API_BASE}/scaling-tasks/${task.id}/comments`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ comment_text: newComment.trim(), author_name: commentAuthor })
-      });
-      const data = await res.json();
-      if (data.success && data.comment) {
-        setComments(prev => [data.comment, ...prev]);
-        setNewComment('');
-        task.comments_count = (task.comments_count || 0) + 1;
-      }
-    } catch (err) {
-      console.error('Failed to add comment:', err);
-    } finally {
-      setSubmittingComment(false);
-    }
-  };
-
   const handleStatusClick = (newStatus: ScalingTask['status']) => {
     onStatusChange?.(task, newStatus);
     setStatusDropdownOpen(false);
@@ -252,61 +149,61 @@ function EnhancedTaskTile({
       className={`relative rounded-lg border bg-white overflow-hidden transition-all duration-150 hover:shadow-md ${currentStatus.border}`}
       style={{ borderLeftWidth: '3px', borderLeftColor: accentColor }}
     >
-      {/* Main Row */}
-      <div className="relative flex items-center gap-2 px-3 py-2.5">
-        {/* Status Gradient Overlay */}
-        <div className={`absolute inset-y-0 right-0 w-1/4 bg-gradient-to-l ${currentStatus.gradient} pointer-events-none`} />
+      {/* Status Gradient Overlay */}
+      <div className={`absolute inset-y-0 right-0 w-1/5 bg-gradient-to-l ${currentStatus.gradient} pointer-events-none`} />
 
+      {/* Single Row Layout */}
+      <div className="relative flex items-center gap-2 px-2.5 py-2">
         {/* Stage + Meetups */}
-        <div className="flex items-center gap-1 flex-shrink-0">
-          {stageTransition && (
-            <span className="px-1.5 py-0.5 rounded bg-slate-100 text-[10px] font-mono font-bold text-slate-600 tracking-tight">
-              {stageTransition}
-            </span>
-          )}
-          {task.meetups_count > 0 && (
-            <span className="px-1.5 py-0.5 rounded bg-slate-100 text-[10px] font-semibold text-slate-500">
-              {task.meetups_count}m
-            </span>
-          )}
-        </div>
-
-        {/* Title + Description + Tags */}
-        <div className="flex-1 min-w-0 flex flex-col gap-0.5">
-          <h4 className="font-semibold text-gray-900 text-xs truncate">{task.title}</h4>
-
-          <div className="flex items-center gap-1 flex-wrap">
-            {task.description && (
-              <span className="text-[10px] text-gray-500 truncate max-w-[120px]">
-                {task.description.slice(0, 40)}{task.description.length > 40 ? '...' : ''}
+        {(stageTransition || task.meetups_count > 0) && (
+          <div className="flex items-center gap-1 flex-shrink-0">
+            {stageTransition && (
+              <span className="px-1.5 py-0.5 rounded bg-slate-100 text-[9px] font-mono font-bold text-slate-600">
+                {stageTransition}
+              </span>
+            )}
+            {task.meetups_count > 0 && (
+              <span className="px-1 py-0.5 rounded bg-slate-100 text-[9px] font-semibold text-slate-500">
+                {task.meetups_count}m
               </span>
             )}
           </div>
+        )}
 
-          {/* Hierarchy Tags */}
-          <div className="flex items-center gap-1 flex-wrap mt-0.5">
+        {/* Title + Description */}
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <h4 className="font-semibold text-gray-900 text-[11px] truncate max-w-[180px]">{task.title}</h4>
+            {task.description && (
+              <span className="text-[10px] text-gray-400 truncate max-w-[100px] hidden sm:inline">
+                {task.description.slice(0, 30)}{task.description.length > 30 ? '...' : ''}
+              </span>
+            )}
+          </div>
+          {/* Tags Row - inline */}
+          <div className="flex items-center gap-1 mt-0.5 flex-nowrap overflow-hidden">
             {task.activity_name && (
-              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[9px] font-medium bg-violet-100 text-violet-700">
-                <Activity className="h-2.5 w-2.5" />
+              <span className="inline-flex items-center gap-0.5 px-1 py-0.5 rounded text-[8px] font-medium bg-violet-100 text-violet-700 whitespace-nowrap">
+                <Activity className="h-2 w-2" />
                 {task.activity_name}
               </span>
             )}
             {task.city_name && (
-              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[9px] font-medium bg-sky-100 text-sky-700">
-                <Building2 className="h-2.5 w-2.5" />
+              <span className="inline-flex items-center gap-0.5 px-1 py-0.5 rounded text-[8px] font-medium bg-sky-100 text-sky-700 whitespace-nowrap">
+                <Building2 className="h-2 w-2" />
                 {task.city_name}
               </span>
             )}
             {task.area_name && (
-              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[9px] font-medium bg-emerald-100 text-emerald-700">
-                <MapPin className="h-2.5 w-2.5" />
+              <span className="inline-flex items-center gap-0.5 px-1 py-0.5 rounded text-[8px] font-medium bg-emerald-100 text-emerald-700 whitespace-nowrap">
+                <MapPin className="h-2 w-2" />
                 {task.area_name}
               </span>
             )}
             {task.club_name && (
-              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[9px] font-medium bg-orange-100 text-orange-700">
-                <Home className="h-2.5 w-2.5" />
-                {task.club_name}
+              <span className="inline-flex items-center gap-0.5 px-1 py-0.5 rounded text-[8px] font-medium bg-orange-100 text-orange-700 whitespace-nowrap max-w-[80px] truncate">
+                <Home className="h-2 w-2 flex-shrink-0" />
+                <span className="truncate">{task.club_name}</span>
               </span>
             )}
           </div>
@@ -314,40 +211,34 @@ function EnhancedTaskTile({
 
         {/* Assignee */}
         {task.assigned_to_name && (
-          <div className="flex items-center gap-1 flex-shrink-0 px-1.5 py-0.5 rounded-full bg-white/80 border border-gray-200">
-            <div
-              className="w-4 h-4 rounded-full flex items-center justify-center text-[8px] font-bold text-white"
-              style={{ backgroundColor: accentColor }}
-            >
-              {task.assigned_to_name.split(' ').map(n => n[0]).join('').slice(0, 2)}
-            </div>
-            <span className="text-[10px] font-medium text-gray-700 max-w-[50px] truncate">
-              {task.assigned_to_name.split(' ')[0]}
-            </span>
+          <div
+            className="w-5 h-5 rounded-full flex items-center justify-center text-[8px] font-bold text-white flex-shrink-0"
+            style={{ backgroundColor: accentColor }}
+            title={task.assigned_to_name}
+          >
+            {task.assigned_to_name.split(' ').map(n => n[0]).join('').slice(0, 2)}
           </div>
         )}
 
         {/* Status Dropdown */}
-        <div className="relative flex-shrink-0">
-          <button
-            ref={statusButtonRef}
-            onClick={(e) => {
-              e.stopPropagation();
-              if (onStatusChange) setStatusDropdownOpen(!statusDropdownOpen);
-            }}
-            className={`flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-semibold transition-all border ${currentStatus.bg} ${currentStatus.text} ${currentStatus.border} ${onStatusChange ? 'cursor-pointer hover:shadow-sm' : 'cursor-default'}`}
-          >
-            <span className={`w-1.5 h-1.5 rounded-full ${currentStatus.dot} ${task.status === 'in_progress' ? 'animate-pulse' : ''}`} />
-            <span>{currentStatus.label}</span>
-            {onStatusChange && <ChevronDown className={`h-2.5 w-2.5 transition-transform ${statusDropdownOpen ? 'rotate-180' : ''}`} />}
-          </button>
-        </div>
+        <button
+          ref={statusButtonRef}
+          onClick={(e) => {
+            e.stopPropagation();
+            if (onStatusChange) setStatusDropdownOpen(!statusDropdownOpen);
+          }}
+          className={`flex items-center gap-1 px-1.5 py-1 rounded text-[9px] font-semibold transition-all border flex-shrink-0 ${currentStatus.bg} ${currentStatus.text} ${currentStatus.border} ${onStatusChange ? 'cursor-pointer hover:shadow-sm' : 'cursor-default'}`}
+        >
+          <span className={`w-1.5 h-1.5 rounded-full ${currentStatus.dot} ${task.status === 'in_progress' ? 'animate-pulse' : ''}`} />
+          <span className="hidden sm:inline">{currentStatus.label}</span>
+          {onStatusChange && <ChevronDown className={`h-2.5 w-2.5 transition-transform ${statusDropdownOpen ? 'rotate-180' : ''}`} />}
+        </button>
 
         {/* Status Dropdown Portal */}
         {statusDropdownOpen && createPortal(
           <div
             id={`tooltip-status-dropdown-${task.id}`}
-            className="fixed bg-white rounded-lg shadow-2xl border border-gray-200 py-1 min-w-[120px] animate-in fade-in slide-in-from-top-2 duration-150"
+            className="fixed bg-white rounded-lg shadow-2xl border border-gray-200 py-1 min-w-[110px] animate-in fade-in slide-in-from-top-2 duration-150"
             style={{ top: dropdownPosition.top, left: dropdownPosition.left, zIndex: 99999 }}
           >
             {STATUS_OPTIONS.map((option) => (
@@ -357,7 +248,7 @@ function EnhancedTaskTile({
                   e.stopPropagation();
                   handleStatusClick(option.value as ScalingTask['status']);
                 }}
-                className={`w-full flex items-center gap-2 px-3 py-1.5 text-[10px] font-medium text-left ${option.hover} transition-colors ${task.status === option.value ? `${option.bg} ${option.text}` : 'text-gray-700'}`}
+                className={`w-full flex items-center gap-2 px-2.5 py-1.5 text-[10px] font-medium text-left ${option.hover} transition-colors ${task.status === option.value ? `${option.bg} ${option.text}` : 'text-gray-700'}`}
               >
                 <span className={`w-2 h-2 rounded-full ${option.dot}`} />
                 <span className="flex-1">{option.label}</span>
@@ -368,153 +259,14 @@ function EnhancedTaskTile({
           document.body
         )}
 
-        {/* Comments Toggle */}
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            setCommentsExpanded(!commentsExpanded);
-          }}
-          className={`p-1 rounded flex items-center gap-0.5 transition-colors flex-shrink-0 ${commentsExpanded ? 'bg-blue-100 text-blue-600' : 'hover:bg-gray-100 text-gray-400 hover:text-blue-600'}`}
-        >
-          <MessageSquare className="h-3 w-3" />
-          {(commentsFetched ? comments.length : (task.comments_count || 0)) > 0 && (
-            <span className="text-[9px] font-bold">
-              {commentsFetched ? comments.length : (task.comments_count || 0)}
-            </span>
-          )}
-        </button>
-      </div>
-
-      {/* Inline Comments Section */}
-      {commentsExpanded && (
-        <div className="border-t border-gray-100 bg-slate-50/50">
-          <div className="px-3 py-2">
-            {/* Add Comment Input */}
-            <div className="flex items-center gap-2 mb-2">
-              {/* Author Selector */}
-              <div className="relative">
-                <button
-                  ref={authorButtonRef}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setAuthorDropdownOpen(!authorDropdownOpen);
-                  }}
-                  className="w-5 h-5 rounded-full bg-blue-100 flex items-center justify-center text-[8px] font-bold text-blue-600 flex-shrink-0 hover:ring-2 hover:ring-blue-200 transition-all"
-                  title={`Posting as: ${commentAuthor}`}
-                >
-                  {commentAuthor.split(' ').map(n => n?.[0] || '').join('').slice(0, 2).toUpperCase() || 'U'}
-                </button>
-              </div>
-
-              {/* Author Dropdown Portal */}
-              {authorDropdownOpen && createPortal(
-                <div
-                  id={`tooltip-author-dropdown-${task.id}`}
-                  className="fixed bg-white rounded-lg shadow-xl border border-gray-200 py-1 min-w-[140px] max-h-[160px] overflow-y-auto animate-in fade-in slide-in-from-top-2 duration-150"
-                  style={{ top: authorDropdownPosition.top, left: authorDropdownPosition.left, zIndex: 99999 }}
-                >
-                  <div className="px-2 py-1 text-[8px] text-gray-400 uppercase tracking-wide border-b border-gray-100 mb-1">
-                    Post as
-                  </div>
-                  {!assigneesFetched ? (
-                    <div className="px-3 py-2 text-[10px] text-gray-400">Loading...</div>
-                  ) : assignees.length === 0 ? (
-                    <div className="px-3 py-2 text-[10px] text-gray-400">No members</div>
-                  ) : (
-                    assignees.map((assignee) => (
-                      <button
-                        key={assignee.id}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setCommentAuthor(assignee.name);
-                          setAuthorDropdownOpen(false);
-                        }}
-                        className={`w-full flex items-center gap-2 px-2 py-1 text-[10px] text-left hover:bg-gray-50 transition-colors ${commentAuthor === assignee.name ? 'bg-blue-50 text-blue-700' : 'text-gray-700'}`}
-                      >
-                        <div className="w-4 h-4 rounded-full bg-gray-200 flex items-center justify-center text-[7px] font-bold text-gray-600">
-                          {assignee.name.split(' ').map(n => n?.[0] || '').join('').slice(0, 2).toUpperCase()}
-                        </div>
-                        <span className="flex-1 truncate">{assignee.name}</span>
-                        {commentAuthor === assignee.name && <Check className="h-2.5 w-2.5 text-blue-600" />}
-                      </button>
-                    ))
-                  )}
-                </div>,
-                document.body
-              )}
-
-              <div className="flex-1 flex items-center gap-1 bg-white rounded-md border border-gray-200 px-2 py-1 focus-within:border-blue-400 transition-all">
-                <input
-                  type="text"
-                  value={newComment}
-                  onChange={(e) => setNewComment(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && handleAddComment()}
-                  placeholder={`Comment as ${commentAuthor.split(' ')[0]}...`}
-                  className="flex-1 text-[10px] bg-transparent outline-none placeholder-gray-400"
-                  onClick={(e) => e.stopPropagation()}
-                />
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleAddComment();
-                  }}
-                  disabled={!newComment.trim() || submittingComment}
-                  className={`p-0.5 rounded transition-all ${newComment.trim() ? 'bg-blue-600 text-white hover:bg-blue-700' : 'bg-gray-100 text-gray-300 cursor-not-allowed'}`}
-                >
-                  <Send className="h-2.5 w-2.5" />
-                </button>
-              </div>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setCommentsExpanded(false);
-                }}
-                className="p-0.5 rounded hover:bg-gray-200 text-gray-400 hover:text-gray-600 transition-colors"
-              >
-                <X className="h-3 w-3" />
-              </button>
-            </div>
-
-            {/* Comments List */}
-            <div className="space-y-1 max-h-[120px] overflow-y-auto">
-              {loadingComments ? (
-                <div className="flex items-center justify-center py-2">
-                  <div className="w-3 h-3 border-2 border-blue-200 border-t-blue-600 rounded-full animate-spin" />
-                  <span className="ml-1.5 text-[9px] text-gray-400">Loading...</span>
-                </div>
-              ) : comments.length === 0 ? (
-                <div className="text-center py-2">
-                  <p className="text-[9px] text-gray-400">No comments yet</p>
-                </div>
-              ) : (
-                comments.map((comment, idx) => (
-                  <div
-                    key={comment.id}
-                    className={`flex gap-1.5 px-1.5 py-1 rounded-md ${idx === 0 ? 'bg-blue-50/70' : 'hover:bg-gray-100/50'}`}
-                  >
-                    <div className="w-4 h-4 rounded-full bg-gray-200 flex items-center justify-center text-[7px] font-bold text-gray-600 flex-shrink-0">
-                      {(comment.author_name || 'U').split(' ').map(n => n?.[0] || '').join('').slice(0, 2).toUpperCase()}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-1">
-                        <span className="text-[10px] font-semibold text-gray-700">
-                          {comment.author_name || 'User'}
-                        </span>
-                        <span className="text-[8px] text-gray-400">
-                          {comment.created_at ? formatDateTime(comment.created_at) : ''}
-                        </span>
-                      </div>
-                      <p className="text-[10px] text-gray-600 leading-snug">
-                        {comment.comment_text || ''}
-                      </p>
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
+        {/* Comments indicator */}
+        {(task.comments_count || 0) > 0 && (
+          <div className="flex items-center gap-0.5 text-gray-400 flex-shrink-0">
+            <MessageSquare className="h-3 w-3" />
+            <span className="text-[9px] font-medium">{task.comments_count}</span>
           </div>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }
@@ -528,12 +280,14 @@ interface TaskListTooltipProps {
 
 export function TaskListTooltip({ node, taskSummary, children, onRefreshTasks }: TaskListTooltipProps) {
   const [isHovered, setIsHovered] = useState(false);
+  const [isTooltipHovered, setIsTooltipHovered] = useState(false);
   const [tasks, setTasks] = useState<ScalingTask[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [tooltipRect, setTooltipRect] = useState<DOMRect | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const leaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Calculate total tasks
   const totalTasks = taskSummary
@@ -599,9 +353,15 @@ export function TaskListTooltip({ node, taskSummary, children, onRefreshTasks }:
     }
   };
 
-  // Handle mouse enter with delay
+  // Handle mouse enter on trigger
   const handleMouseEnter = () => {
     if (!shouldShowTooltip) return;
+
+    // Clear any pending leave timeout
+    if (leaveTimeoutRef.current) {
+      clearTimeout(leaveTimeoutRef.current);
+      leaveTimeoutRef.current = null;
+    }
 
     if (containerRef.current) {
       setTooltipRect(containerRef.current.getBoundingClientRect());
@@ -610,24 +370,43 @@ export function TaskListTooltip({ node, taskSummary, children, onRefreshTasks }:
     hoverTimeoutRef.current = setTimeout(() => {
       setIsHovered(true);
       fetchTasks();
-    }, 300);
+    }, 200);
   };
 
-  // Handle mouse leave
+  // Handle mouse leave - with delay to allow moving to tooltip
   const handleMouseLeave = () => {
     if (hoverTimeoutRef.current) {
       clearTimeout(hoverTimeoutRef.current);
       hoverTimeoutRef.current = null;
     }
+
+    // Delay hiding to allow cursor to move to tooltip
+    leaveTimeoutRef.current = setTimeout(() => {
+      if (!isTooltipHovered) {
+        setIsHovered(false);
+      }
+    }, 150);
+  };
+
+  // Handle tooltip hover
+  const handleTooltipEnter = () => {
+    setIsTooltipHovered(true);
+    if (leaveTimeoutRef.current) {
+      clearTimeout(leaveTimeoutRef.current);
+      leaveTimeoutRef.current = null;
+    }
+  };
+
+  const handleTooltipLeave = () => {
+    setIsTooltipHovered(false);
     setIsHovered(false);
   };
 
-  // Cleanup timeout on unmount
+  // Cleanup timeouts on unmount
   useEffect(() => {
     return () => {
-      if (hoverTimeoutRef.current) {
-        clearTimeout(hoverTimeoutRef.current);
-      }
+      if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current);
+      if (leaveTimeoutRef.current) clearTimeout(leaveTimeoutRef.current);
     };
   }, []);
 
@@ -648,8 +427,8 @@ export function TaskListTooltip({ node, taskSummary, children, onRefreshTasks }:
       {/* Portal tooltip */}
       {isHovered && tooltipRect && createPortal(
         (() => {
-          const tooltipWidth = 380;
-          const tooltipHeight = 450;
+          const tooltipWidth = 520;
+          const tooltipHeight = 350;
           const viewportPadding = 16;
 
           let left = Math.min(tooltipRect.left, window.innerWidth - tooltipWidth - viewportPadding);
@@ -678,8 +457,8 @@ export function TaskListTooltip({ node, taskSummary, children, onRefreshTasks }:
                 width: tooltipWidth,
                 maxHeight: `calc(100vh - ${viewportPadding * 2}px)`
               }}
-              onMouseEnter={() => setIsHovered(true)}
-              onMouseLeave={handleMouseLeave}
+              onMouseEnter={handleTooltipEnter}
+              onMouseLeave={handleTooltipLeave}
             >
               <div className="bg-white rounded-xl shadow-2xl border border-gray-200 overflow-hidden animate-in fade-in zoom-in-95 duration-150 flex flex-col max-h-[inherit]">
                 {/* Header */}
@@ -688,16 +467,16 @@ export function TaskListTooltip({ node, taskSummary, children, onRefreshTasks }:
                     <span className="text-xs font-bold text-gray-800">
                       Tasks ({totalTasks})
                     </span>
-                    <span className="text-[10px] font-medium text-gray-500 bg-white px-2 py-0.5 rounded-full border border-gray-200">
+                    <span className="text-[10px] font-medium text-gray-500 bg-white px-2 py-0.5 rounded-full border border-gray-200 max-w-[200px] truncate">
                       {node.name}
                     </span>
                   </div>
                 </div>
 
                 {/* Content */}
-                <div className="p-2 overflow-y-auto flex-1 min-h-0 space-y-2">
+                <div className="p-2 overflow-y-auto flex-1 min-h-0 space-y-1.5">
                   {loading ? (
-                    <div className="flex items-center justify-center py-8">
+                    <div className="flex items-center justify-center py-6">
                       <Loader2 className="h-5 w-5 animate-spin text-gray-400" />
                     </div>
                   ) : error ? (
@@ -706,26 +485,13 @@ export function TaskListTooltip({ node, taskSummary, children, onRefreshTasks }:
                     <div className="text-center py-4 text-xs text-gray-500">No tasks found</div>
                   ) : (
                     tasks.map(task => (
-                      <EnhancedTaskTile
+                      <CompactTaskTile
                         key={task.id}
                         task={task}
                         onStatusChange={handleStatusChange}
-                        onRefresh={onRefreshTasks}
                       />
                     ))
                   )}
-                </div>
-
-                {/* Footer */}
-                <div className="px-3 py-2 bg-gray-50 border-t border-gray-100 flex items-center justify-between flex-shrink-0">
-                  <div className="flex items-center gap-1 text-[10px] text-gray-500">
-                    <Calendar className="h-3 w-3" />
-                    <span>Sprints</span>
-                  </div>
-                  <button className="flex items-center gap-1 text-[10px] font-medium text-blue-600 hover:text-blue-700 transition-colors">
-                    <Plus className="h-3 w-3" />
-                    <span>Task</span>
-                  </button>
                 </div>
               </div>
 
