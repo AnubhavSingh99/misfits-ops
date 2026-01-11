@@ -178,7 +178,7 @@ export function HealthDistributionBar({ distribution, compact = false }: HealthD
   );
 }
 
-// Traffic light indicators with counts for summary rows - compact inline design
+// Traffic light indicators with counts for summary rows - ultra-compact inline design
 interface HealthTrafficIndicatorsProps {
   distribution: {
     green: number;
@@ -192,27 +192,19 @@ export function HealthTrafficIndicators({ distribution }: HealthTrafficIndicator
   const total = distribution.green + distribution.yellow + distribution.red + distribution.gray;
   if (total === 0) return null;
 
-  const indicators = [
-    { key: 'green', count: distribution.green, dot: 'bg-emerald-500', text: 'text-emerald-700', label: 'Healthy' },
-    { key: 'yellow', count: distribution.yellow, dot: 'bg-amber-500', text: 'text-amber-700', label: 'At Risk' },
-    { key: 'red', count: distribution.red, dot: 'bg-red-500', text: 'text-red-700', label: 'Critical' },
-    { key: 'gray', count: distribution.gray, dot: 'bg-gray-400', text: 'text-gray-500', label: 'Dormant' }
-  ];
-
+  // Ultra-compact: colored numbers only, no dots, minimal spacing
   return (
     <div
-      className="inline-flex items-center gap-px rounded-md bg-gray-100/80 px-1 py-0.5"
+      className="inline-flex items-center rounded px-1.5 py-px bg-gray-50 border border-gray-200/60"
       title={`Health: ${distribution.green} healthy, ${distribution.yellow} at risk, ${distribution.red} critical, ${distribution.gray} dormant`}
     >
-      {indicators.map(({ key, count, dot, text }) => (
-        <span
-          key={key}
-          className={`inline-flex items-center gap-0.5 px-1 ${text}`}
-        >
-          <span className={`w-1.5 h-1.5 rounded-full ${dot}`} />
-          <span className="text-[10px] font-bold tabular-nums">{count}</span>
-        </span>
-      ))}
+      <span className="text-[9px] font-bold tabular-nums text-emerald-600">{distribution.green}</span>
+      <span className="text-gray-300 text-[8px] mx-0.5">/</span>
+      <span className="text-[9px] font-bold tabular-nums text-amber-500">{distribution.yellow}</span>
+      <span className="text-gray-300 text-[8px] mx-0.5">/</span>
+      <span className="text-[9px] font-bold tabular-nums text-red-500">{distribution.red}</span>
+      <span className="text-gray-300 text-[8px] mx-0.5">/</span>
+      <span className="text-[9px] font-bold tabular-nums text-gray-400">{distribution.gray}</span>
     </div>
   );
 }
