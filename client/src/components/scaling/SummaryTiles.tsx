@@ -67,40 +67,60 @@ function MonthlyRevenueTile({ monthlyRevenue }: { monthlyRevenue?: MonthlyRevenu
   if (!monthlyRevenue || monthlyRevenue.length === 0) {
     return (
       <div className="bg-white rounded-xl border border-gray-100 p-3 md:p-4 shadow-sm hover:shadow-md transition-shadow">
-        <div className="flex items-center gap-2 mb-3">
-          <Calendar size={14} className="text-amber-500" />
-          <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">
-            Actual Revenue Trend
-          </span>
+        <div className="flex items-start justify-between">
+          <div className="flex-1">
+            <div className="flex items-center gap-2 mb-2 md:mb-3">
+              <Calendar size={14} className="text-amber-500" />
+              <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">
+                Actual Revenue Trend
+              </span>
+            </div>
+            <div className="text-gray-400 text-sm">Loading...</div>
+          </div>
+          <div className="w-8 h-8 md:w-10 md:h-10 rounded-lg bg-amber-50 flex items-center justify-center">
+            <Calendar size={16} className="text-amber-500" />
+          </div>
         </div>
-        <div className="text-gray-400 text-sm">Loading...</div>
       </div>
     )
   }
 
   return (
     <div className="bg-white rounded-xl border border-gray-100 p-3 md:p-4 shadow-sm hover:shadow-md transition-shadow">
-      <div className="flex items-center gap-2 mb-4">
-        <Calendar size={14} className="text-amber-500" />
-        <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">
-          Actual Revenue Trend
-        </span>
-      </div>
+      <div className="flex items-start justify-between">
+        <div className="flex-1">
+          {/* Header */}
+          <div className="flex items-center gap-2 mb-2 md:mb-3">
+            <Calendar size={14} className="text-amber-500" />
+            <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">
+              Actual Revenue Trend
+            </span>
+          </div>
 
-      <div className="flex justify-between">
-        {monthlyRevenue.map((month) => {
-          const isZero = month.revenue === 0
-          return (
-            <div key={`${month.month}-${month.year}`} className="text-center flex-1">
-              <div className={`text-sm font-semibold tabular-nums ${isZero ? 'text-gray-300' : 'text-gray-800'}`}>
-                {formatCurrency(month.revenue)}
-              </div>
-              <div className="text-[10px] text-gray-400 mt-1">
-                {month.month}
-              </div>
-            </div>
-          )
-        })}
+          {/* Revenue values in a row */}
+          <div className="flex items-start">
+            {monthlyRevenue.map((month, index) => {
+              const isZero = month.revenue === 0
+              const isLast = index === monthlyRevenue.length - 1
+              return (
+                <React.Fragment key={`${month.month}-${month.year}`}>
+                  <div className="flex-1 min-w-0">
+                    <div className={`text-sm md:text-base font-bold tabular-nums tracking-tight ${isZero ? 'text-gray-300' : 'text-gray-900'}`}>
+                      {formatCurrency(month.revenue)}
+                    </div>
+                    <p className="text-[9px] md:text-[10px] text-gray-400 mt-0.5">
+                      {month.month}
+                    </p>
+                  </div>
+                  {!isLast && <div className="w-px h-8 md:h-10 bg-gray-100 mx-1 md:mx-2 self-center flex-shrink-0" />}
+                </React.Fragment>
+              )
+            })}
+          </div>
+        </div>
+        <div className="w-8 h-8 md:w-10 md:h-10 rounded-lg bg-amber-50 flex items-center justify-center ml-2 flex-shrink-0">
+          <Calendar size={16} className="text-amber-500" />
+        </div>
       </div>
     </div>
   )
