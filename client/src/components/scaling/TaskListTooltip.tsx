@@ -300,16 +300,14 @@ function CompactTaskTile({
             )}
           </div>
 
-          {/* Col 2: Title + Tags (flex grow) */}
+          {/* Col 2: Title + Description + Tags (flex grow) */}
           <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <h4 className="font-semibold text-gray-900 text-xs truncate">{task.title}</h4>
-              {task.description && (
-                <span className="text-[10px] text-gray-400 truncate flex-shrink">
-                  {task.description.slice(0, 40)}{task.description.length > 40 ? '...' : ''}
-                </span>
-              )}
-            </div>
+            <h4 className="font-semibold text-gray-900 text-xs truncate">{task.title}</h4>
+            {task.description && (
+              <p className="text-[10px] text-gray-500 truncate mt-0.5" title={task.description}>
+                {task.description.slice(0, 100)}{task.description.length > 100 ? '...' : ''}
+              </p>
+            )}
             {/* Tags Row */}
             <div className="flex items-center gap-1.5 mt-1 flex-nowrap overflow-hidden">
               {task.activity_name && (
