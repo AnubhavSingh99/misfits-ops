@@ -213,11 +213,24 @@ export function HierarchyFilterBar({
           </div>
         </div>
 
-        {/* Hierarchy Order Controls */}
-        {hierarchyOrder && (
+        {/* Clear Filters - moved before hierarchy order */}
+        {hasActiveFilters && (
           <>
             <div className="h-6 w-px bg-gray-200" />
-            <div className="flex items-center gap-2">
+            <button
+              onClick={clearAllFilters}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-500 hover:text-gray-700 hover:bg-gray-50 rounded-lg transition-colors"
+            >
+              <X size={12} />
+              Clear filters
+            </button>
+          </>
+        )}
+      </div>
+
+      {/* Hierarchy Order Controls - always on its own line */}
+      {hierarchyOrder && (
+        <div className="flex items-center gap-2 mt-3 pt-3 border-t border-gray-100">
               <div className="flex items-center gap-1.5 text-gray-400">
                 <Layers size={14} />
                 <span className="text-xs font-medium">Order:</span>
@@ -331,38 +344,22 @@ export function HierarchyFilterBar({
                   );
                 })}
               </div>
-              {hierarchyOrder.isCustomHierarchy && (
-                <button
-                  onClick={hierarchyOrder.onReset}
-                  className="
-                    text-xs text-gray-400 hover:text-gray-600
-                    px-2 py-1 rounded-md
-                    transition-all duration-200 ease-out
-                    hover:bg-gray-100 hover:shadow-sm
-                    active:scale-95
-                  "
-                >
-                  Reset
-                </button>
-              )}
-            </div>
-          </>
-        )}
-
-        {/* Clear Filters */}
-        {hasActiveFilters && (
-          <>
-            <div className="h-6 w-px bg-gray-200" />
+          {hierarchyOrder.isCustomHierarchy && (
             <button
-              onClick={clearAllFilters}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-500 hover:text-gray-700 hover:bg-gray-50 rounded-lg transition-colors"
+              onClick={hierarchyOrder.onReset}
+              className="
+                text-xs text-gray-400 hover:text-gray-600
+                px-2 py-1 rounded-md
+                transition-all duration-200 ease-out
+                hover:bg-gray-100 hover:shadow-sm
+                active:scale-95
+              "
             >
-              <X size={12} />
-              Clear filters
+              Reset
             </button>
-          </>
-        )}
-      </div>
+          )}
+        </div>
+      )}
 
       {/* Active Filters Summary */}
       {hasActiveFilters && (
