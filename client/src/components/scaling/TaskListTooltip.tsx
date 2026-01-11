@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import type { ScalingTask, HierarchyNode, ScalingTaskSummary } from '../../../../shared/types';
 import { TEAMS, getTeamByMember, type TeamKey } from '../../../../shared/teamConfig';
+import { TaskCommentsPanel } from './TaskCommentsPanel';
 
 const API_BASE = import.meta.env.VITE_API_URL
   ? `${import.meta.env.VITE_API_URL}/api`
@@ -102,10 +103,12 @@ function getTeamAccent(teamLead: string | null | undefined): string {
 // Compact Task Tile for Tooltip - grid layout for alignment
 function CompactTaskTile({
   task,
-  onStatusChange
+  onStatusChange,
+  onViewComments
 }: {
   task: ScalingTask;
   onStatusChange?: (task: ScalingTask, newStatus: ScalingTask['status']) => void;
+  onViewComments?: (task: ScalingTask) => void;
 }) {
   const [statusDropdownOpen, setStatusDropdownOpen] = useState(false);
   const statusButtonRef = useRef<HTMLButtonElement>(null);
@@ -270,7 +273,7 @@ function CompactTaskTile({
             title={(task.comments_count || 0) > 0 ? `${task.comments_count} comments` : 'Add comment'}
             onClick={(e) => {
               e.stopPropagation();
-              // TODO: Open comment modal/panel
+              onViewComments?.(task);
             }}
           >
             <MessageSquare className="h-3.5 w-3.5" />
@@ -330,6 +333,9 @@ export function TaskListTooltip({ node, taskSummary, children, onRefreshTasks }:
   const closeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Track if we're hovering over trigger or tooltip
   const isHoveringRef = useRef(false);
+  // Comments panel state
+  const [showCommentsPanel, setShowCommentsPanel] = useState(false);
+  const [selectedTaskForComments, setSelectedTaskForComments] = useState<ScalingTask | null>(null);
 
   // Calculate total tasks from taskSummary (for deciding whether to show tooltip)
   const summaryTotalTasks = taskSummary
@@ -420,6 +426,18 @@ export function TaskListTooltip({ node, taskSummary, children, onRefreshTasks }:
         t.id === task.id ? { ...t, status: originalStatus } : t
       ));
     }
+  };
+
+  // Handle view comments
+  const handleViewComments = (task: ScalingTask) => {
+    setSelectedTaskForComments(task);
+    setShowCommentsPanel(true);
+  };
+
+  // Handle comment added - refresh tasks to get updated comment count
+  const handleCommentAdded = () => {
+    fetchTasks();
+    onRefreshTasks?.();
   };
 
   // Schedule opening the tooltip
@@ -601,6 +619,7 @@ export function TaskListTooltip({ node, taskSummary, children, onRefreshTasks }:
                     key={task.id}
                     task={task}
                     onStatusChange={handleStatusChange}
+                    onViewComments={handleViewComments}
                   />
                 ))
               )}
@@ -614,6 +633,19 @@ export function TaskListTooltip({ node, taskSummary, children, onRefreshTasks }:
           />
         </div>,
         document.body
+      )}
+
+      {/* Comments Panel */}
+      {showCommentsPanel && selectedTaskForComments && (
+        <TaskCommentsPanel
+          isOpen={showCommentsPanel}
+          onClose={() => {
+            setShowCommentsPanel(false);
+            setSelectedTaskForComments(null);
+          }}
+          task={selectedTaskForComments}
+          onCommentAdded={handleCommentAdded}
+        />
       )}
     </div>
   );
