@@ -96,6 +96,28 @@ const formatCurrency = (value: number): string => {
   return `₹${Math.round(value)}`;
 };
 
+// Parse Quill Delta JSON format to plain text
+const parseQuillDelta = (description: string | null): string | null => {
+  if (!description) return null;
+
+  // If it starts with [ it's likely Quill Delta JSON
+  if (description.trim().startsWith('[')) {
+    try {
+      const delta = JSON.parse(description);
+      if (Array.isArray(delta)) {
+        return delta
+          .map((op: { insert?: string }) => op.insert || '')
+          .join('')
+          .trim();
+      }
+    } catch {
+      // Not valid JSON, return as-is
+    }
+  }
+
+  return description;
+};
+
 // Format date to readable format
 const formatDate = (dateStr: string): string => {
   const date = new Date(dateStr);
@@ -118,8 +140,11 @@ function EventNameWithTooltip({ name, description }: { name: string; description
   const [pos, setPos] = useState({ top: 0, left: 0 });
   const ref = useRef<HTMLDivElement>(null);
 
+  // Parse Quill Delta format to plain text
+  const parsedDescription = parseQuillDelta(description);
+
   const handleMouseEnter = () => {
-    if (ref.current && description) {
+    if (ref.current && parsedDescription) {
       const rect = ref.current.getBoundingClientRect();
       setPos({ top: rect.bottom + 4, left: Math.max(16, rect.left - 100) });
       setShow(true);
@@ -137,14 +162,14 @@ function EventNameWithTooltip({ name, description }: { name: string; description
       >
         {truncateName(name, 32)}
       </div>
-      {show && description && createPortal(
+      {show && parsedDescription && createPortal(
         <div
           className="fixed z-[10001] pointer-events-none"
           style={{ top: pos.top, left: pos.left }}
         >
-          <div className="max-w-xs px-3 py-2 rounded-lg bg-gray-900 text-white text-[11px] leading-relaxed shadow-xl">
-            <div className="font-semibold mb-1 text-gray-200">{name}</div>
-            <div className="text-gray-300 whitespace-pre-wrap">{description}</div>
+          <div className="max-w-sm px-3 py-2.5 rounded-xl bg-white border border-gray-200 text-[11px] leading-relaxed shadow-lg">
+            <div className="font-semibold mb-1.5 text-gray-900 text-xs">{name}</div>
+            <div className="text-gray-600 whitespace-pre-wrap max-h-48 overflow-y-auto">{parsedDescription}</div>
           </div>
         </div>,
         document.body
