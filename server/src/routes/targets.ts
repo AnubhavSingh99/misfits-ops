@@ -4625,6 +4625,7 @@ router.get('/clubs/:clubId/meetup-details', async (req, res) => {
       SELECT
         e.pk as event_id,
         e.name as event_name,
+        e.description as event_description,
         e.start_time as event_date,
         e.max_people as capacity,
         e.ticket_price as price,
@@ -4643,7 +4644,7 @@ router.get('/clubs/:clubId/meetup-details', async (req, res) => {
         AND e.start_time >= ${weekStartSQL}
         AND e.start_time < ${weekEndSQL}
         AND e.state = 'CREATED'
-      GROUP BY e.pk, e.name, e.start_time, e.max_people, e.ticket_price
+      GROUP BY e.pk, e.name, e.description, e.start_time, e.max_people, e.ticket_price
       ORDER BY e.start_time DESC
     `;
 
@@ -4657,6 +4658,7 @@ router.get('/clubs/:clubId/meetup-details', async (req, res) => {
       return {
         event_id: row.event_id,
         event_name: row.event_name || 'Unnamed Event',
+        event_description: row.event_description || null,
         event_date: row.event_date,
         capacity: parseInt(row.capacity) || 0,
         price: parseInt(row.price) || 0,

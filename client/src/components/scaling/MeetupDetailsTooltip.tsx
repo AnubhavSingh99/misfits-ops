@@ -6,6 +6,7 @@ import { getWeekBounds, formatWeekLabel, type WeekOption } from './WeekSelector'
 interface MeetupDetail {
   event_id: string;
   event_name: string;
+  event_description: string | null;
   event_date: string;
   capacity: number;
   price: number;
@@ -39,6 +40,7 @@ interface SummaryData {
   current: {
     meetups: number;
     bookings: number;
+    waitlist: number;
     no_show_pct: number;
     revenue: number;
     pending: number;
@@ -47,6 +49,7 @@ interface SummaryData {
   previous: {
     meetups: number;
     bookings: number;
+    waitlist: number;
     no_show_pct: number;
     revenue: number;
     pending: number;
@@ -55,6 +58,7 @@ interface SummaryData {
   change: {
     meetups: number;
     bookings: number;
+    waitlist: number;
     no_show_pct: number;
     revenue: number;
     pending: number;
@@ -107,6 +111,47 @@ const truncateName = (name: string, maxLen: number = 30): string => {
   if (name.length <= maxLen) return name;
   return name.substring(0, maxLen - 1) + '…';
 };
+
+// Event name with description tooltip
+function EventNameWithTooltip({ name, description }: { name: string; description: string | null }) {
+  const [show, setShow] = useState(false);
+  const [pos, setPos] = useState({ top: 0, left: 0 });
+  const ref = useRef<HTMLDivElement>(null);
+
+  const handleMouseEnter = () => {
+    if (ref.current && description) {
+      const rect = ref.current.getBoundingClientRect();
+      setPos({ top: rect.bottom + 4, left: Math.max(16, rect.left - 100) });
+      setShow(true);
+    }
+  };
+
+  return (
+    <>
+      <div
+        ref={ref}
+        onMouseEnter={handleMouseEnter}
+        onMouseLeave={() => setShow(false)}
+        className="text-xs text-gray-700 truncate cursor-default"
+        title={name}
+      >
+        {truncateName(name, 32)}
+      </div>
+      {show && description && createPortal(
+        <div
+          className="fixed z-[10001] pointer-events-none"
+          style={{ top: pos.top, left: pos.left }}
+        >
+          <div className="max-w-xs px-3 py-2 rounded-lg bg-gray-900 text-white text-[11px] leading-relaxed shadow-xl">
+            <div className="font-semibold mb-1 text-gray-200">{name}</div>
+            <div className="text-gray-300 whitespace-pre-wrap">{description}</div>
+          </div>
+        </div>,
+        document.body
+      )}
+    </>
+  );
+}
 
 // Format date as YYYY-MM-DD in local timezone
 const formatLocalDate = (date: Date): string => {
@@ -223,6 +268,48 @@ function SummaryMetricTile({
   );
 }
 
+// Info tooltip for metric formula
+function MetricInfoTooltip({ formula, description }: { formula: string; description: string }) {
+  const [show, setShow] = useState(false);
+  const [pos, setPos] = useState({ top: 0, left: 0 });
+  const btnRef = useRef<HTMLButtonElement>(null);
+
+  const handleMouseEnter = () => {
+    if (btnRef.current) {
+      const rect = btnRef.current.getBoundingClientRect();
+      setPos({ top: rect.bottom + 4, left: rect.left - 80 });
+      setShow(true);
+    }
+  };
+
+  return (
+    <>
+      <button
+        ref={btnRef}
+        onMouseEnter={handleMouseEnter}
+        onMouseLeave={() => setShow(false)}
+        className="p-0.5 rounded hover:bg-white/50 transition-colors"
+      >
+        <Info size={9} className="text-gray-400" />
+      </button>
+      {show && createPortal(
+        <div
+          className="fixed z-[10000] pointer-events-none"
+          style={{ top: pos.top, left: pos.left }}
+        >
+          <div className="w-48 px-2.5 py-2 rounded-lg bg-gray-900 text-white text-[10px] leading-relaxed shadow-xl">
+            <div className="font-semibold mb-1 text-gray-200">{description}</div>
+            <div className="font-mono text-[9px] text-emerald-300 bg-gray-800 px-1.5 py-1 rounded">
+              {formula}
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+    </>
+  );
+}
+
 // Health metric card
 function HealthMetricCard({
   label,
@@ -231,7 +318,9 @@ function HealthMetricCard({
   status,
   isRating = false,
   isNewClub = false,
-  isRepeatRate = false
+  isRepeatRate = false,
+  formula,
+  formulaDesc
 }: {
   label: string;
   value: number;
@@ -240,6 +329,8 @@ function HealthMetricCard({
   isRating?: boolean;
   isNewClub?: boolean;
   isRepeatRate?: boolean;
+  formula?: string;
+  formulaDesc?: string;
 }) {
   const colors = statusColors[status];
   const showChange = !isNewClub || !isRepeatRate;
@@ -247,7 +338,12 @@ function HealthMetricCard({
   return (
     <div className={`flex-1 px-2.5 py-2 rounded-lg border ${colors.border} ${colors.bg}`}>
       <div className="flex items-center justify-between mb-0.5">
-        <span className="text-[9px] font-semibold text-gray-500 uppercase tracking-wider">{label}</span>
+        <div className="flex items-center gap-1">
+          <span className="text-[9px] font-semibold text-gray-500 uppercase tracking-wider">{label}</span>
+          {formula && formulaDesc && (
+            <MetricInfoTooltip formula={formula} description={formulaDesc} />
+          )}
+        </div>
         <div className={`w-1.5 h-1.5 rounded-full ${colors.dot}`} />
       </div>
       <div className={`text-lg font-bold ${colors.text} leading-tight`}>
@@ -329,7 +425,7 @@ function SummarySection({ summary, l4wPending }: { summary: SummaryData; l4wPend
       </div>
 
       {/* Top row - primary metrics */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-4 mb-3">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4 mb-3">
         <SummaryMetricTile
           label="Meetups"
           value={summary.current.meetups}
@@ -343,6 +439,12 @@ function SummarySection({ summary, l4wPending }: { summary: SummaryData; l4wPend
           icon={Users}
         />
         <SummaryMetricTile
+          label="Waitlist"
+          value={summary.current.waitlist}
+          change={summary.change.waitlist}
+          icon={Clock}
+        />
+        <SummaryMetricTile
           label="Revenue"
           value={formatCurrency(summary.current.revenue)}
           change={summary.change.revenue}
@@ -352,7 +454,7 @@ function SummarySection({ summary, l4wPending }: { summary: SummaryData; l4wPend
       </div>
 
       {/* Bottom row - secondary metrics */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-4 pt-2 border-t border-gray-100/80">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4 pt-2 border-t border-gray-100/80">
         <SummaryMetricTile
           label="No Show"
           value={`${summary.current.no_show_pct}%`}
@@ -365,7 +467,7 @@ function SummarySection({ summary, l4wPending }: { summary: SummaryData; l4wPend
           label="Pending"
           value={formatCurrency(summary.current.pending)}
           change={summary.change.pending}
-          icon={Clock}
+          icon={Banknote}
           isCurrency
         />
         <SummaryMetricTile
@@ -374,24 +476,78 @@ function SummarySection({ summary, l4wPending }: { summary: SummaryData; l4wPend
           change={summary.change.rating}
           icon={Star}
         />
+        {/* L4W Pending - now just another metric, less prominent */}
+        {l4wPending !== undefined && l4wPending > 0 && (
+          <SummaryMetricTile
+            label="L4W Pending"
+            value={formatCurrency(l4wPending)}
+            change={0}
+            icon={Banknote}
+            isCurrency
+          />
+        )}
       </div>
-
-      {/* L4W Pending Payments - highlighted row */}
-      {l4wPending !== undefined && l4wPending > 0 && (
-        <div className="mt-3 pt-3 border-t border-amber-200/60">
-          <div className="flex items-center justify-between px-2 py-2 rounded-lg bg-amber-50/80 border border-amber-200/50">
-            <div className="flex items-center gap-2">
-              <Banknote size={14} className="text-amber-600" />
-              <span className="text-[10px] font-semibold text-amber-800 uppercase tracking-wider">L4W Pending</span>
-              <PendingInfoTooltip />
-            </div>
-            <span className="text-base font-bold text-amber-700 tabular-nums">
-              {formatCurrency(l4wPending)}
-            </span>
-          </div>
-        </div>
-      )}
     </div>
+  );
+}
+
+// Health score tooltip showing calculation formula
+function HealthScoreTooltip() {
+  const [show, setShow] = useState(false);
+  const [pos, setPos] = useState({ top: 0, left: 0 });
+  const btnRef = useRef<HTMLButtonElement>(null);
+
+  const handleMouseEnter = () => {
+    if (btnRef.current) {
+      const rect = btnRef.current.getBoundingClientRect();
+      setPos({ top: rect.bottom + 4, left: rect.left - 160 });
+      setShow(true);
+    }
+  };
+
+  return (
+    <>
+      <button
+        ref={btnRef}
+        onMouseEnter={handleMouseEnter}
+        onMouseLeave={() => setShow(false)}
+        className="p-0.5 rounded hover:bg-gray-200 transition-colors"
+      >
+        <Info size={10} className="text-gray-400" />
+      </button>
+      {show && createPortal(
+        <div
+          className="fixed z-[10000] pointer-events-none"
+          style={{ top: pos.top, left: pos.left }}
+        >
+          <div className="w-64 px-3 py-2.5 rounded-lg bg-gray-900 text-white text-[10px] leading-relaxed shadow-xl">
+            <div className="font-semibold mb-2 text-gray-200">Health Score Calculation</div>
+            <div className="space-y-1.5 text-gray-300">
+              <div className="flex justify-between">
+                <span>Capacity Utilisation</span>
+                <span className="font-mono text-emerald-300">30%</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Repeat Rate</span>
+                <span className="font-mono text-emerald-300">30%</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Average Rating</span>
+                <span className="font-mono text-emerald-300">25%</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Revenue Achievement</span>
+                <span className="font-mono text-emerald-300">15%</span>
+              </div>
+            </div>
+            <div className="mt-2 pt-2 border-t border-gray-700 text-[9px] text-gray-400">
+              Score = weighted average of metrics
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+    </>
   );
 }
 
@@ -406,7 +562,7 @@ function HealthSection({ health }: { health: HealthData }) {
 
   return (
     <div className="border-b border-gray-100">
-      <div className="px-4 py-2 flex items-center justify-between bg-gradient-to-r from-gray-50/50 to-white">
+      <div className="px-4 py-2 flex items-center justify-between bg-white">
         <div className="flex items-center gap-2">
           <span className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider">Health</span>
           {health.is_new_club && (
@@ -416,6 +572,7 @@ function HealthSection({ health }: { health: HealthData }) {
           )}
         </div>
         <div className="flex items-center gap-1.5">
+          <HealthScoreTooltip />
           <div className={`w-2 h-2 rounded-full ${colors.dot}`} />
           <span className={`text-sm font-bold ${colors.text}`}>{health.score}</span>
           <span className="text-[10px] text-gray-400">/100</span>
@@ -424,10 +581,12 @@ function HealthSection({ health }: { health: HealthData }) {
 
       <div className="px-4 pb-3 flex gap-2">
         <HealthMetricCard
-          label="Capacity"
+          label="Cap. Util."
           value={health.capacity.current}
           change={health.capacity.change}
           status={health.capacity.status}
+          formula="(bookings / capacity) × 100"
+          formulaDesc="Capacity Utilisation"
         />
         <HealthMetricCard
           label="Repeat"
@@ -436,6 +595,8 @@ function HealthSection({ health }: { health: HealthData }) {
           status={health.repeat_rate.status}
           isNewClub={health.is_new_club}
           isRepeatRate
+          formula="(returning users / total users) × 100"
+          formulaDesc="Repeat Rate"
         />
         <HealthMetricCard
           label="Rating"
@@ -443,6 +604,8 @@ function HealthSection({ health }: { health: HealthData }) {
           change={health.rating.change}
           status={health.rating.status}
           isRating
+          formula="avg(user ratings) over 30 days"
+          formulaDesc="Average Rating"
         />
       </div>
 
@@ -618,7 +781,7 @@ export function MeetupDetailsTooltip({
         >
           <div className="w-[calc(100vw-32px)] sm:w-[550px] max-w-[550px] bg-white rounded-xl shadow-xl border border-gray-200/80 overflow-hidden">
             {/* Header */}
-            <div className="px-4 py-2.5 border-b border-gray-100 flex items-center justify-between bg-gradient-to-r from-white to-gray-50/50">
+            <div className="px-4 py-2.5 border-b border-gray-100 flex items-center justify-between bg-white">
               <span className="text-sm font-semibold text-gray-800 truncate max-w-[320px]">
                 {truncateName(clubName, 40)}
               </span>
@@ -682,13 +845,13 @@ export function MeetupDetailsTooltip({
                   ) : (
                     <>
                       {/* Section Header */}
-                      <div className="px-4 py-2 bg-gradient-to-r from-gray-50 to-white border-b border-gray-100 flex items-center justify-between sticky top-0 z-10">
+                      <div className="px-4 py-2 bg-white border-b border-gray-100 flex items-center justify-between sticky top-0 z-10">
                         <span className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider">Meetups</span>
                         <span className="text-[10px] text-gray-400">{data?.meetups.length} this week</span>
                       </div>
 
                       {/* Column Headers - wider first column */}
-                      <div className="grid grid-cols-[1.5fr_70px_50px_60px_60px_80px] gap-2 px-4 py-1.5 bg-gray-50/60 border-b border-gray-100 sticky top-[33px] z-10">
+                      <div className="grid grid-cols-[1.5fr_70px_50px_60px_60px_80px] gap-2 px-4 py-1.5 bg-gray-50 border-b border-gray-100 sticky top-[33px] z-10">
                         <span className="text-[9px] font-semibold text-gray-400 uppercase tracking-wider">Meetup</span>
                         <span className="text-[9px] font-semibold text-gray-400 uppercase tracking-wider text-center">Date</span>
                         <span className="text-[9px] font-semibold text-gray-400 uppercase tracking-wider text-center">Price</span>
@@ -704,11 +867,12 @@ export function MeetupDetailsTooltip({
                             key={meetup.event_id}
                             className="grid grid-cols-[1.5fr_70px_50px_60px_60px_80px] gap-2 px-4 py-2 border-b border-gray-50 hover:bg-gray-50/50 transition-colors"
                           >
-                            {/* Meetup name - wider */}
+                            {/* Meetup name - wider, with description tooltip on hover */}
                             <div className="min-w-0">
-                              <div className="text-xs text-gray-700 truncate" title={meetup.event_name}>
-                                {truncateName(meetup.event_name, 32)}
-                              </div>
+                              <EventNameWithTooltip
+                                name={meetup.event_name}
+                                description={meetup.event_description}
+                              />
                             </div>
 
                             {/* Date */}
