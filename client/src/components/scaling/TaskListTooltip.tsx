@@ -8,11 +8,12 @@ import {
   Activity,
   Building2,
   MapPin,
-  Home
+  Home,
+  Send,
+  X
 } from 'lucide-react';
 import type { ScalingTask, HierarchyNode, ScalingTaskSummary } from '../../../../shared/types';
 import { TEAMS, getTeamByMember, type TeamKey } from '../../../../shared/teamConfig';
-import { TaskCommentsPanel } from './TaskCommentsPanel';
 
 const API_BASE = import.meta.env.VITE_API_URL
   ? `${import.meta.env.VITE_API_URL}/api`
@@ -100,17 +101,26 @@ function getTeamAccent(teamLead: string | null | undefined): string {
   return TEAMS[teamKey]?.color.accent || '#94a3b8';
 }
 
-// Compact Task Tile for Tooltip - grid layout for alignment
+// Compact Task Tile for Tooltip - with inline comments like SprintModal
 function CompactTaskTile({
   task,
   onStatusChange,
-  onViewComments
+  onCommentAdded
 }: {
   task: ScalingTask;
   onStatusChange?: (task: ScalingTask, newStatus: ScalingTask['status']) => void;
-  onViewComments?: (task: ScalingTask) => void;
+  onCommentAdded?: () => void;
 }) {
   const [statusDropdownOpen, setStatusDropdownOpen] = useState(false);
+  const [commentsExpanded, setCommentsExpanded] = useState(false);
+  const [comments, setComments] = useState<Comment[]>([]);
+  const [loadingComments, setLoadingComments] = useState(false);
+  const [newComment, setNewComment] = useState('');
+  const [submittingComment, setSubmittingComment] = useState(false);
+  const [commentsFetched, setCommentsFetched] = useState(false);
+  const [commentAuthor, setCommentAuthor] = useState(task.assigned_to_name || 'User');
+  const [localCommentsCount, setLocalCommentsCount] = useState(task.comments_count || 0);
+
   const statusButtonRef = useRef<HTMLButtonElement>(null);
   const [dropdownPosition, setDropdownPosition] = useState({ top: 0, left: 0 });
 
@@ -129,22 +139,18 @@ function CompactTaskTile({
     }
   }, [statusDropdownOpen]);
 
-  // Close dropdown on outside click - use click instead of mousedown
+  // Close dropdown on outside click
   useEffect(() => {
     if (!statusDropdownOpen) return;
 
     const handleClickOutside = (e: MouseEvent) => {
       const target = e.target as Node;
-      // Check if click is on button
       if (statusButtonRef.current?.contains(target)) return;
-      // Check if click is on dropdown
       const dropdown = document.getElementById(`tooltip-status-dropdown-${task.id}`);
       if (dropdown?.contains(target)) return;
-      // Close if outside
       setStatusDropdownOpen(false);
     };
 
-    // Use setTimeout to avoid immediate close on the same click that opened it
     const timeoutId = setTimeout(() => {
       document.addEventListener('click', handleClickOutside, true);
     }, 0);
@@ -155,8 +161,55 @@ function CompactTaskTile({
     };
   }, [statusDropdownOpen, task.id]);
 
+  // Fetch comments when expanded
+  useEffect(() => {
+    if (commentsExpanded && !commentsFetched) {
+      fetchComments();
+    }
+  }, [commentsExpanded, commentsFetched]);
+
+  const fetchComments = async () => {
+    setLoadingComments(true);
+    try {
+      const res = await fetch(`${API_BASE}/scaling-tasks/${task.id}/comments`);
+      const data = await res.json();
+      if (data.success) {
+        setComments(data.comments || []);
+        setLocalCommentsCount(data.comments?.length || 0);
+      }
+      setCommentsFetched(true);
+    } catch (err) {
+      console.error('Failed to fetch comments:', err);
+      setCommentsFetched(true);
+    } finally {
+      setLoadingComments(false);
+    }
+  };
+
+  const handleAddComment = async () => {
+    if (!newComment.trim() || submittingComment) return;
+    setSubmittingComment(true);
+    try {
+      const res = await fetch(`${API_BASE}/scaling-tasks/${task.id}/comments`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ comment_text: newComment.trim(), author_name: commentAuthor })
+      });
+      const data = await res.json();
+      if (data.success && data.comment) {
+        setComments(prev => [data.comment, ...prev]);
+        setLocalCommentsCount(prev => prev + 1);
+        setNewComment('');
+        onCommentAdded?.();
+      }
+    } catch (err) {
+      console.error('Failed to add comment:', err);
+    } finally {
+      setSubmittingComment(false);
+    }
+  };
+
   const handleStatusClick = (newStatus: ScalingTask['status']) => {
-    console.log('Status change:', task.id, newStatus);
     if (onStatusChange) {
       onStatusChange(task, newStatus);
     }
@@ -168,148 +221,244 @@ function CompactTaskTile({
       className={`relative rounded-lg border bg-white overflow-hidden transition-all duration-150 hover:shadow-md ${currentStatus.border}`}
       style={{ borderLeftWidth: '3px', borderLeftColor: accentColor }}
     >
-      {/* Status Gradient Overlay */}
-      <div className={`absolute inset-y-0 right-0 w-1/6 bg-gradient-to-l ${currentStatus.gradient} pointer-events-none`} />
+      {/* Main Row */}
+      <div className="relative">
+        {/* Status Gradient Overlay */}
+        <div className={`absolute inset-y-0 right-0 w-1/6 bg-gradient-to-l ${currentStatus.gradient} pointer-events-none`} />
 
-      {/* Grid Layout for consistent alignment */}
-      <div className="relative grid grid-cols-[auto_1fr_auto_auto_auto] items-center gap-3 px-3 py-2.5">
-        {/* Col 1: Stage + Meetups (fixed width) */}
-        <div className="flex items-center gap-1.5 w-[70px]">
-          {stageTransition && (
-            <span className="px-1.5 py-0.5 rounded bg-slate-100 text-[10px] font-mono font-bold text-slate-600">
-              {stageTransition}
-            </span>
-          )}
-          {task.meetups_count > 0 && (
-            <span className="px-1.5 py-0.5 rounded bg-slate-100 text-[10px] font-semibold text-slate-500">
-              {task.meetups_count}m
-            </span>
-          )}
-        </div>
-
-        {/* Col 2: Title + Tags (flex grow) */}
-        <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <h4 className="font-semibold text-gray-900 text-xs truncate">{task.title}</h4>
-            {task.description && (
-              <span className="text-[10px] text-gray-400 truncate flex-shrink">
-                {task.description.slice(0, 40)}{task.description.length > 40 ? '...' : ''}
+        {/* Grid Layout for consistent alignment */}
+        <div className="relative grid grid-cols-[auto_1fr_auto_auto_auto] items-center gap-3 px-3 py-2.5">
+          {/* Col 1: Stage + Meetups (fixed width) */}
+          <div className="flex items-center gap-1.5 w-[70px]">
+            {stageTransition && (
+              <span className="px-1.5 py-0.5 rounded bg-slate-100 text-[10px] font-mono font-bold text-slate-600">
+                {stageTransition}
+              </span>
+            )}
+            {task.meetups_count > 0 && (
+              <span className="px-1.5 py-0.5 rounded bg-slate-100 text-[10px] font-semibold text-slate-500">
+                {task.meetups_count}m
               </span>
             )}
           </div>
-          {/* Tags Row */}
-          <div className="flex items-center gap-1.5 mt-1 flex-nowrap overflow-hidden">
-            {task.activity_name && (
-              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-medium bg-violet-100 text-violet-700 whitespace-nowrap">
-                <Activity className="h-2.5 w-2.5" />
-                {task.activity_name}
-              </span>
-            )}
-            {task.city_name && (
-              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-medium bg-sky-100 text-sky-700 whitespace-nowrap">
-                <Building2 className="h-2.5 w-2.5" />
-                {task.city_name}
-              </span>
-            )}
-            {task.area_name && (
-              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-medium bg-emerald-100 text-emerald-700 whitespace-nowrap">
-                <MapPin className="h-2.5 w-2.5" />
-                {task.area_name}
-              </span>
-            )}
-            {task.club_name && (
-              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-medium bg-orange-100 text-orange-700 whitespace-nowrap max-w-[120px]">
-                <Home className="h-2.5 w-2.5 flex-shrink-0" />
-                <span className="truncate">{task.club_name}</span>
-              </span>
-            )}
+
+          {/* Col 2: Title + Tags (flex grow) */}
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <h4 className="font-semibold text-gray-900 text-xs truncate">{task.title}</h4>
+              {task.description && (
+                <span className="text-[10px] text-gray-400 truncate flex-shrink">
+                  {task.description.slice(0, 40)}{task.description.length > 40 ? '...' : ''}
+                </span>
+              )}
+            </div>
+            {/* Tags Row */}
+            <div className="flex items-center gap-1.5 mt-1 flex-nowrap overflow-hidden">
+              {task.activity_name && (
+                <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-medium bg-violet-100 text-violet-700 whitespace-nowrap">
+                  <Activity className="h-2.5 w-2.5" />
+                  {task.activity_name}
+                </span>
+              )}
+              {task.city_name && (
+                <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-medium bg-sky-100 text-sky-700 whitespace-nowrap">
+                  <Building2 className="h-2.5 w-2.5" />
+                  {task.city_name}
+                </span>
+              )}
+              {task.area_name && (
+                <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-medium bg-emerald-100 text-emerald-700 whitespace-nowrap">
+                  <MapPin className="h-2.5 w-2.5" />
+                  {task.area_name}
+                </span>
+              )}
+              {task.club_name && (
+                <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-medium bg-orange-100 text-orange-700 whitespace-nowrap max-w-[120px]">
+                  <Home className="h-2.5 w-2.5 flex-shrink-0" />
+                  <span className="truncate">{task.club_name}</span>
+                </span>
+              )}
+            </div>
           </div>
-        </div>
 
-        {/* Col 3: Assignee (fixed width) */}
-        <div className="w-7 flex justify-center">
-          {task.assigned_to_name ? (
-            <div
-              className="w-7 h-7 rounded-full flex items-center justify-center text-[9px] font-bold text-white"
-              style={{ backgroundColor: accentColor }}
-              title={task.assigned_to_name}
-            >
-              {task.assigned_to_name.split(' ').map(n => n[0]).join('').slice(0, 2)}
-            </div>
-          ) : (
-            <div className="w-7 h-7 rounded-full bg-gray-100 flex items-center justify-center text-[9px] text-gray-400">
-              --
-            </div>
-          )}
-        </div>
-
-        {/* Col 4: Status Dropdown (fixed width) */}
-        <div className="w-[110px]">
-          <button
-            ref={statusButtonRef}
-            onClick={(e) => {
-              e.stopPropagation();
-              e.preventDefault();
-              if (onStatusChange) setStatusDropdownOpen(!statusDropdownOpen);
-            }}
-            className={`w-full flex items-center justify-between gap-1 px-2 py-1.5 rounded text-[10px] font-semibold transition-all border ${currentStatus.bg} ${currentStatus.text} ${currentStatus.border} ${onStatusChange ? 'cursor-pointer hover:shadow-sm' : 'cursor-default'}`}
-          >
-            <span className="flex items-center gap-1.5">
-              <span className={`w-2 h-2 rounded-full ${currentStatus.dot} ${task.status === 'in_progress' ? 'animate-pulse' : ''}`} />
-              <span>{currentStatus.label}</span>
-            </span>
-            {onStatusChange && <ChevronDown className={`h-3 w-3 transition-transform ${statusDropdownOpen ? 'rotate-180' : ''}`} />}
-          </button>
-        </div>
-
-        {/* Col 5: Comments (fixed width) - always visible for adding comments */}
-        <div className="w-8 flex justify-center">
-          <button
-            className={`flex items-center gap-0.5 p-1 rounded transition-colors ${
-              (task.comments_count || 0) > 0
-                ? 'text-gray-600 hover:text-blue-600 hover:bg-blue-50'
-                : 'text-gray-300 hover:text-blue-500 hover:bg-blue-50'
-            }`}
-            title={(task.comments_count || 0) > 0 ? `${task.comments_count} comments` : 'Add comment'}
-            onClick={(e) => {
-              e.stopPropagation();
-              onViewComments?.(task);
-            }}
-          >
-            <MessageSquare className="h-3.5 w-3.5" />
-            {(task.comments_count || 0) > 0 && (
-              <span className="text-[10px] font-medium">{task.comments_count}</span>
-            )}
-          </button>
-        </div>
-
-        {/* Status Dropdown Portal */}
-        {statusDropdownOpen && createPortal(
-          <div
-            id={`tooltip-status-dropdown-${task.id}`}
-            className="fixed bg-white rounded-lg shadow-2xl border border-gray-200 py-1 min-w-[120px] animate-in fade-in slide-in-from-top-2 duration-150"
-            style={{ top: dropdownPosition.top, left: dropdownPosition.left, zIndex: 99999 }}
-          >
-            {STATUS_OPTIONS.map((option) => (
-              <button
-                key={option.value}
-                type="button"
-                onMouseDown={(e) => {
-                  // Use mouseDown to fire before the outside click handler
-                  e.stopPropagation();
-                  handleStatusClick(option.value as ScalingTask['status']);
-                }}
-                className={`w-full flex items-center gap-2 px-3 py-2 text-[11px] font-medium text-left ${option.hover} transition-colors ${task.status === option.value ? `${option.bg} ${option.text}` : 'text-gray-700'}`}
+          {/* Col 3: Assignee (fixed width) */}
+          <div className="w-7 flex justify-center">
+            {task.assigned_to_name ? (
+              <div
+                className="w-7 h-7 rounded-full flex items-center justify-center text-[9px] font-bold text-white"
+                style={{ backgroundColor: accentColor }}
+                title={task.assigned_to_name}
               >
-                <span className={`w-2.5 h-2.5 rounded-full ${option.dot}`} />
-                <span className="flex-1">{option.label}</span>
-                {task.status === option.value && <Check className="h-3.5 w-3.5" />}
-              </button>
-            ))}
-          </div>,
-          document.body
-        )}
+                {task.assigned_to_name.split(' ').map(n => n[0]).join('').slice(0, 2)}
+              </div>
+            ) : (
+              <div className="w-7 h-7 rounded-full bg-gray-100 flex items-center justify-center text-[9px] text-gray-400">
+                --
+              </div>
+            )}
+          </div>
+
+          {/* Col 4: Status Dropdown (fixed width) */}
+          <div className="w-[110px]">
+            <button
+              ref={statusButtonRef}
+              onClick={(e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                if (onStatusChange) setStatusDropdownOpen(!statusDropdownOpen);
+              }}
+              className={`w-full flex items-center justify-between gap-1 px-2 py-1.5 rounded text-[10px] font-semibold transition-all border ${currentStatus.bg} ${currentStatus.text} ${currentStatus.border} ${onStatusChange ? 'cursor-pointer hover:shadow-sm' : 'cursor-default'}`}
+            >
+              <span className="flex items-center gap-1.5">
+                <span className={`w-2 h-2 rounded-full ${currentStatus.dot} ${task.status === 'in_progress' ? 'animate-pulse' : ''}`} />
+                <span>{currentStatus.label}</span>
+              </span>
+              {onStatusChange && <ChevronDown className={`h-3 w-3 transition-transform ${statusDropdownOpen ? 'rotate-180' : ''}`} />}
+            </button>
+          </div>
+
+          {/* Col 5: Comments Toggle */}
+          <div className="w-8 flex justify-center">
+            <button
+              className={`flex items-center gap-0.5 p-1 rounded transition-colors ${
+                commentsExpanded
+                  ? 'bg-blue-100 text-blue-600'
+                  : localCommentsCount > 0
+                    ? 'text-gray-600 hover:text-blue-600 hover:bg-blue-50'
+                    : 'text-gray-300 hover:text-blue-500 hover:bg-blue-50'
+              }`}
+              title={localCommentsCount > 0 ? `${localCommentsCount} comments` : 'Add comment'}
+              onClick={(e) => {
+                e.stopPropagation();
+                setCommentsExpanded(!commentsExpanded);
+              }}
+            >
+              <MessageSquare className="h-3.5 w-3.5" />
+              {localCommentsCount > 0 && (
+                <span className="text-[10px] font-medium">{localCommentsCount}</span>
+              )}
+            </button>
+          </div>
+
+          {/* Status Dropdown Portal */}
+          {statusDropdownOpen && createPortal(
+            <div
+              id={`tooltip-status-dropdown-${task.id}`}
+              className="fixed bg-white rounded-lg shadow-2xl border border-gray-200 py-1 min-w-[120px] animate-in fade-in slide-in-from-top-2 duration-150"
+              style={{ top: dropdownPosition.top, left: dropdownPosition.left, zIndex: 99999 }}
+            >
+              {STATUS_OPTIONS.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  onMouseDown={(e) => {
+                    e.stopPropagation();
+                    handleStatusClick(option.value as ScalingTask['status']);
+                  }}
+                  className={`w-full flex items-center gap-2 px-3 py-2 text-[11px] font-medium text-left ${option.hover} transition-colors ${task.status === option.value ? `${option.bg} ${option.text}` : 'text-gray-700'}`}
+                >
+                  <span className={`w-2.5 h-2.5 rounded-full ${option.dot}`} />
+                  <span className="flex-1">{option.label}</span>
+                  {task.status === option.value && <Check className="h-3.5 w-3.5" />}
+                </button>
+              ))}
+            </div>,
+            document.body
+          )}
+        </div>
       </div>
+
+      {/* Inline Comments Section */}
+      {commentsExpanded && (
+        <div className="border-t border-gray-100 bg-slate-50/50">
+          <div className="px-3 py-2">
+            {/* Add Comment Input */}
+            <div className="flex items-center gap-2 mb-2">
+              {/* Author Avatar */}
+              <div
+                className="w-6 h-6 rounded-full flex items-center justify-center text-[9px] font-bold text-white flex-shrink-0"
+                style={{ backgroundColor: accentColor }}
+                title={`Posting as: ${commentAuthor}`}
+              >
+                {commentAuthor.split(' ').map(n => n?.[0] || '').join('').slice(0, 2).toUpperCase() || 'U'}
+              </div>
+
+              <div className="flex-1 flex items-center gap-1.5 bg-white rounded-lg border border-gray-200 px-2 py-1.5 focus-within:border-blue-400 transition-all">
+                <input
+                  type="text"
+                  value={newComment}
+                  onChange={(e) => setNewComment(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleAddComment()}
+                  placeholder={`Comment as ${commentAuthor.split(' ')[0]}...`}
+                  className="flex-1 text-xs bg-transparent outline-none placeholder-gray-400"
+                  onClick={(e) => e.stopPropagation()}
+                />
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleAddComment();
+                  }}
+                  disabled={!newComment.trim() || submittingComment}
+                  className={`p-1 rounded transition-all ${
+                    newComment.trim()
+                      ? 'bg-blue-600 text-white hover:bg-blue-700'
+                      : 'bg-gray-100 text-gray-300 cursor-not-allowed'
+                  }`}
+                >
+                  <Send className="h-3 w-3" />
+                </button>
+              </div>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setCommentsExpanded(false);
+                }}
+                className="p-1 rounded hover:bg-gray-200 text-gray-400 hover:text-gray-600 transition-colors"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+
+            {/* Comments List */}
+            <div className="space-y-1.5 max-h-[120px] overflow-y-auto">
+              {loadingComments ? (
+                <div className="flex items-center justify-center py-2">
+                  <div className="w-4 h-4 border-2 border-blue-200 border-t-blue-600 rounded-full animate-spin" />
+                  <span className="ml-2 text-[10px] text-gray-400">Loading...</span>
+                </div>
+              ) : comments.length === 0 ? (
+                <div className="text-center py-2">
+                  <p className="text-[10px] text-gray-400">No comments yet</p>
+                </div>
+              ) : (
+                comments.map((comment, idx) => (
+                  <div
+                    key={comment.id}
+                    className={`flex gap-2 px-2 py-1.5 rounded-lg ${idx === 0 ? 'bg-blue-50/70' : 'hover:bg-gray-100/50'}`}
+                  >
+                    <div className="w-5 h-5 rounded-full bg-gray-200 flex items-center justify-center text-[8px] font-bold text-gray-600 flex-shrink-0">
+                      {(comment.author_name || 'U').split(' ').map(n => n?.[0] || '').join('').slice(0, 2).toUpperCase()}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[11px] font-semibold text-gray-700">
+                          {comment.author_name || 'User'}
+                        </span>
+                        <span className="text-[9px] text-gray-400">
+                          {formatDateTime(comment.created_at)}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-gray-600 leading-snug">
+                        {comment.comment_text}
+                      </p>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -333,9 +482,6 @@ export function TaskListTooltip({ node, taskSummary, children, onRefreshTasks }:
   const closeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Track if we're hovering over trigger or tooltip
   const isHoveringRef = useRef(false);
-  // Comments panel state
-  const [showCommentsPanel, setShowCommentsPanel] = useState(false);
-  const [selectedTaskForComments, setSelectedTaskForComments] = useState<ScalingTask | null>(null);
 
   // Calculate total tasks from taskSummary (for deciding whether to show tooltip)
   const summaryTotalTasks = taskSummary
@@ -426,12 +572,6 @@ export function TaskListTooltip({ node, taskSummary, children, onRefreshTasks }:
         t.id === task.id ? { ...t, status: originalStatus } : t
       ));
     }
-  };
-
-  // Handle view comments
-  const handleViewComments = (task: ScalingTask) => {
-    setSelectedTaskForComments(task);
-    setShowCommentsPanel(true);
   };
 
   // Handle comment added - refresh tasks to get updated comment count
@@ -619,7 +759,7 @@ export function TaskListTooltip({ node, taskSummary, children, onRefreshTasks }:
                     key={task.id}
                     task={task}
                     onStatusChange={handleStatusChange}
-                    onViewComments={handleViewComments}
+                    onCommentAdded={handleCommentAdded}
                   />
                 ))
               )}
@@ -633,19 +773,6 @@ export function TaskListTooltip({ node, taskSummary, children, onRefreshTasks }:
           />
         </div>,
         document.body
-      )}
-
-      {/* Comments Panel */}
-      {showCommentsPanel && selectedTaskForComments && (
-        <TaskCommentsPanel
-          isOpen={showCommentsPanel}
-          onClose={() => {
-            setShowCommentsPanel(false);
-            setSelectedTaskForComments(null);
-          }}
-          task={selectedTaskForComments}
-          onCommentAdded={handleCommentAdded}
-        />
       )}
     </div>
   );
