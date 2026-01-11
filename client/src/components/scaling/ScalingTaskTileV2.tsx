@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import {
   GripVertical,
@@ -48,27 +48,53 @@ function renderWithLinks(text: string): React.ReactNode[] {
   });
 }
 
-// Hoverable description with inline tooltip (simpler, more reliable)
+// Hoverable description with portal-based tooltip to escape overflow:hidden
 function HoverableDescription({ description, maxLength = 60 }: { description: string; maxLength?: number }) {
   const [isHovered, setIsHovered] = useState(false);
+  const [tooltipPos, setTooltipPos] = useState({ top: 0, left: 0 });
+  const spanRef = useRef<HTMLSpanElement>(null);
   const needsTruncation = description.length > maxLength;
   const displayText = needsTruncation ? description.slice(0, maxLength) + '...' : description;
 
+  const handleMouseEnter = useCallback(() => {
+    if (spanRef.current && needsTruncation) {
+      const rect = spanRef.current.getBoundingClientRect();
+      setTooltipPos({
+        top: rect.top - 8,
+        left: rect.left
+      });
+      setIsHovered(true);
+    }
+  }, [needsTruncation]);
+
   return (
-    <span
-      className={`text-xs text-gray-500 truncate max-w-[200px] relative group ${needsTruncation ? 'cursor-help' : ''}`}
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
-    >
-      {renderWithLinks(displayText)}
-      {/* Tooltip */}
-      {needsTruncation && isHovered && (
-        <span className="absolute z-[9999] bottom-full left-0 mb-2 px-3 py-2 bg-gray-800 text-white text-[11px] leading-relaxed rounded-lg shadow-xl max-w-[300px] whitespace-normal pointer-events-none">
-          {description}
-          <span className="absolute top-full left-4 border-[6px] border-transparent border-t-gray-800" />
-        </span>
+    <>
+      <span
+        ref={spanRef}
+        className={`text-xs text-gray-500 truncate max-w-[200px] ${needsTruncation ? 'cursor-help' : ''}`}
+        onMouseEnter={handleMouseEnter}
+        onMouseLeave={() => setIsHovered(false)}
+      >
+        {renderWithLinks(displayText)}
+      </span>
+      {/* Portal-based tooltip to escape overflow:hidden */}
+      {needsTruncation && isHovered && createPortal(
+        <div
+          className="fixed z-[99999] pointer-events-none"
+          style={{
+            top: tooltipPos.top,
+            left: tooltipPos.left,
+            transform: 'translateY(-100%)'
+          }}
+        >
+          <div className="px-3 py-2 bg-gray-800 text-white text-[11px] leading-relaxed rounded-lg shadow-xl max-w-[300px] whitespace-normal">
+            {description}
+          </div>
+          <div className="ml-4 -mt-px border-[6px] border-transparent border-t-gray-800" />
+        </div>,
+        document.body
       )}
-    </span>
+    </>
   );
 }
 

@@ -104,24 +104,50 @@ function getTeamAccent(teamLead: string | null | undefined): string {
 // Hoverable description with inline tooltip (simpler, more reliable)
 function HoverableDescription({ description, maxLength = 60, inline = false }: { description: string; maxLength?: number; inline?: boolean }) {
   const [isHovered, setIsHovered] = useState(false);
+  const [tooltipPos, setTooltipPos] = useState({ top: 0, left: 0 });
+  const spanRef = useRef<HTMLSpanElement>(null);
   const needsTruncation = description.length > maxLength;
   const displayText = needsTruncation ? description.slice(0, maxLength) + '...' : description;
 
+  const handleMouseEnter = useCallback(() => {
+    if (spanRef.current && needsTruncation) {
+      const rect = spanRef.current.getBoundingClientRect();
+      setTooltipPos({
+        top: rect.top - 8,
+        left: rect.left
+      });
+      setIsHovered(true);
+    }
+  }, [needsTruncation]);
+
   return (
-    <span
-      className={`text-[10px] text-gray-400 relative ${inline ? 'flex-shrink truncate' : ''} ${needsTruncation ? 'cursor-help' : ''}`}
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
-    >
-      {displayText}
-      {/* Tooltip */}
-      {needsTruncation && isHovered && (
-        <span className="absolute z-[99999] bottom-full left-0 mb-2 px-3 py-2 bg-gray-800 text-white text-[11px] leading-relaxed rounded-lg shadow-xl max-w-[280px] whitespace-normal pointer-events-none">
-          {description}
-          <span className="absolute top-full left-4 border-[6px] border-transparent border-t-gray-800" />
-        </span>
+    <>
+      <span
+        ref={spanRef}
+        className={`text-[10px] text-gray-400 ${inline ? 'flex-shrink truncate' : ''} ${needsTruncation ? 'cursor-help' : ''}`}
+        onMouseEnter={handleMouseEnter}
+        onMouseLeave={() => setIsHovered(false)}
+      >
+        {displayText}
+      </span>
+      {/* Portal-based tooltip to escape overflow:hidden */}
+      {needsTruncation && isHovered && createPortal(
+        <div
+          className="fixed z-[99999] pointer-events-none"
+          style={{
+            top: tooltipPos.top,
+            left: tooltipPos.left,
+            transform: 'translateY(-100%)'
+          }}
+        >
+          <div className="px-3 py-2 bg-gray-800 text-white text-[11px] leading-relaxed rounded-lg shadow-xl max-w-[280px] whitespace-normal">
+            {description}
+          </div>
+          <div className="ml-4 -mt-px border-[6px] border-transparent border-t-gray-800" />
+        </div>,
+        document.body
       )}
-    </span>
+    </>
   );
 }
 
