@@ -48,6 +48,66 @@ function renderWithLinks(text: string): React.ReactNode[] {
   });
 }
 
+// Description tooltip component - matches dashboard tooltip design
+function DescriptionTooltip({ text, targetRect, visible }: { text: string; targetRect: DOMRect | null; visible: boolean }) {
+  if (!visible || !targetRect || !text) return null;
+
+  const tooltipWidth = 300;
+  let left = targetRect.left + targetRect.width / 2;
+  left = Math.max(tooltipWidth / 2 + 8, Math.min(left, window.innerWidth - tooltipWidth / 2 - 8));
+
+  return createPortal(
+    <div
+      className="fixed z-[99999] pointer-events-none animate-in fade-in zoom-in-95 duration-150"
+      style={{
+        left,
+        top: targetRect.top - 8,
+        transform: 'translate(-50%, -100%)'
+      }}
+    >
+      <div className="bg-gray-800 text-white text-[11px] leading-relaxed px-3 py-2 rounded-lg shadow-xl max-w-[300px]">
+        {text}
+      </div>
+      <div
+        className="absolute border-[6px] border-transparent border-t-gray-800"
+        style={{ top: '100%', left: '50%', transform: 'translateX(-50%) translateY(-1px)' }}
+      />
+    </div>,
+    document.body
+  );
+}
+
+// Hoverable description with tooltip
+function HoverableDescription({ description, maxLength = 60 }: { description: string; maxLength?: number }) {
+  const [isHovered, setIsHovered] = useState(false);
+  const [rect, setRect] = useState<DOMRect | null>(null);
+  const ref = useRef<HTMLSpanElement>(null);
+
+  const needsTruncation = description.length > maxLength;
+  const displayText = needsTruncation ? description.slice(0, maxLength) + '...' : description;
+
+  const handleMouseEnter = () => {
+    if (ref.current && needsTruncation) {
+      setRect(ref.current.getBoundingClientRect());
+      setIsHovered(true);
+    }
+  };
+
+  return (
+    <>
+      <span
+        ref={ref}
+        className={`text-xs text-gray-500 truncate max-w-[200px] ${needsTruncation ? 'cursor-help' : ''}`}
+        onMouseEnter={handleMouseEnter}
+        onMouseLeave={() => setIsHovered(false)}
+      >
+        {renderWithLinks(displayText)}
+      </span>
+      <DescriptionTooltip text={description} targetRect={rect} visible={isHovered} />
+    </>
+  );
+}
+
 function getTeamColor(teamLead: string | null | undefined): TeamColor {
   if (!teamLead) return DEFAULT_TEAM_COLOR;
   const teamKey = getTeamByMember(teamLead);
@@ -392,9 +452,7 @@ export function ScalingTaskTileV2({
 
           <div className="flex items-center gap-1.5 flex-wrap">
             {task.description && (
-              <span className="text-xs text-gray-500 truncate max-w-[200px]">
-                {renderWithLinks(task.description.slice(0, 60) + (task.description.length > 60 ? '...' : ''))}
-              </span>
+              <HoverableDescription description={task.description} maxLength={60} />
             )}
 
             {task.activity_name && (

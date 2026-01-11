@@ -101,6 +101,69 @@ function getTeamAccent(teamLead: string | null | undefined): string {
   return TEAMS[teamKey]?.color.accent || '#94a3b8';
 }
 
+// Description tooltip component - matches dashboard tooltip design
+function DescriptionTooltip({ text, targetRect, visible }: { text: string; targetRect: DOMRect | null; visible: boolean }) {
+  if (!visible || !targetRect || !text) return null;
+
+  // Position tooltip above the element, centered
+  const tooltipWidth = 280;
+  let left = targetRect.left + targetRect.width / 2;
+  // Keep within viewport
+  left = Math.max(tooltipWidth / 2 + 8, Math.min(left, window.innerWidth - tooltipWidth / 2 - 8));
+
+  return createPortal(
+    <div
+      className="fixed z-[99999] pointer-events-none animate-in fade-in zoom-in-95 duration-150"
+      style={{
+        left,
+        top: targetRect.top - 8,
+        transform: 'translate(-50%, -100%)'
+      }}
+    >
+      <div className="bg-gray-800 text-white text-[11px] leading-relaxed px-3 py-2 rounded-lg shadow-xl max-w-[280px]">
+        {text}
+      </div>
+      {/* Arrow pointing down */}
+      <div
+        className="absolute border-[6px] border-transparent border-t-gray-800"
+        style={{ top: '100%', left: '50%', transform: 'translateX(-50%) translateY(-1px)' }}
+      />
+    </div>,
+    document.body
+  );
+}
+
+// Hoverable description with tooltip
+function HoverableDescription({ description, maxLength = 100, inline = false }: { description: string; maxLength?: number; inline?: boolean }) {
+  const [isHovered, setIsHovered] = useState(false);
+  const [rect, setRect] = useState<DOMRect | null>(null);
+  const ref = useRef<HTMLSpanElement>(null);
+
+  const needsTruncation = description.length > maxLength;
+  const displayText = needsTruncation ? description.slice(0, maxLength) + '...' : description;
+
+  const handleMouseEnter = () => {
+    if (ref.current && needsTruncation) {
+      setRect(ref.current.getBoundingClientRect());
+      setIsHovered(true);
+    }
+  };
+
+  return (
+    <>
+      <span
+        ref={ref}
+        className={`text-[10px] text-gray-400 truncate ${inline ? 'flex-shrink min-w-0' : 'mt-0.5 block'} ${needsTruncation ? 'cursor-help' : ''}`}
+        onMouseEnter={handleMouseEnter}
+        onMouseLeave={() => setIsHovered(false)}
+      >
+        {displayText}
+      </span>
+      <DescriptionTooltip text={description} targetRect={rect} visible={isHovered} />
+    </>
+  );
+}
+
 // Compact Task Tile for Tooltip - with inline comments like SprintModal
 function CompactTaskTile({
   task,
@@ -302,12 +365,12 @@ function CompactTaskTile({
 
           {/* Col 2: Title + Description + Tags (flex grow) */}
           <div className="min-w-0">
-            <h4 className="font-semibold text-gray-900 text-xs truncate">{task.title}</h4>
-            {task.description && (
-              <p className="text-[10px] text-gray-500 truncate mt-0.5" title={task.description}>
-                {task.description.slice(0, 100)}{task.description.length > 100 ? '...' : ''}
-              </p>
-            )}
+            <div className="flex items-center gap-2">
+              <h4 className="font-semibold text-gray-900 text-xs truncate flex-shrink-0">{task.title}</h4>
+              {task.description && (
+                <HoverableDescription description={task.description} maxLength={60} inline />
+              )}
+            </div>
             {/* Tags Row */}
             <div className="flex items-center gap-1.5 mt-1 flex-nowrap overflow-hidden">
               {task.activity_name && (
