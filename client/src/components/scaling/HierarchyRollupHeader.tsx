@@ -4,7 +4,7 @@ import { Sigma, Calendar, Plus } from 'lucide-react';
 import type { HierarchyNode, StageProgress, StageKey, ScalingTaskSummary, RevenueStatus } from '../../../../shared/types';
 import { TEAMS, type TeamKey } from '../../../../shared/teamConfig';
 import { RevenueStatusPills, createEmptyRevenueStatus, rollupRevenueStatuses } from './RevenueStatusPills';
-import { HealthDistributionBar } from './HealthDot';
+import { HealthTrafficIndicators } from './HealthDot';
 import { STAGES_ORDERED, STAGE_CONFIG, type MeetupStageKey } from '../../pages/ScalingPlannerV2';
 
 // Portal-based tooltip component that escapes overflow:hidden containers
@@ -318,9 +318,9 @@ export function HierarchyRollupHeader({
         </div>
       </td>
 
-      {/* Health column */}
-      <td className="py-3 px-3 text-center">
-        <HealthDistributionBar distribution={totals.healthDistribution} />
+      {/* Health column - traffic indicators with counts */}
+      <td className="py-3 px-3">
+        <HealthTrafficIndicators distribution={totals.healthDistribution} />
       </td>
 
       {/* Target column */}

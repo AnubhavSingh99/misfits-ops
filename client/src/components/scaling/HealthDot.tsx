@@ -178,4 +178,41 @@ export function HealthDistributionBar({ distribution, compact = false }: HealthD
   );
 }
 
+// Traffic light indicators with counts for summary rows
+interface HealthTrafficIndicatorsProps {
+  distribution: {
+    green: number;
+    yellow: number;
+    red: number;
+    gray: number;
+  };
+}
+
+export function HealthTrafficIndicators({ distribution }: HealthTrafficIndicatorsProps) {
+  const total = distribution.green + distribution.yellow + distribution.red + distribution.gray;
+  if (total === 0) return null;
+
+  const indicators = [
+    { key: 'green', count: distribution.green, bg: 'bg-emerald-500', label: 'Healthy' },
+    { key: 'yellow', count: distribution.yellow, bg: 'bg-amber-500', label: 'At Risk' },
+    { key: 'red', count: distribution.red, bg: 'bg-red-500', label: 'Critical' },
+    { key: 'gray', count: distribution.gray, bg: 'bg-gray-400', label: 'Dormant' }
+  ];
+
+  return (
+    <div className="flex items-center gap-2.5">
+      {indicators.map(({ key, count, bg, label }) => (
+        <div
+          key={key}
+          className="flex items-center gap-1"
+          title={`${label}: ${count} clubs`}
+        >
+          <div className={`w-2.5 h-2.5 rounded-full ${bg} ring-1 ring-white shadow-sm`} />
+          <span className="text-xs font-semibold text-gray-700 tabular-nums">{count}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export default HealthDot;
