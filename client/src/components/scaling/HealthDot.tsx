@@ -190,22 +190,66 @@ interface HealthTrafficIndicatorsProps {
 
 export function HealthTrafficIndicators({ distribution }: HealthTrafficIndicatorsProps) {
   const total = distribution.green + distribution.yellow + distribution.red + distribution.gray;
+  const [isHovered, setIsHovered] = useState(false);
+  const [tooltipPos, setTooltipPos] = useState({ top: 0, left: 0 });
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  const handleMouseEnter = useCallback(() => {
+    if (containerRef.current) {
+      const rect = containerRef.current.getBoundingClientRect();
+      setTooltipPos({
+        top: rect.top - 8,
+        left: rect.left + rect.width / 2
+      });
+      setIsHovered(true);
+    }
+  }, []);
+
   if (total === 0) return null;
 
   // Ultra-compact: colored numbers only, no dots, minimal spacing
   return (
-    <div
-      className="inline-flex items-center rounded px-1.5 py-px bg-gray-50 border border-gray-200/60"
-      title={`Health: ${distribution.green} healthy, ${distribution.yellow} at risk, ${distribution.red} critical, ${distribution.gray} dormant`}
-    >
-      <span className="text-[9px] font-bold tabular-nums text-emerald-600">{distribution.green}</span>
-      <span className="text-gray-300 text-[8px] mx-0.5">/</span>
-      <span className="text-[9px] font-bold tabular-nums text-amber-500">{distribution.yellow}</span>
-      <span className="text-gray-300 text-[8px] mx-0.5">/</span>
-      <span className="text-[9px] font-bold tabular-nums text-red-500">{distribution.red}</span>
-      <span className="text-gray-300 text-[8px] mx-0.5">/</span>
-      <span className="text-[9px] font-bold tabular-nums text-gray-400">{distribution.gray}</span>
-    </div>
+    <>
+      <div
+        ref={containerRef}
+        className="inline-flex items-center rounded px-1.5 py-1 bg-gray-50 border border-gray-200/60 cursor-default"
+        onMouseEnter={handleMouseEnter}
+        onMouseLeave={() => setIsHovered(false)}
+      >
+        <span className="text-[9px] font-bold tabular-nums text-emerald-600">{distribution.green}</span>
+        <span className="text-gray-300 text-[8px] mx-0.5">/</span>
+        <span className="text-[9px] font-bold tabular-nums text-amber-500">{distribution.yellow}</span>
+        <span className="text-gray-300 text-[8px] mx-0.5">/</span>
+        <span className="text-[9px] font-bold tabular-nums text-red-500">{distribution.red}</span>
+        <span className="text-gray-300 text-[8px] mx-0.5">/</span>
+        <span className="text-[9px] font-bold tabular-nums text-gray-400">{distribution.gray}</span>
+      </div>
+      {/* Portal tooltip */}
+      {isHovered && createPortal(
+        <div
+          className="fixed z-[99999] pointer-events-none"
+          style={{
+            top: tooltipPos.top,
+            left: tooltipPos.left,
+            transform: 'translate(-50%, -100%)'
+          }}
+        >
+          <div className="px-2 py-1.5 bg-gray-800 text-white text-[10px] rounded-lg shadow-xl whitespace-nowrap">
+            <span className="text-emerald-400">{distribution.green} healthy</span>
+            <span className="text-gray-500 mx-1">·</span>
+            <span className="text-amber-400">{distribution.yellow} at risk</span>
+            <span className="text-gray-500 mx-1">·</span>
+            <span className="text-red-400">{distribution.red} critical</span>
+            <span className="text-gray-500 mx-1">·</span>
+            <span className="text-gray-400">{distribution.gray} dormant</span>
+          </div>
+          <div className="flex justify-center -mt-px">
+            <div className="border-[6px] border-transparent border-t-gray-800" />
+          </div>
+        </div>,
+        document.body
+      )}
+    </>
   );
 }
 
