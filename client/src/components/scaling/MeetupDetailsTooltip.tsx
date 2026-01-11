@@ -257,11 +257,11 @@ function SummaryMetricTile({
   return (
     <div className="flex-1 min-w-0">
       <div className="flex items-center gap-1.5 mb-1">
-        <Icon size={12} className="text-gray-400 flex-shrink-0" />
-        <span className="text-[9px] font-semibold text-gray-400 uppercase tracking-wider truncate">{label}</span>
+        <Icon size={11} className="text-gray-300 flex-shrink-0" />
+        <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wide truncate">{label}</span>
       </div>
       <div className="flex items-baseline gap-2">
-        <span className="text-base font-bold text-gray-800 tabular-nums">{value}</span>
+        <span className="text-base font-semibold text-gray-700 tabular-nums">{value}</span>
         <ChangeIndicator value={change} isPercentage={isPercentage} isCurrency={isCurrency} invertColors={invertColors} />
       </div>
     </div>
@@ -420,8 +420,8 @@ function SummarySection({ summary, l4wPending }: { summary: SummaryData; l4wPend
   return (
     <div className="px-4 py-3 border-b border-gray-100 bg-gradient-to-br from-slate-50/80 to-white">
       <div className="flex items-center gap-2 mb-3">
-        <span className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider">Week Summary</span>
-        <span className="text-[9px] text-gray-400">vs previous week</span>
+        <span className="text-[10px] font-medium text-gray-400 uppercase tracking-wide">Week Summary</span>
+        <span className="text-[9px] text-gray-300 font-normal">vs previous week</span>
       </div>
 
       {/* Top row - primary metrics */}
