@@ -243,16 +243,25 @@ function CompactTaskTile({
           </button>
         </div>
 
-        {/* Col 5: Comments (fixed width) */}
+        {/* Col 5: Comments (fixed width) - always visible for adding comments */}
         <div className="w-8 flex justify-center">
-          {(task.comments_count || 0) > 0 ? (
-            <div className="flex items-center gap-0.5 text-gray-500">
-              <MessageSquare className="h-3.5 w-3.5" />
+          <button
+            className={`flex items-center gap-0.5 p-1 rounded transition-colors ${
+              (task.comments_count || 0) > 0
+                ? 'text-gray-600 hover:text-blue-600 hover:bg-blue-50'
+                : 'text-gray-300 hover:text-blue-500 hover:bg-blue-50'
+            }`}
+            title={(task.comments_count || 0) > 0 ? `${task.comments_count} comments` : 'Add comment'}
+            onClick={(e) => {
+              e.stopPropagation();
+              // TODO: Open comment modal/panel
+            }}
+          >
+            <MessageSquare className="h-3.5 w-3.5" />
+            {(task.comments_count || 0) > 0 && (
               <span className="text-[10px] font-medium">{task.comments_count}</span>
-            </div>
-          ) : (
-            <div className="w-3.5" />
-          )}
+            )}
+          </button>
         </div>
 
         {/* Status Dropdown Portal */}
@@ -301,8 +310,10 @@ export function TaskListTooltip({ node, taskSummary, children, onRefreshTasks }:
   const [triggerRect, setTriggerRect] = useState<DOMRect | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const tooltipRef = useRef<HTMLDivElement>(null);
-  const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const openTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const closeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Track if we're hovering over trigger or tooltip
+  const isHoveringRef = useRef(false);
 
   // Calculate total tasks from taskSummary (for deciding whether to show tooltip)
   const summaryTotalTasks = taskSummary
@@ -334,10 +345,17 @@ export function TaskListTooltip({ node, taskSummary, children, onRefreshTasks }:
       const data = await response.json();
 
       if (data.success) {
-        const allTasks: ScalingTask[] = (data.tasks || [])
+        // Deduplicate tasks by ID
+        const taskMap = new Map<number, ScalingTask>();
+        (data.tasks || [])
           .filter((t: ScalingTask) => t.status !== 'cancelled')
-          .slice(0, 6);
-        setTasks(allTasks);
+          .forEach((t: ScalingTask) => {
+            if (!taskMap.has(t.id)) {
+              taskMap.set(t.id, t);
+            }
+          });
+        const uniqueTasks = Array.from(taskMap.values()).slice(0, 6);
+        setTasks(uniqueTasks);
       } else {
         setError(data.error || 'Failed to load tasks');
       }
@@ -368,70 +386,79 @@ export function TaskListTooltip({ node, taskSummary, children, onRefreshTasks }:
     }
   };
 
-  // Clear all timeouts
-  const clearAllTimeouts = () => {
-    if (hoverTimeoutRef.current) {
-      clearTimeout(hoverTimeoutRef.current);
-      hoverTimeoutRef.current = null;
-    }
+  // Schedule opening the tooltip
+  const scheduleOpen = useCallback(() => {
+    // Cancel any pending close
     if (closeTimeoutRef.current) {
       clearTimeout(closeTimeoutRef.current);
       closeTimeoutRef.current = null;
     }
-  };
+    // Don't schedule if already open or opening
+    if (isOpen || openTimeoutRef.current) return;
 
-  // Open tooltip
-  const openTooltip = () => {
-    clearAllTimeouts();
-    if (containerRef.current) {
-      setTriggerRect(containerRef.current.getBoundingClientRect());
+    openTimeoutRef.current = setTimeout(() => {
+      openTimeoutRef.current = null;
+      if (isHoveringRef.current && containerRef.current) {
+        setTriggerRect(containerRef.current.getBoundingClientRect());
+        setIsOpen(true);
+        fetchTasks();
+      }
+    }, 250);
+  }, [isOpen, fetchTasks]);
+
+  // Schedule closing the tooltip
+  const scheduleClose = useCallback(() => {
+    // Cancel any pending open
+    if (openTimeoutRef.current) {
+      clearTimeout(openTimeoutRef.current);
+      openTimeoutRef.current = null;
     }
-    setIsOpen(true);
-    fetchTasks();
-  };
+    // Don't schedule if already closing
+    if (closeTimeoutRef.current) return;
 
-  // Close tooltip with delay
-  const closeTooltip = () => {
-    clearAllTimeouts();
     closeTimeoutRef.current = setTimeout(() => {
-      setIsOpen(false);
-    }, 200);
-  };
-
-  // Cancel close (when moving to tooltip)
-  const cancelClose = () => {
-    if (closeTimeoutRef.current) {
-      clearTimeout(closeTimeoutRef.current);
       closeTimeoutRef.current = null;
-    }
-  };
+      if (!isHoveringRef.current) {
+        setIsOpen(false);
+      }
+    }, 300);
+  }, []);
 
   // Handle mouse enter on trigger
-  const handleTriggerEnter = () => {
+  const handleTriggerEnter = useCallback(() => {
     if (!shouldShowTooltip) return;
-    cancelClose();
-    hoverTimeoutRef.current = setTimeout(openTooltip, 200);
-  };
+    isHoveringRef.current = true;
+    scheduleOpen();
+  }, [shouldShowTooltip, scheduleOpen]);
 
   // Handle mouse leave from trigger
-  const handleTriggerLeave = () => {
-    clearAllTimeouts();
-    closeTooltip();
-  };
+  const handleTriggerLeave = useCallback(() => {
+    isHoveringRef.current = false;
+    scheduleClose();
+  }, [scheduleClose]);
 
   // Handle tooltip mouse enter
-  const handleTooltipEnter = () => {
-    cancelClose();
-  };
+  const handleTooltipEnter = useCallback(() => {
+    isHoveringRef.current = true;
+    // Cancel any pending close
+    if (closeTimeoutRef.current) {
+      clearTimeout(closeTimeoutRef.current);
+      closeTimeoutRef.current = null;
+    }
+  }, []);
 
   // Handle tooltip mouse leave
-  const handleTooltipLeave = () => {
-    closeTooltip();
-  };
+  const handleTooltipLeave = useCallback(() => {
+    isHoveringRef.current = false;
+    scheduleClose();
+  }, [scheduleClose]);
 
   // Cleanup timeouts on unmount
   useEffect(() => {
-    return () => clearAllTimeouts();
+    return () => {
+      if (openTimeoutRef.current) clearTimeout(openTimeoutRef.current);
+      if (closeTimeoutRef.current) clearTimeout(closeTimeoutRef.current);
+    };
   }, []);
 
   // Don't render tooltip if not enough tasks
