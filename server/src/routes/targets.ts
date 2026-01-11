@@ -4629,8 +4629,11 @@ router.get('/clubs/:clubId/meetup-details', async (req, res) => {
         e.start_time as event_date,
         e.max_people as capacity,
         e.ticket_price as price,
+        e.payment_type,
+        e.pricing_type,
         COUNT(DISTINCT CASE WHEN b.booking_status NOT IN ('DEREGISTERED', 'INITIATED') THEN b.id END) as total_bookings,
         COUNT(DISTINCT CASE WHEN b.booking_status = 'WAITLISTED' THEN b.id END) as waitlist_count,
+        COUNT(DISTINCT CASE WHEN b.booking_status = 'OPEN_FOR_REPLACEMENT' THEN b.id END) as open_for_replacement_count,
         COUNT(DISTINCT CASE WHEN b.booking_status = 'NOT_ATTENDED' THEN b.id END) as no_show_count,
         COALESCE(SUM(CASE WHEN p.state = 'COMPLETED' THEN p.amount / 100.0 ELSE 0 END), 0) as revenue,
         COALESCE(SUM(CASE WHEN p.state = 'PENDING' OR p.state IS NULL THEN
@@ -4644,7 +4647,7 @@ router.get('/clubs/:clubId/meetup-details', async (req, res) => {
         AND e.start_time >= ${weekStartSQL}
         AND e.start_time < ${weekEndSQL}
         AND e.state = 'CREATED'
-      GROUP BY e.pk, e.name, e.description, e.start_time, e.max_people, e.ticket_price
+      GROUP BY e.pk, e.name, e.description, e.start_time, e.max_people, e.ticket_price, e.payment_type, e.pricing_type
       ORDER BY e.start_time DESC
     `;
 
@@ -4662,8 +4665,11 @@ router.get('/clubs/:clubId/meetup-details', async (req, res) => {
         event_date: row.event_date,
         capacity: parseInt(row.capacity) || 0,
         price: parseInt(row.price) || 0,
+        payment_type: row.payment_type || null,
+        pricing_type: row.pricing_type || null,
         total_bookings: parseInt(row.total_bookings) || 0,
         waitlist_count: parseInt(row.waitlist_count) || 0,
+        open_for_replacement_count: parseInt(row.open_for_replacement_count) || 0,
         no_show_count: parseInt(row.no_show_count) || 0,
         revenue: parseFloat(row.revenue) || 0,
         pending_payment: parseFloat(row.pending_payment) || 0,

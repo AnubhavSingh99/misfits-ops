@@ -10,8 +10,11 @@ interface MeetupDetail {
   event_date: string;
   capacity: number;
   price: number;
+  payment_type: string | null;
+  pricing_type: string | null;
   total_bookings: number;
   waitlist_count: number;
+  open_for_replacement_count: number;
   no_show_count: number;
   revenue: number;
   pending_payment: number;
@@ -134,17 +137,50 @@ const truncateName = (name: string, maxLen: number = 30): string => {
   return name.substring(0, maxLen - 1) + '…';
 };
 
+// Format payment type for display
+const formatPaymentType = (type: string | null): string => {
+  if (!type) return '';
+  switch (type) {
+    case 'PAY_NOW': return 'Pay Now';
+    case 'PAY_LATER': return 'Pay Later';
+    case 'FREE': return 'Free';
+    default: return type;
+  }
+};
+
+// Format pricing type for display
+const formatPricingType = (type: string | null): string => {
+  if (!type) return '';
+  switch (type) {
+    case 'FIXED': return 'Fixed';
+    case 'VARIABLE': return 'Variable';
+    case 'APPROX': return 'Approximate';
+    default: return type;
+  }
+};
+
 // Event name with description tooltip
-function EventNameWithTooltip({ name, description }: { name: string; description: string | null }) {
+function EventNameWithTooltip({
+  name,
+  description,
+  paymentType,
+  pricingType
+}: {
+  name: string;
+  description: string | null;
+  paymentType?: string | null;
+  pricingType?: string | null;
+}) {
   const [show, setShow] = useState(false);
   const [pos, setPos] = useState({ top: 0, left: 0 });
   const ref = useRef<HTMLDivElement>(null);
 
   // Parse Quill Delta format to plain text
   const parsedDescription = parseQuillDelta(description);
+  const hasContent = parsedDescription || paymentType || pricingType;
 
   const handleMouseEnter = () => {
-    if (ref.current && parsedDescription) {
+    if (ref.current && hasContent) {
       const rect = ref.current.getBoundingClientRect();
       setPos({ top: rect.bottom + 4, left: Math.max(16, rect.left - 100) });
       setShow(true);
@@ -162,14 +198,34 @@ function EventNameWithTooltip({ name, description }: { name: string; description
       >
         {truncateName(name, 32)}
       </div>
-      {show && parsedDescription && createPortal(
+      {show && hasContent && createPortal(
         <div
           className="fixed z-[10001] pointer-events-none"
           style={{ top: pos.top, left: pos.left }}
         >
           <div className="max-w-sm px-3 py-2.5 rounded-xl bg-white border border-gray-200 text-[11px] leading-relaxed shadow-lg">
             <div className="font-semibold mb-1.5 text-gray-900 text-xs">{name}</div>
-            <div className="text-gray-600 whitespace-pre-wrap max-h-48 overflow-y-auto">{parsedDescription}</div>
+            {parsedDescription && (
+              <div className="text-gray-600 whitespace-pre-wrap max-h-48 overflow-y-auto">{parsedDescription}</div>
+            )}
+            {(paymentType || pricingType) && (
+              <div className={`flex items-center gap-2 ${parsedDescription ? 'mt-2 pt-2 border-t border-gray-100' : ''}`}>
+                {paymentType && (
+                  <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
+                    paymentType === 'FREE' ? 'bg-green-100 text-green-700' :
+                    paymentType === 'PAY_NOW' ? 'bg-blue-100 text-blue-700' :
+                    'bg-amber-100 text-amber-700'
+                  }`}>
+                    {formatPaymentType(paymentType)}
+                  </span>
+                )}
+                {pricingType && (
+                  <span className="px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 text-[10px] font-medium">
+                    {formatPricingType(pricingType)} Pricing
+                  </span>
+                )}
+              </div>
+            )}
           </div>
         </div>,
         document.body
@@ -918,6 +974,8 @@ export function MeetupDetailsTooltip({
                               <EventNameWithTooltip
                                 name={meetup.event_name}
                                 description={meetup.event_description}
+                                paymentType={meetup.payment_type}
+                                pricingType={meetup.pricing_type}
                               />
                             </div>
 
