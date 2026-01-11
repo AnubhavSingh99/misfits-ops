@@ -48,63 +48,25 @@ function renderWithLinks(text: string): React.ReactNode[] {
   });
 }
 
-// Description tooltip component - matches dashboard tooltip design
-function DescriptionTooltip({ text, targetRect, visible }: { text: string; targetRect: DOMRect | null; visible: boolean }) {
-  if (!visible || !targetRect || !text) return null;
-
-  const tooltipWidth = 300;
-  let left = targetRect.left + targetRect.width / 2;
-  left = Math.max(tooltipWidth / 2 + 8, Math.min(left, window.innerWidth - tooltipWidth / 2 - 8));
-
-  return createPortal(
-    <div
-      className="fixed z-[99999] pointer-events-none animate-in fade-in zoom-in-95 duration-150"
-      style={{
-        left,
-        top: targetRect.top - 8,
-        transform: 'translate(-50%, -100%)'
-      }}
-    >
-      <div className="bg-gray-800 text-white text-[11px] leading-relaxed px-3 py-2 rounded-lg shadow-xl max-w-[300px]">
-        {text}
-      </div>
-      <div
-        className="absolute border-[6px] border-transparent border-t-gray-800"
-        style={{ top: '100%', left: '50%', transform: 'translateX(-50%) translateY(-1px)' }}
-      />
-    </div>,
-    document.body
-  );
-}
-
-// Hoverable description with tooltip
+// Hoverable description with inline tooltip (simpler, more reliable)
 function HoverableDescription({ description, maxLength = 60 }: { description: string; maxLength?: number }) {
   const [isHovered, setIsHovered] = useState(false);
-  const [rect, setRect] = useState<DOMRect | null>(null);
-  const ref = useRef<HTMLSpanElement>(null);
-
   const needsTruncation = description.length > maxLength;
   const displayText = needsTruncation ? description.slice(0, maxLength) + '...' : description;
 
-  const handleMouseEnter = () => {
-    if (ref.current) {
-      setRect(ref.current.getBoundingClientRect());
-      setIsHovered(true);
-    }
-  };
-
   return (
-    <span className="block relative">
-      <span
-        ref={ref}
-        className={`text-xs text-gray-500 block ${needsTruncation ? 'cursor-help' : ''}`}
-        onMouseEnter={handleMouseEnter}
-        onMouseLeave={() => setIsHovered(false)}
-      >
-        {renderWithLinks(displayText)}
-      </span>
-      {needsTruncation && (
-        <DescriptionTooltip text={description} targetRect={rect} visible={isHovered} />
+    <span
+      className={`text-xs text-gray-500 truncate max-w-[200px] relative group ${needsTruncation ? 'cursor-help' : ''}`}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+    >
+      {renderWithLinks(displayText)}
+      {/* Tooltip */}
+      {needsTruncation && isHovered && (
+        <span className="absolute z-[9999] bottom-full left-0 mb-2 px-3 py-2 bg-gray-800 text-white text-[11px] leading-relaxed rounded-lg shadow-xl max-w-[300px] whitespace-normal pointer-events-none">
+          {description}
+          <span className="absolute top-full left-4 border-[6px] border-transparent border-t-gray-800" />
+        </span>
       )}
     </span>
   );
@@ -452,11 +414,10 @@ export function ScalingTaskTileV2({
             </h4>
           </div>
 
-          {task.description && (
-            <HoverableDescription description={task.description} maxLength={80} />
-          )}
-
           <div className="flex items-center gap-1.5 flex-wrap">
+            {task.description && (
+              <HoverableDescription description={task.description} maxLength={60} />
+            )}
 
             {task.activity_name && (
               <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[9px] font-medium bg-violet-100 text-violet-700">

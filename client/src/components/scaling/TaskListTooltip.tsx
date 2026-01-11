@@ -101,66 +101,25 @@ function getTeamAccent(teamLead: string | null | undefined): string {
   return TEAMS[teamKey]?.color.accent || '#94a3b8';
 }
 
-// Description tooltip component - matches dashboard tooltip design
-function DescriptionTooltip({ text, targetRect, visible }: { text: string; targetRect: DOMRect | null; visible: boolean }) {
-  if (!visible || !targetRect || !text) return null;
-
-  // Position tooltip above the element, centered
-  const tooltipWidth = 280;
-  let left = targetRect.left + targetRect.width / 2;
-  // Keep within viewport
-  left = Math.max(tooltipWidth / 2 + 8, Math.min(left, window.innerWidth - tooltipWidth / 2 - 8));
-
-  return createPortal(
-    <div
-      className="fixed z-[99999] pointer-events-none animate-in fade-in zoom-in-95 duration-150"
-      style={{
-        left,
-        top: targetRect.top - 8,
-        transform: 'translate(-50%, -100%)'
-      }}
-    >
-      <div className="bg-gray-800 text-white text-[11px] leading-relaxed px-3 py-2 rounded-lg shadow-xl max-w-[280px]">
-        {text}
-      </div>
-      {/* Arrow pointing down */}
-      <div
-        className="absolute border-[6px] border-transparent border-t-gray-800"
-        style={{ top: '100%', left: '50%', transform: 'translateX(-50%) translateY(-1px)' }}
-      />
-    </div>,
-    document.body
-  );
-}
-
-// Hoverable description with tooltip
-function HoverableDescription({ description, maxLength = 100, inline = false }: { description: string; maxLength?: number; inline?: boolean }) {
+// Hoverable description with inline tooltip (simpler, more reliable)
+function HoverableDescription({ description, maxLength = 60, inline = false }: { description: string; maxLength?: number; inline?: boolean }) {
   const [isHovered, setIsHovered] = useState(false);
-  const [rect, setRect] = useState<DOMRect | null>(null);
-  const ref = useRef<HTMLSpanElement>(null);
-
   const needsTruncation = description.length > maxLength;
   const displayText = needsTruncation ? description.slice(0, maxLength) + '...' : description;
 
-  const handleMouseEnter = () => {
-    if (ref.current) {
-      setRect(ref.current.getBoundingClientRect());
-      setIsHovered(true);
-    }
-  };
-
   return (
-    <span className={inline ? 'inline' : 'block'}>
-      <span
-        ref={ref}
-        className={`text-[10px] text-gray-400 ${inline ? '' : 'block'} ${needsTruncation ? 'cursor-help' : ''}`}
-        onMouseEnter={handleMouseEnter}
-        onMouseLeave={() => setIsHovered(false)}
-      >
-        {displayText}
-      </span>
-      {needsTruncation && (
-        <DescriptionTooltip text={description} targetRect={rect} visible={isHovered} />
+    <span
+      className={`text-[10px] text-gray-400 relative ${inline ? 'flex-shrink truncate' : ''} ${needsTruncation ? 'cursor-help' : ''}`}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+    >
+      {displayText}
+      {/* Tooltip */}
+      {needsTruncation && isHovered && (
+        <span className="absolute z-[99999] bottom-full left-0 mb-2 px-3 py-2 bg-gray-800 text-white text-[11px] leading-relaxed rounded-lg shadow-xl max-w-[280px] whitespace-normal pointer-events-none">
+          {description}
+          <span className="absolute top-full left-4 border-[6px] border-transparent border-t-gray-800" />
+        </span>
       )}
     </span>
   );
