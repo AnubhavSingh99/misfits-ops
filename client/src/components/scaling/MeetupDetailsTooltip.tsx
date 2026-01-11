@@ -174,16 +174,34 @@ function EventNameWithTooltip({
   const [show, setShow] = useState(false);
   const [pos, setPos] = useState({ top: 0, left: 0 });
   const ref = useRef<HTMLDivElement>(null);
+  const hideTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Parse Quill Delta format to plain text
   const parsedDescription = parseQuillDelta(description);
   const hasContent = parsedDescription || paymentType || pricingType;
 
   const handleMouseEnter = () => {
+    if (hideTimeoutRef.current) {
+      clearTimeout(hideTimeoutRef.current);
+      hideTimeoutRef.current = null;
+    }
     if (ref.current && hasContent) {
       const rect = ref.current.getBoundingClientRect();
       setPos({ top: rect.bottom + 4, left: Math.max(16, rect.left - 100) });
       setShow(true);
+    }
+  };
+
+  const handleMouseLeave = () => {
+    hideTimeoutRef.current = setTimeout(() => {
+      setShow(false);
+    }, 100);
+  };
+
+  const handleTooltipEnter = () => {
+    if (hideTimeoutRef.current) {
+      clearTimeout(hideTimeoutRef.current);
+      hideTimeoutRef.current = null;
     }
   };
 
@@ -192,7 +210,7 @@ function EventNameWithTooltip({
       <div
         ref={ref}
         onMouseEnter={handleMouseEnter}
-        onMouseLeave={() => setShow(false)}
+        onMouseLeave={handleMouseLeave}
         className="text-xs text-gray-700 truncate cursor-default"
         title={name}
       >
@@ -200,8 +218,10 @@ function EventNameWithTooltip({
       </div>
       {show && hasContent && createPortal(
         <div
-          className="fixed z-[10001] pointer-events-none"
+          className="fixed z-[10001]"
           style={{ top: pos.top, left: pos.left }}
+          onMouseEnter={handleTooltipEnter}
+          onMouseLeave={handleMouseLeave}
         >
           <div className="max-w-sm px-3 py-2.5 rounded-xl bg-white border border-gray-200 text-[11px] leading-relaxed shadow-lg">
             <div className="font-semibold mb-1.5 text-gray-900 text-xs">{name}</div>
