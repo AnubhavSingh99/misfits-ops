@@ -178,7 +178,7 @@ export function HealthDistributionBar({ distribution, compact = false }: HealthD
   );
 }
 
-// Traffic light indicators with counts for summary rows
+// Traffic light indicators with counts for summary rows - compact inline design
 interface HealthTrafficIndicatorsProps {
   distribution: {
     green: number;
@@ -193,23 +193,25 @@ export function HealthTrafficIndicators({ distribution }: HealthTrafficIndicator
   if (total === 0) return null;
 
   const indicators = [
-    { key: 'green', count: distribution.green, bg: 'bg-emerald-500', label: 'Healthy' },
-    { key: 'yellow', count: distribution.yellow, bg: 'bg-amber-500', label: 'At Risk' },
-    { key: 'red', count: distribution.red, bg: 'bg-red-500', label: 'Critical' },
-    { key: 'gray', count: distribution.gray, bg: 'bg-gray-400', label: 'Dormant' }
+    { key: 'green', count: distribution.green, dot: 'bg-emerald-500', text: 'text-emerald-700', label: 'Healthy' },
+    { key: 'yellow', count: distribution.yellow, dot: 'bg-amber-500', text: 'text-amber-700', label: 'At Risk' },
+    { key: 'red', count: distribution.red, dot: 'bg-red-500', text: 'text-red-700', label: 'Critical' },
+    { key: 'gray', count: distribution.gray, dot: 'bg-gray-400', text: 'text-gray-500', label: 'Dormant' }
   ];
 
   return (
-    <div className="flex items-center gap-2.5">
-      {indicators.map(({ key, count, bg, label }) => (
-        <div
+    <div
+      className="inline-flex items-center gap-px rounded-md bg-gray-100/80 px-1 py-0.5"
+      title={`Health: ${distribution.green} healthy, ${distribution.yellow} at risk, ${distribution.red} critical, ${distribution.gray} dormant`}
+    >
+      {indicators.map(({ key, count, dot, text }) => (
+        <span
           key={key}
-          className="flex items-center gap-1"
-          title={`${label}: ${count} clubs`}
+          className={`inline-flex items-center gap-0.5 px-1 ${text}`}
         >
-          <div className={`w-2.5 h-2.5 rounded-full ${bg} ring-1 ring-white shadow-sm`} />
-          <span className="text-xs font-semibold text-gray-700 tabular-nums">{count}</span>
-        </div>
+          <span className={`w-1.5 h-1.5 rounded-full ${dot}`} />
+          <span className="text-[10px] font-bold tabular-nums">{count}</span>
+        </span>
       ))}
     </div>
   );
