@@ -63,7 +63,7 @@ const getCurrentMonthLabel = (): string => {
 }
 
 // Monthly Revenue Tile Component
-function MonthlyRevenueTile({ monthlyRevenue }: { monthlyRevenue?: MonthlyRevenueData[] }) {
+function MonthlyRevenueTile({ monthlyRevenue, isFiltered }: { monthlyRevenue?: MonthlyRevenueData[], isFiltered?: boolean }) {
   if (!monthlyRevenue || monthlyRevenue.length === 0) {
     return (
       <div className="bg-white rounded-xl border border-gray-100 p-3 md:p-4 shadow-sm hover:shadow-md transition-shadow">
@@ -79,13 +79,23 @@ function MonthlyRevenueTile({ monthlyRevenue }: { monthlyRevenue?: MonthlyRevenu
   }
 
   return (
-    <div className="bg-white rounded-xl border border-gray-100 p-3 md:p-4 shadow-sm hover:shadow-md transition-shadow h-full flex flex-col">
+    <div className={`bg-white rounded-xl border border-gray-100 p-3 md:p-4 shadow-sm hover:shadow-md transition-shadow h-full flex flex-col ${isFiltered ? 'opacity-60' : ''}`}>
       {/* Header */}
-      <div className="flex items-center gap-2 mb-2">
-        <Calendar size={14} className="text-amber-500" />
-        <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">
-          Actual Revenue Trend
-        </span>
+      <div className="flex items-center justify-between gap-2 mb-2">
+        <div className="flex items-center gap-2">
+          <Calendar size={14} className="text-amber-500" />
+          <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">
+            Actual Revenue Trend
+          </span>
+        </div>
+        {isFiltered && (
+          <span
+            className="text-[9px] font-medium text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded"
+            title="Monthly revenue data is not available per club. Showing global totals."
+          >
+            All Clubs
+          </span>
+        )}
       </div>
 
       {/* Revenue values - vertically centered in remaining space */}
@@ -262,7 +272,7 @@ export function SummaryTiles({ summary, trends, filteredTotals, isFiltered, reve
         </div>
 
         {/* Monthly Revenue Trend (Sep 2025 - Mar 2026) */}
-        <MonthlyRevenueTile monthlyRevenue={summary.monthly_revenue} />
+        <MonthlyRevenueTile monthlyRevenue={summary.monthly_revenue} isFiltered={isFiltered} />
       </div>
     </div>
   )
