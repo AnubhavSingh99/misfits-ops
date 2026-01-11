@@ -140,7 +140,7 @@ function HoverableDescription({ description, maxLength = 60, inline = false }: {
             transform: 'translateY(-100%)'
           }}
         >
-          <div className="px-3 py-2 bg-gray-800 text-white text-[11px] leading-relaxed rounded-lg shadow-xl max-w-[280px] whitespace-normal">
+          <div className="px-3 py-2 bg-gray-800 text-white text-[11px] leading-relaxed rounded-lg shadow-xl max-w-[400px] break-words">
             {description}
           </div>
           <div className="ml-4 -mt-px border-[6px] border-transparent border-t-gray-800" />
