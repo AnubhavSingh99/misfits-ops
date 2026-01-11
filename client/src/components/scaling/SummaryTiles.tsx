@@ -110,21 +110,11 @@ function MonthlyRevenueTile({ monthlyRevenue }: { monthlyRevenue?: MonthlyRevenu
   return (
     <div className="bg-white rounded-xl border border-gray-100 p-3 md:p-4 shadow-sm hover:shadow-md transition-shadow">
       <div className="flex items-start justify-between mb-3">
-        <div>
-          <div className="flex items-center gap-2 mb-1">
-            <Calendar size={14} className="text-amber-500" />
-            <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">
-              Revenue Trend
-            </span>
-          </div>
-          <div className="flex items-baseline gap-2">
-            <span className="text-lg md:text-xl font-bold text-gray-900">
-              {formatCurrency(totalRevenue)}
-            </span>
-            <span className="text-[10px] text-gray-400">
-              Sep '25 – Mar '26
-            </span>
-          </div>
+        <div className="flex items-center gap-2">
+          <Calendar size={14} className="text-amber-500" />
+          <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">
+            Actual Revenue Trend
+          </span>
         </div>
         {momGrowth !== 0 && (
           <div className={`px-2 py-1 rounded-full text-[10px] font-semibold ${
@@ -137,26 +127,25 @@ function MonthlyRevenueTile({ monthlyRevenue }: { monthlyRevenue?: MonthlyRevenu
         )}
       </div>
 
-      {/* Mini Bar Chart */}
-      <div className="flex items-end gap-1 h-12 md:h-14">
+      {/* Mini Bar Chart with individual totals */}
+      <div className="flex items-end gap-1 h-16 md:h-20">
         {monthlyRevenue.map((month, index) => {
-          const barHeight = maxRevenue > 0 ? Math.max((month.revenue / maxRevenue) * 100, 4) : 4
+          const barHeight = maxRevenue > 0 ? Math.max((month.revenue / maxRevenue) * 100, 8) : 8
           const isHovered = hoveredMonth === index
 
           return (
             <div
               key={`${month.month}-${month.year}`}
-              className="flex-1 flex flex-col items-center gap-1 group cursor-pointer"
+              className="flex-1 flex flex-col items-center gap-0.5 group cursor-pointer"
               onMouseEnter={() => setHoveredMonth(index)}
               onMouseLeave={() => setHoveredMonth(null)}
             >
-              {/* Tooltip */}
-              {isHovered && (
-                <div className="absolute -translate-y-full mb-1 px-2 py-1 bg-gray-900 text-white text-[10px] rounded shadow-lg whitespace-nowrap z-10">
-                  <div className="font-semibold">{month.month} {month.year}</div>
-                  <div>{formatCurrency(month.revenue)}</div>
-                </div>
-              )}
+              {/* Revenue value above bar */}
+              <span className={`text-[9px] md:text-[10px] font-semibold transition-colors ${
+                isHovered ? 'text-gray-900' : 'text-gray-600'
+              }`}>
+                {formatCurrency(month.revenue)}
+              </span>
 
               {/* Bar */}
               <div
@@ -226,7 +215,7 @@ export function SummaryTiles({ summary, trends, filteredTotals, isFiltered, reve
               <div className="flex items-center gap-2 mb-2 md:mb-3">
                 <Target size={14} className="text-blue-500" />
                 <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">
-                  Monthly Meetups
+                  Monthly Projected Meetups
                 </span>
               </div>
 
@@ -276,7 +265,7 @@ export function SummaryTiles({ summary, trends, filteredTotals, isFiltered, reve
               <div className="flex items-center gap-2 mb-2 md:mb-3">
                 <Target size={14} className="text-emerald-500" />
                 <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">
-                  Monthly Revenue
+                  Monthly Projected Revenue
                 </span>
               </div>
 
