@@ -126,21 +126,37 @@ function CompactTaskTile({
     }
   }, [statusDropdownOpen]);
 
-  // Close dropdown on outside click
+  // Close dropdown on outside click - use click instead of mousedown
   useEffect(() => {
+    if (!statusDropdownOpen) return;
+
     const handleClickOutside = (e: MouseEvent) => {
-      if (statusButtonRef.current && !statusButtonRef.current.contains(e.target as Node)) {
-        const dropdown = document.getElementById(`tooltip-status-dropdown-${task.id}`);
-        if (dropdown && dropdown.contains(e.target as Node)) return;
-        setStatusDropdownOpen(false);
-      }
+      const target = e.target as Node;
+      // Check if click is on button
+      if (statusButtonRef.current?.contains(target)) return;
+      // Check if click is on dropdown
+      const dropdown = document.getElementById(`tooltip-status-dropdown-${task.id}`);
+      if (dropdown?.contains(target)) return;
+      // Close if outside
+      setStatusDropdownOpen(false);
     };
-    if (statusDropdownOpen) document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
+
+    // Use setTimeout to avoid immediate close on the same click that opened it
+    const timeoutId = setTimeout(() => {
+      document.addEventListener('click', handleClickOutside, true);
+    }, 0);
+
+    return () => {
+      clearTimeout(timeoutId);
+      document.removeEventListener('click', handleClickOutside, true);
+    };
   }, [statusDropdownOpen, task.id]);
 
   const handleStatusClick = (newStatus: ScalingTask['status']) => {
-    onStatusChange?.(task, newStatus);
+    console.log('Status change:', task.id, newStatus);
+    if (onStatusChange) {
+      onStatusChange(task, newStatus);
+    }
     setStatusDropdownOpen(false);
   };
 
@@ -270,14 +286,14 @@ function CompactTaskTile({
             id={`tooltip-status-dropdown-${task.id}`}
             className="fixed bg-white rounded-lg shadow-2xl border border-gray-200 py-1 min-w-[120px] animate-in fade-in slide-in-from-top-2 duration-150"
             style={{ top: dropdownPosition.top, left: dropdownPosition.left, zIndex: 99999 }}
-            onClick={(e) => e.stopPropagation()}
           >
             {STATUS_OPTIONS.map((option) => (
               <button
                 key={option.value}
-                onClick={(e) => {
+                type="button"
+                onMouseDown={(e) => {
+                  // Use mouseDown to fire before the outside click handler
                   e.stopPropagation();
-                  e.preventDefault();
                   handleStatusClick(option.value as ScalingTask['status']);
                 }}
                 className={`w-full flex items-center gap-2 px-3 py-2 text-[11px] font-medium text-left ${option.hover} transition-colors ${task.status === option.value ? `${option.bg} ${option.text}` : 'text-gray-700'}`}
@@ -368,6 +384,13 @@ export function TaskListTooltip({ node, taskSummary, children, onRefreshTasks }:
 
   // Handle status change
   const handleStatusChange = async (task: ScalingTask, newStatus: ScalingTask['status']) => {
+    console.log('handleStatusChange called:', task.id, 'from', task.status, 'to', newStatus);
+
+    // Optimistically update UI first
+    setTasks(prev => prev.map(t =>
+      t.id === task.id ? { ...t, status: newStatus } : t
+    ));
+
     try {
       const response = await fetch(`${API_BASE}/scaling-tasks/${task.id}/status`, {
         method: 'PUT',
@@ -376,13 +399,21 @@ export function TaskListTooltip({ node, taskSummary, children, onRefreshTasks }:
       });
 
       if (response.ok) {
-        setTasks(prev => prev.map(t =>
-          t.id === task.id ? { ...t, status: newStatus } : t
-        ));
+        console.log('Status updated successfully');
         onRefreshTasks?.();
+      } else {
+        // Revert on failure
+        console.error('Status update failed:', response.status);
+        setTasks(prev => prev.map(t =>
+          t.id === task.id ? { ...t, status: task.status } : t
+        ));
       }
     } catch (err) {
       console.error('Failed to update task status:', err);
+      // Revert on error
+      setTasks(prev => prev.map(t =>
+        t.id === task.id ? { ...t, status: task.status } : t
+      ));
     }
   };
 
