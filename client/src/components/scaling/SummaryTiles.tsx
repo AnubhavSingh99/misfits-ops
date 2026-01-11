@@ -98,22 +98,18 @@ function MonthlyRevenueTile({ monthlyRevenue }: { monthlyRevenue?: MonthlyRevenu
           </div>
 
           {/* Revenue values in a row */}
-          <div className="flex items-start">
-            {monthlyRevenue.map((month, index) => {
+          <div className="flex items-end gap-2 md:gap-3">
+            {monthlyRevenue.map((month) => {
               const isZero = month.revenue === 0
-              const isLast = index === monthlyRevenue.length - 1
               return (
-                <React.Fragment key={`${month.month}-${month.year}`}>
-                  <div className="flex-1 min-w-0">
-                    <div className={`text-sm md:text-base font-bold tabular-nums tracking-tight ${isZero ? 'text-gray-300' : 'text-gray-900'}`}>
-                      {formatCurrency(month.revenue)}
-                    </div>
-                    <p className="text-[9px] md:text-[10px] text-gray-400 mt-0.5">
-                      {month.month}
-                    </p>
+                <div key={`${month.month}-${month.year}`} className="text-center">
+                  <div className={`text-base md:text-lg font-bold tabular-nums tracking-tight ${isZero ? 'text-gray-300' : 'text-gray-900'}`}>
+                    {formatCurrency(month.revenue)}
                   </div>
-                  {!isLast && <div className="w-px h-8 md:h-10 bg-gray-100 mx-1 md:mx-2 self-center flex-shrink-0" />}
-                </React.Fragment>
+                  <p className="text-[9px] md:text-[10px] text-gray-400 mt-0.5">
+                    {month.month}
+                  </p>
+                </div>
               )
             })}
           </div>
