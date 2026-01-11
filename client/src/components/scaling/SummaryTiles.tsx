@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React from 'react'
 import { Calendar, Layers, Target, TrendingUp, ChevronRight } from 'lucide-react'
 import type { RevenueStatus } from '../../../../shared/types'
 
@@ -62,105 +62,59 @@ const getCurrentMonthLabel = (): string => {
   return now.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
 }
 
-// Monthly Revenue Tile Component - Beautiful mini bar chart
+// Monthly Revenue Tile Component - Clean number display
 function MonthlyRevenueTile({ monthlyRevenue }: { monthlyRevenue?: MonthlyRevenueData[] }) {
-  const [hoveredMonth, setHoveredMonth] = useState<number | null>(null)
-
   // If no data, show placeholder
   if (!monthlyRevenue || monthlyRevenue.length === 0) {
     return (
       <div className="bg-white rounded-xl border border-gray-100 p-3 md:p-4 shadow-sm hover:shadow-md transition-shadow">
-        <div className="flex items-start justify-between">
-          <div>
-            <div className="flex items-center gap-2 mb-2 md:mb-3">
-              <Calendar size={14} className="text-amber-500" />
-              <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">
-                Monthly Revenue
-              </span>
-            </div>
-            <div className="text-gray-400 text-sm">Loading...</div>
-          </div>
-          <div className="w-8 h-8 md:w-10 md:h-10 rounded-lg bg-amber-50 flex items-center justify-center">
-            <Calendar size={16} className="text-amber-500" />
-          </div>
-        </div>
-      </div>
-    )
-  }
-
-  // Find max revenue for scaling bars
-  const maxRevenue = Math.max(...monthlyRevenue.map(m => m.revenue), 1)
-  const totalRevenue = monthlyRevenue.reduce((sum, m) => sum + m.revenue, 0)
-
-  // Calculate month-over-month growth
-  const lastMonth = monthlyRevenue[monthlyRevenue.length - 1]
-  const prevMonth = monthlyRevenue[monthlyRevenue.length - 2]
-  const momGrowth = prevMonth && prevMonth.revenue > 0
-    ? Math.round(((lastMonth.revenue - prevMonth.revenue) / prevMonth.revenue) * 100)
-    : 0
-
-  // Get bar color based on position and value
-  const getBarColor = (index: number, revenue: number) => {
-    if (revenue === 0) return 'bg-gray-200'
-    const isCurrentMonth = index === monthlyRevenue.length - 1
-    if (isCurrentMonth) return 'bg-amber-500'
-    return 'bg-amber-300'
-  }
-
-  return (
-    <div className="bg-white rounded-xl border border-gray-100 p-3 md:p-4 shadow-sm hover:shadow-md transition-shadow">
-      <div className="flex items-start justify-between mb-3">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 mb-3">
           <Calendar size={14} className="text-amber-500" />
           <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">
             Actual Revenue Trend
           </span>
         </div>
-        {momGrowth !== 0 && (
-          <div className={`px-2 py-1 rounded-full text-[10px] font-semibold ${
-            momGrowth > 0
-              ? 'bg-emerald-50 text-emerald-600'
-              : 'bg-red-50 text-red-600'
-          }`}>
-            {momGrowth > 0 ? '+' : ''}{momGrowth}% MoM
-          </div>
-        )}
+        <div className="text-gray-400 text-sm">Loading...</div>
+      </div>
+    )
+  }
+
+  // Find max revenue to highlight best month
+  const maxRevenue = Math.max(...monthlyRevenue.map(m => m.revenue))
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-100 p-3 md:p-4 shadow-sm hover:shadow-md transition-shadow">
+      <div className="flex items-center gap-2 mb-3">
+        <Calendar size={14} className="text-amber-500" />
+        <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">
+          Actual Revenue Trend
+        </span>
       </div>
 
-      {/* Mini Bar Chart with individual totals */}
-      <div className="flex items-end gap-1 h-16 md:h-20">
-        {monthlyRevenue.map((month, index) => {
-          const barHeight = maxRevenue > 0 ? Math.max((month.revenue / maxRevenue) * 100, 8) : 8
-          const isHovered = hoveredMonth === index
+      {/* Month grid */}
+      <div className="grid grid-cols-7 gap-1">
+        {monthlyRevenue.map((month) => {
+          const isBest = month.revenue === maxRevenue && month.revenue > 0
+          const isZero = month.revenue === 0
 
           return (
             <div
               key={`${month.month}-${month.year}`}
-              className="flex-1 flex flex-col items-center gap-0.5 group cursor-pointer"
-              onMouseEnter={() => setHoveredMonth(index)}
-              onMouseLeave={() => setHoveredMonth(null)}
+              className={`text-center py-1.5 px-0.5 rounded-lg transition-colors ${
+                isBest ? 'bg-amber-50' : ''
+              }`}
             >
-              {/* Revenue value above bar */}
-              <span className={`text-[9px] md:text-[10px] font-semibold transition-colors ${
-                isHovered ? 'text-gray-900' : 'text-gray-600'
+              <div className={`text-[10px] md:text-xs font-bold ${
+                isZero ? 'text-gray-300' :
+                isBest ? 'text-amber-600' : 'text-gray-700'
               }`}>
                 {formatCurrency(month.revenue)}
-              </span>
-
-              {/* Bar */}
-              <div
-                className={`w-full rounded-t transition-all duration-200 ${getBarColor(index, month.revenue)} ${
-                  isHovered ? 'opacity-100 scale-105' : 'opacity-80 group-hover:opacity-100'
-                }`}
-                style={{ height: `${barHeight}%` }}
-              />
-
-              {/* Month label */}
-              <span className={`text-[8px] md:text-[9px] transition-colors ${
-                isHovered ? 'text-gray-900 font-semibold' : 'text-gray-400'
+              </div>
+              <div className={`text-[9px] mt-0.5 ${
+                isBest ? 'text-amber-500 font-medium' : 'text-gray-400'
               }`}>
                 {month.month}
-              </span>
+              </div>
             </div>
           )
         })}

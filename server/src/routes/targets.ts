@@ -2251,33 +2251,32 @@ router.get('/v2/hierarchy', async (req, res) => {
     ]));
 
     // Get monthly revenue from Sep 2025 to Mar 2026
-    // Use IST timezone (Asia/Kolkata) for accurate date boundaries
+    // Use date-based series to avoid timezone issues with month intervals
     const monthlyRevenueQuery = `
       WITH month_series AS (
-        SELECT generate_series(
-          '2025-09-01 00:00:00+05:30'::timestamptz,
-          '2026-03-01 00:00:00+05:30'::timestamptz,
-          '1 month'::interval
-        ) as month_start
+        SELECT
+          (DATE '2025-09-01' + (n || ' months')::interval)::date as month_date
+        FROM generate_series(0, 6) as n
       )
       SELECT
-        ms.month_start,
-        TO_CHAR(ms.month_start AT TIME ZONE 'Asia/Kolkata', 'Mon') as month_label,
-        EXTRACT(MONTH FROM ms.month_start AT TIME ZONE 'Asia/Kolkata') as month_num,
-        EXTRACT(YEAR FROM ms.month_start AT TIME ZONE 'Asia/Kolkata') as year,
+        ms.month_date,
+        TO_CHAR(ms.month_date, 'Mon') as month_label,
+        EXTRACT(MONTH FROM ms.month_date) as month_num,
+        EXTRACT(YEAR FROM ms.month_date) as year,
         COALESCE(SUM(
           CASE WHEN p.state = 'COMPLETED' THEN p.amount / 100.0 ELSE 0 END
         ), 0) as total_revenue
       FROM month_series ms
-      LEFT JOIN event e ON e.start_time >= ms.month_start
-        AND e.start_time < (ms.month_start + INTERVAL '1 month')
+      LEFT JOIN event e ON
+        e.start_time >= (ms.month_date || ' 00:00:00+05:30')::timestamptz
+        AND e.start_time < ((ms.month_date + INTERVAL '1 month')::date || ' 00:00:00+05:30')::timestamptz
         AND e.state = 'CREATED'
       LEFT JOIN club c ON e.club_id = c.pk AND c.is_private = false
       LEFT JOIN booking b ON b.event_id = e.pk
       LEFT JOIN transaction t ON t.entity_id = b.id AND t.entity_type = 'BOOKING'
       LEFT JOIN payment p ON p.pk = t.payment_id
-      GROUP BY ms.month_start
-      ORDER BY ms.month_start
+      GROUP BY ms.month_date
+      ORDER BY ms.month_date
     `;
     const monthlyRevenueResult = await queryProduction(monthlyRevenueQuery);
     const monthlyRevenue = monthlyRevenueResult.rows.map((row: any) => ({
