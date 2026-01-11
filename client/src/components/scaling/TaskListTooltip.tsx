@@ -120,9 +120,15 @@ function CompactTaskTile({
   const [commentsFetched, setCommentsFetched] = useState(false);
   const [commentAuthor, setCommentAuthor] = useState(task.assigned_to_name || 'User');
   const [localCommentsCount, setLocalCommentsCount] = useState(task.comments_count || 0);
+  // Author selector state
+  const [authorDropdownOpen, setAuthorDropdownOpen] = useState(false);
+  const [assignees, setAssignees] = useState<{ id: number; name: string }[]>([]);
+  const [assigneesFetched, setAssigneesFetched] = useState(false);
 
   const statusButtonRef = useRef<HTMLButtonElement>(null);
+  const authorButtonRef = useRef<HTMLButtonElement>(null);
   const [dropdownPosition, setDropdownPosition] = useState({ top: 0, left: 0 });
+  const [authorDropdownPosition, setAuthorDropdownPosition] = useState({ top: 0, left: 0 });
 
   const currentStatus = STATUS_OPTIONS.find(s => s.value === task.status) || STATUS_OPTIONS[0];
   const accentColor = getTeamAccent(task.assigned_team_lead);
@@ -139,7 +145,15 @@ function CompactTaskTile({
     }
   }, [statusDropdownOpen]);
 
-  // Close dropdown on outside click
+  // Update author dropdown position
+  useEffect(() => {
+    if (authorDropdownOpen && authorButtonRef.current) {
+      const rect = authorButtonRef.current.getBoundingClientRect();
+      setAuthorDropdownPosition({ top: rect.bottom + 4, left: rect.left });
+    }
+  }, [authorDropdownOpen]);
+
+  // Close status dropdown on outside click
   useEffect(() => {
     if (!statusDropdownOpen) return;
 
@@ -160,6 +174,49 @@ function CompactTaskTile({
       document.removeEventListener('click', handleClickOutside, true);
     };
   }, [statusDropdownOpen, task.id]);
+
+  // Close author dropdown on outside click
+  useEffect(() => {
+    if (!authorDropdownOpen) return;
+
+    const handleClickOutside = (e: MouseEvent) => {
+      const target = e.target as Node;
+      if (authorButtonRef.current?.contains(target)) return;
+      const dropdown = document.getElementById(`tooltip-author-dropdown-${task.id}`);
+      if (dropdown?.contains(target)) return;
+      setAuthorDropdownOpen(false);
+    };
+
+    const timeoutId = setTimeout(() => {
+      document.addEventListener('click', handleClickOutside, true);
+    }, 0);
+
+    return () => {
+      clearTimeout(timeoutId);
+      document.removeEventListener('click', handleClickOutside, true);
+    };
+  }, [authorDropdownOpen, task.id]);
+
+  // Fetch assignees when comments expanded
+  useEffect(() => {
+    if (commentsExpanded && !assigneesFetched) {
+      fetchAssignees();
+    }
+  }, [commentsExpanded, assigneesFetched]);
+
+  const fetchAssignees = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/scaling-tasks/assignees/list`);
+      const data = await res.json();
+      if (data.success && data.assignees) {
+        setAssignees(data.assignees);
+      }
+      setAssigneesFetched(true);
+    } catch (err) {
+      console.error('Failed to fetch assignees:', err);
+      setAssigneesFetched(true);
+    }
+  };
 
   // Fetch comments when expanded
   useEffect(() => {
@@ -200,7 +257,8 @@ function CompactTaskTile({
         setComments(prev => [data.comment, ...prev]);
         setLocalCommentsCount(prev => prev + 1);
         setNewComment('');
-        onCommentAdded?.();
+        // Don't call onCommentAdded here - it causes a refetch which recreates components
+        // and loses the expanded state. Just update local state like SprintModal does.
       }
     } catch (err) {
       console.error('Failed to add comment:', err);
@@ -374,14 +432,60 @@ function CompactTaskTile({
           <div className="px-3 py-2">
             {/* Add Comment Input */}
             <div className="flex items-center gap-2 mb-2">
-              {/* Author Avatar */}
-              <div
-                className="w-6 h-6 rounded-full flex items-center justify-center text-[9px] font-bold text-white flex-shrink-0"
-                style={{ backgroundColor: accentColor }}
-                title={`Posting as: ${commentAuthor}`}
-              >
-                {commentAuthor.split(' ').map(n => n?.[0] || '').join('').slice(0, 2).toUpperCase() || 'U'}
+              {/* Author Selector Button */}
+              <div className="relative">
+                <button
+                  ref={authorButtonRef}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setAuthorDropdownOpen(!authorDropdownOpen);
+                  }}
+                  className="w-6 h-6 rounded-full flex items-center justify-center text-[9px] font-bold text-white flex-shrink-0 hover:ring-2 hover:ring-blue-200 transition-all cursor-pointer"
+                  style={{ backgroundColor: accentColor }}
+                  title={`Posting as: ${commentAuthor} (click to change)`}
+                >
+                  {commentAuthor.split(' ').map(n => n?.[0] || '').join('').slice(0, 2).toUpperCase() || 'U'}
+                </button>
               </div>
+
+              {/* Author Dropdown Portal */}
+              {authorDropdownOpen && createPortal(
+                <div
+                  id={`tooltip-author-dropdown-${task.id}`}
+                  className="fixed bg-white rounded-lg shadow-xl border border-gray-200 py-1 min-w-[160px] max-h-[200px] overflow-y-auto animate-in fade-in slide-in-from-top-2 duration-150"
+                  style={{ top: authorDropdownPosition.top, left: authorDropdownPosition.left, zIndex: 99999 }}
+                >
+                  <div className="px-2 py-1 text-[9px] text-gray-400 uppercase tracking-wide border-b border-gray-100 mb-1">
+                    Post as
+                  </div>
+                  {!assigneesFetched ? (
+                    <div className="px-3 py-2 text-xs text-gray-400">Loading...</div>
+                  ) : assignees.length === 0 ? (
+                    <div className="px-3 py-2 text-xs text-gray-400">No members found</div>
+                  ) : (
+                    assignees.map((assignee) => (
+                      <button
+                        key={assignee.id}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setCommentAuthor(assignee.name);
+                          setAuthorDropdownOpen(false);
+                        }}
+                        className={`w-full flex items-center gap-2 px-3 py-1.5 text-xs text-left hover:bg-gray-50 transition-colors ${
+                          commentAuthor === assignee.name ? 'bg-blue-50 text-blue-700' : 'text-gray-700'
+                        }`}
+                      >
+                        <div className="w-5 h-5 rounded-full bg-gray-200 flex items-center justify-center text-[8px] font-bold text-gray-600">
+                          {assignee.name.split(' ').map(n => n?.[0] || '').join('').slice(0, 2).toUpperCase()}
+                        </div>
+                        <span className="flex-1 truncate">{assignee.name}</span>
+                        {commentAuthor === assignee.name && <Check className="h-3 w-3 text-blue-600" />}
+                      </button>
+                    ))
+                  )}
+                </div>,
+                document.body
+              )}
 
               <div className="flex-1 flex items-center gap-1.5 bg-white rounded-lg border border-gray-200 px-2 py-1.5 focus-within:border-blue-400 transition-all">
                 <input
