@@ -548,69 +548,41 @@ router.post('/clubs/:clubId/dimensional', async (req, res) => {
     // Use resolvedAreaId from here on
     const area_id_for_target = resolvedAreaId;
 
-    // Check for existing target first - uniqueness based on dimensions + cost + capacity
-    const existingCheck = await queryLocal(`
-      SELECT id FROM club_dimensional_targets
-      WHERE club_id = $1
-        AND COALESCE(area_id, -1) = COALESCE($2, -1)
-        AND COALESCE(day_type_id, -1) = COALESCE($3, -1)
-        AND COALESCE(format_id, -1) = COALESCE($4, -1)
-        AND COALESCE(meetup_cost, -1) = COALESCE($5, -1)
-        AND COALESCE(meetup_capacity, -1) = COALESCE($6, -1)
-    `, [clubId, area_id_for_target || null, day_type_id || null, format_id || null, meetup_cost || null, meetup_capacity || null]);
+    // Always create a new target - POST creates, PUT updates
+    // This allows multiple targets with the same dimensions (e.g., same day type)
+    const initialProgress = {
+      not_picked: target_meetups || 0,
+      started: 0,
+      stage_1: 0,
+      stage_2: 0,
+      stage_3: 0,
+      stage_4: 0,
+      realised: 0
+    };
 
-    let result;
-    if (existingCheck.rows.length > 0) {
-      // Update existing
-      result = await queryLocal(`
-        UPDATE club_dimensional_targets SET
-          target_meetups = $1,
-          target_revenue = $2,
-          activity_id = COALESCE($3, activity_id),
-          club_name = COALESCE($4, club_name),
-          meetup_cost = COALESCE($6, meetup_cost),
-          meetup_capacity = COALESCE($7, meetup_capacity),
-          name = COALESCE($8, name),
-          updated_at = CURRENT_TIMESTAMP
-        WHERE id = $5
-        RETURNING *
-      `, [target_meetups || 0, finalTargetRevenue, activity_id, club_name, existingCheck.rows[0].id, meetup_cost, meetup_capacity, name || null]);
-    } else {
-      // Insert new with initial progress (all target_meetups in "not_picked" stage)
-      const initialProgress = {
-        not_picked: target_meetups || 0,
-        started: 0,
-        stage_1: 0,
-        stage_2: 0,
-        stage_3: 0,
-        stage_4: 0,
-        realised: 0
-      };
-
-      result = await queryLocal(`
-        INSERT INTO club_dimensional_targets (
-          club_id, activity_id, club_name,
-          area_id, day_type_id, format_id,
-          target_meetups, target_revenue, progress,
-          meetup_cost, meetup_capacity, name
-        )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-        RETURNING *
-      `, [
-        clubId,
-        activity_id || null,
-        club_name || null,
-        area_id_for_target || null,  // Use resolved dim_areas.id, not production area_id
-        day_type_id || null,
-        format_id || null,
-        target_meetups || 0,
-        finalTargetRevenue,
-        JSON.stringify(initialProgress),
-        meetup_cost || null,
-        meetup_capacity || null,
-        name || null
-      ]);
-    }
+    const result = await queryLocal(`
+      INSERT INTO club_dimensional_targets (
+        club_id, activity_id, club_name,
+        area_id, day_type_id, format_id,
+        target_meetups, target_revenue, progress,
+        meetup_cost, meetup_capacity, name
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+      RETURNING *
+    `, [
+      clubId,
+      activity_id || null,
+      club_name || null,
+      area_id_for_target || null,  // Use resolved dim_areas.id, not production area_id
+      day_type_id || null,
+      format_id || null,
+      target_meetups || 0,
+      finalTargetRevenue,
+      JSON.stringify(initialProgress),
+      meetup_cost || null,
+      meetup_capacity || null,
+      name || null
+    ]);
 
     // Fetch the full target with dimension names
     const fullTarget = await queryLocal(`
@@ -930,6 +902,8 @@ router.post('/launches/:launchId/dimensional', async (req, res) => {
       }
     }
 
+    // Always create a new target - POST creates, PUT updates
+    // This allows multiple targets with the same dimensions (e.g., same day type)
     const insertQuery = `
       INSERT INTO launch_dimensional_targets (
         launch_id, activity_name,
@@ -937,11 +911,6 @@ router.post('/launches/:launchId/dimensional', async (req, res) => {
         target_meetups, target_revenue
       )
       VALUES ($1, $2, $3, $4, $5, $6, $7)
-      ON CONFLICT (launch_id, area_id, day_type_id, format_id)
-      DO UPDATE SET
-        target_meetups = EXCLUDED.target_meetups,
-        target_revenue = EXCLUDED.target_revenue,
-        updated_at = CURRENT_TIMESTAMP
       RETURNING *
     `;
 
