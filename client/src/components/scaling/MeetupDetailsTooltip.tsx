@@ -91,6 +91,7 @@ interface MeetupDetailsTooltipProps {
   weekStart?: string;
   weekEnd?: string;
   refreshKey?: number; // Increment to force data refresh
+  forceHide?: boolean; // When true, hide tooltip (e.g., when modal opens)
 }
 
 // Format currency in compact form
@@ -732,7 +733,8 @@ export function MeetupDetailsTooltip({
   weekLabel,
   weekStart,
   weekEnd,
-  refreshKey
+  refreshKey,
+  forceHide
 }: MeetupDetailsTooltipProps) {
   const [isVisible, setIsVisible] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -763,6 +765,17 @@ export function MeetupDetailsTooltip({
       prevRefreshKeyRef.current = refreshKey;
     }
   }, [refreshKey]);
+
+  // Hide tooltip when forceHide is true (e.g., when edit modal opens)
+  useEffect(() => {
+    if (forceHide) {
+      setIsVisible(false);
+      if (hoverTimeoutRef.current) {
+        clearTimeout(hoverTimeoutRef.current);
+        hoverTimeoutRef.current = null;
+      }
+    }
+  }, [forceHide]);
 
   const useParentWeek = localWeekOption === null && weekStart && weekEnd;
   const effectiveWeekStart = useParentWeek ? weekStart : (localWeekOption ? formatLocalDate(getExtendedWeekBounds(localWeekOption).start) : formatLocalDate(getExtendedWeekBounds('last_completed').start));

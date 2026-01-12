@@ -1960,9 +1960,10 @@ interface HierarchyRowProps {
   taskSummary: ScalingTaskSummary | null       // Task summary for this node
   weekBounds: { start: Date; end: Date }       // Week bounds for tooltip
   tooltipRefreshKey?: number                   // Key to force tooltip data refresh
+  hideTooltips?: boolean                       // When true, force hide all tooltips (e.g., when modal opens)
 }
 
-function HierarchyRow({ node, level, expanded, onToggle, onEditTarget, onDeleteTarget, onAddAtAreaLevel, onExpandClub, onCreateTask, onEditStages, onOpenSprint, taskSummary, weekBounds, tooltipRefreshKey }: HierarchyRowProps) {
+function HierarchyRow({ node, level, expanded, onToggle, onEditTarget, onDeleteTarget, onAddAtAreaLevel, onExpandClub, onCreateTask, onEditStages, onOpenSprint, taskSummary, weekBounds, tooltipRefreshKey, hideTooltips }: HierarchyRowProps) {
   const hasChildren = node.children && node.children.length > 0
   const isLaunch = node.is_launch || node.type === 'launch'
   const isTarget = node.type === 'target'
@@ -2060,6 +2061,7 @@ function HierarchyRow({ node, level, expanded, onToggle, onEditTarget, onDeleteT
             weekStart={formatLocalDate(weekBounds.start)}
             weekEnd={formatLocalDate(weekBounds.end)}
             refreshKey={tooltipRefreshKey}
+            forceHide={hideTooltips}
           >
             <div className="flex justify-center cursor-pointer">
               <HealthDot
@@ -2104,6 +2106,7 @@ function HierarchyRow({ node, level, expanded, onToggle, onEditTarget, onDeleteT
             weekStart={formatLocalDate(weekBounds.start)}
             weekEnd={formatLocalDate(weekBounds.end)}
             refreshKey={tooltipRefreshKey}
+            forceHide={hideTooltips}
           >
             <div className="hover:bg-gray-100 rounded px-1 -mx-1 transition-colors">
               <div className="text-gray-800 font-mono">{node.current_meetups}</div>
@@ -3508,6 +3511,7 @@ export default function ScalingPlannerV2() {
                       taskSummary={getTaskSummary(node)}
                       weekBounds={weekBounds}
                       tooltipRefreshKey={tooltipRefreshKey}
+                      hideTooltips={editTargetContext !== null}
                     />
                   ))
                 )}
