@@ -4702,11 +4702,12 @@ router.get('/clubs/:clubId/meetup-details', async (req, res) => {
     // Build a map of event_id -> matched target
     const eventToTarget = new Map<number, { id: number; name: string | null }>();
 
-    // Get targets with display names for the response
+    // Get targets with display names and target_meetups for the response
     const targetsQuery = `
       SELECT
         cdt.id as target_id,
         cdt.name as target_name,
+        cdt.target_meetups,
         dt.day_type as day_type_name
       FROM club_dimensional_targets cdt
       LEFT JOIN dim_day_types dt ON cdt.day_type_id = dt.id
@@ -4715,9 +4716,11 @@ router.get('/clubs/:clubId/meetup-details', async (req, res) => {
     `;
     const targetsResult = await queryLocal(targetsQuery, [clubId]);
 
-    // Build display name map (matching hierarchy API logic)
+    // Build display name map and target limits (matching hierarchy API logic)
     const targetDisplayNames = new Map<number, string>();
+    const targetLimits = new Map<number, number>();
     targetsResult.rows.forEach((t: any, idx: number) => {
+      const targetId = parseInt(t.target_id);
       let displayName = t.target_name || null;
       if (!displayName) {
         if (t.day_type_name) {
@@ -4726,13 +4729,18 @@ router.get('/clubs/:clubId/meetup-details', async (req, res) => {
           displayName = `Target ${idx + 1}`;
         }
       }
-      targetDisplayNames.set(parseInt(t.target_id), displayName);
+      targetDisplayNames.set(targetId, displayName);
+      targetLimits.set(targetId, parseInt(t.target_meetups) || 0);
     });
 
-    // Map matched meetups from matching service
+    // Map matched meetups from matching service (only up to target_meetups limit)
     for (const targetResult of matchResult.targets) {
       const displayName = targetDisplayNames.get(targetResult.target_id) || targetResult.target_name;
-      for (const meetup of targetResult.matched_meetups) {
+      const limit = targetLimits.get(targetResult.target_id) || 0;
+
+      // Only attribute meetups up to the target limit - excess meetups remain unattributed
+      const meetupsToAttribute = targetResult.matched_meetups.slice(0, limit);
+      for (const meetup of meetupsToAttribute) {
         eventToTarget.set(meetup.event_id, {
           id: targetResult.target_id,
           name: displayName
