@@ -1959,9 +1959,10 @@ interface HierarchyRowProps {
   onOpenSprint: (node: HierarchyNode) => void  // For opening sprint modal
   taskSummary: ScalingTaskSummary | null       // Task summary for this node
   weekBounds: { start: Date; end: Date }       // Week bounds for tooltip
+  tooltipRefreshKey?: number                   // Key to force tooltip data refresh
 }
 
-function HierarchyRow({ node, level, expanded, onToggle, onEditTarget, onDeleteTarget, onAddAtAreaLevel, onExpandClub, onCreateTask, onEditStages, onOpenSprint, taskSummary, weekBounds }: HierarchyRowProps) {
+function HierarchyRow({ node, level, expanded, onToggle, onEditTarget, onDeleteTarget, onAddAtAreaLevel, onExpandClub, onCreateTask, onEditStages, onOpenSprint, taskSummary, weekBounds, tooltipRefreshKey }: HierarchyRowProps) {
   const hasChildren = node.children && node.children.length > 0
   const isLaunch = node.is_launch || node.type === 'launch'
   const isTarget = node.type === 'target'
@@ -3506,6 +3507,7 @@ export default function ScalingPlannerV2() {
                       onOpenSprint={(n) => setSprintNode(n)}
                       taskSummary={getTaskSummary(node)}
                       weekBounds={weekBounds}
+                      tooltipRefreshKey={tooltipRefreshKey}
                     />
                   ))
                 )}
