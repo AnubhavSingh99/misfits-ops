@@ -4665,31 +4665,19 @@ router.get('/clubs/:clubId/meetup-details', async (req, res) => {
       ? `'${weekEndDate.toISOString().split('T')[0]} 00:00:00+05:30'::timestamptz`
       : `DATE_TRUNC('week', CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata') AT TIME ZONE 'Asia/Kolkata'`;
 
-    // Use the matching service - same logic as the main dashboard
-    const matchResult = await matchClubMeetups(clubId, '', weekStartDate, weekEndDate);
+    // Get meetups and targets using the matching service helpers
+    const { getClubMeetups, getClubTargets, DAY_TYPE_TO_DOW } = await import('../services/meetupMatchingService');
+    const [allMeetups, allTargets] = await Promise.all([
+      getClubMeetups(clubId, weekStartDate, weekEndDate),
+      getClubTargets(clubId)
+    ]);
 
     // Build a map of event_id -> matched target
     const eventToTarget = new Map<number, { id: number; name: string | null }>();
 
-    // Get targets with display names and target_meetups for the response
-    const targetsQuery = `
-      SELECT
-        cdt.id as target_id,
-        cdt.name as target_name,
-        cdt.target_meetups,
-        dt.day_type as day_type_name
-      FROM club_dimensional_targets cdt
-      LEFT JOIN dim_day_types dt ON cdt.day_type_id = dt.id
-      WHERE cdt.club_id = $1
-      ORDER BY cdt.id
-    `;
-    const targetsResult = await queryLocal(targetsQuery, [clubId]);
-
-    // Build display name map and target limits (matching hierarchy API logic)
+    // Build display names for targets
     const targetDisplayNames = new Map<number, string>();
-    const targetLimits = new Map<number, number>();
-    targetsResult.rows.forEach((t: any, idx: number) => {
-      const targetId = parseInt(t.target_id);
+    allTargets.forEach((t, idx) => {
       let displayName = t.target_name || null;
       if (!displayName) {
         if (t.day_type_name) {
@@ -4698,24 +4686,123 @@ router.get('/clubs/:clubId/meetup-details', async (req, res) => {
           displayName = `Target ${idx + 1}`;
         }
       }
-      targetDisplayNames.set(targetId, displayName);
-      targetLimits.set(targetId, parseInt(t.target_meetups) || 0);
+      targetDisplayNames.set(t.target_id, displayName);
     });
 
-    // Map matched meetups from matching service (only up to target_meetups limit)
-    for (const targetResult of matchResult.targets) {
-      const displayName = targetDisplayNames.get(targetResult.target_id) || targetResult.target_name;
-      const limit = targetLimits.get(targetResult.target_id) || 0;
-
-      // Only attribute meetups up to the target limit - excess meetups remain unattributed
-      const meetupsToAttribute = targetResult.matched_meetups.slice(0, limit);
-      for (const meetup of meetupsToAttribute) {
-        eventToTarget.set(meetup.event_id, {
-          id: targetResult.target_id,
-          name: displayName
-        });
+    // For each meetup, find ALL targets it could match (pass area + day filters)
+    // Track day type match and name match for prioritization
+    const meetupCandidates = new Map<number, { targetId: number; dayTypeMatched: boolean; nameMatched: boolean }[]>();
+    for (const meetup of allMeetups) {
+      const candidates: { targetId: number; dayTypeMatched: boolean; nameMatched: boolean }[] = [];
+      for (const target of allTargets) {
+        // HARD FILTER 1: Area
+        if (target.production_area_id !== null) {
+          if (meetup.area_id !== target.production_area_id) {
+            continue; // Area doesn't match, skip this target
+          }
+        }
+        // HARD FILTER 2: Day Type (if target has specific day type)
+        let dayTypeMatched = false;
+        if (target.day_type_id !== null && target.day_type_dows) {
+          if (!target.day_type_dows.includes(meetup.dow)) {
+            continue; // Day type doesn't match, skip this target
+          }
+          dayTypeMatched = true; // Target has specific day type and meetup matches it
+        }
+        // Check name match (soft filter for prioritization)
+        let nameMatched = false;
+        if (target.target_name && target.target_name.trim() !== '') {
+          const pattern = target.target_name.toLowerCase().trim();
+          const eventName = meetup.event_name.toLowerCase();
+          nameMatched = eventName.includes(pattern);
+        }
+        // This meetup CAN match this target
+        candidates.push({ targetId: target.target_id, dayTypeMatched, nameMatched });
       }
+      meetupCandidates.set(meetup.event_id, candidates);
     }
+
+    // Track assigned meetups and target fill counts
+    const assignedMeetups = new Set<number>();
+    const targetFillCount = new Map<number, number>();
+    for (const target of allTargets) {
+      targetFillCount.set(target.target_id, 0);
+    }
+
+    // Sort targets by target_meetups ascending (smallest first for tie-breaking)
+    const sortedTargets = [...allTargets].sort((a, b) => a.target_meetups - b.target_meetups);
+
+    // PHASE 1: Assign meetups with SPECIFIC DAY TYPE MATCH first (highest priority)
+    // e.g., if target has "Weekday" and meetup is on Tuesday, that's a day type match
+    for (const target of sortedTargets) {
+      const limit = target.target_meetups;
+      let filled = targetFillCount.get(target.target_id) || 0;
+
+      for (const meetup of allMeetups) {
+        if (filled >= limit) break;
+        if (assignedMeetups.has(meetup.event_id)) continue;
+
+        const candidates = meetupCandidates.get(meetup.event_id) || [];
+        const match = candidates.find(c => c.targetId === target.target_id && c.dayTypeMatched);
+        if (match) {
+          eventToTarget.set(meetup.event_id, {
+            id: target.target_id,
+            name: targetDisplayNames.get(target.target_id) || null
+          });
+          assignedMeetups.add(meetup.event_id);
+          filled++;
+        }
+      }
+      targetFillCount.set(target.target_id, filled);
+    }
+
+    // PHASE 2: Assign meetups with NAME MATCH (second priority)
+    for (const target of sortedTargets) {
+      const limit = target.target_meetups;
+      let filled = targetFillCount.get(target.target_id) || 0;
+
+      for (const meetup of allMeetups) {
+        if (filled >= limit) break;
+        if (assignedMeetups.has(meetup.event_id)) continue;
+
+        const candidates = meetupCandidates.get(meetup.event_id) || [];
+        const match = candidates.find(c => c.targetId === target.target_id && c.nameMatched);
+        if (match) {
+          eventToTarget.set(meetup.event_id, {
+            id: target.target_id,
+            name: targetDisplayNames.get(target.target_id) || null
+          });
+          assignedMeetups.add(meetup.event_id);
+          filled++;
+        }
+      }
+      targetFillCount.set(target.target_id, filled);
+    }
+
+    // PHASE 3: Assign remaining meetups (smallest first, no specific match required)
+    for (const target of sortedTargets) {
+      const limit = target.target_meetups;
+      let filled = targetFillCount.get(target.target_id) || 0;
+
+      for (const meetup of allMeetups) {
+        if (filled >= limit) break;
+        if (assignedMeetups.has(meetup.event_id)) continue;
+
+        const candidates = meetupCandidates.get(meetup.event_id) || [];
+        const match = candidates.find(c => c.targetId === target.target_id);
+        if (match) {
+          eventToTarget.set(meetup.event_id, {
+            id: target.target_id,
+            name: targetDisplayNames.get(target.target_id) || null
+          });
+          assignedMeetups.add(meetup.event_id);
+          filled++;
+        }
+      }
+      targetFillCount.set(target.target_id, filled);
+    }
+
+    // Remaining unassigned meetups stay unattributed (eventToTarget won't have them)
 
     // Fetch additional meetup details (capacity, price, bookings, waitlist, no-shows, pending payments)
     const meetupsQuery = `
