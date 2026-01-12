@@ -638,10 +638,69 @@ router.put('/clubs/:clubId/dimensional/:targetId', async (req, res) => {
     const targetId = parseInt(req.params.targetId);
     const { target_meetups, target_revenue, meetup_cost, meetup_capacity, name, day_type_id } = req.body;
 
+    // First, get the current target to check for target_meetups change
+    const currentTargetResult = await queryLocal(`
+      SELECT target_meetups, progress FROM club_dimensional_targets WHERE id = $1
+    `, [targetId]);
+
+    if (currentTargetResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Target not found'
+      });
+    }
+
+    const currentTarget = currentTargetResult.rows[0];
+    const oldTargetMeetups = currentTarget.target_meetups;
+    const currentProgress = currentTarget.progress || {
+      not_picked: oldTargetMeetups,
+      started: 0,
+      stage_1: 0,
+      stage_2: 0,
+      stage_3: 0,
+      stage_4: 0,
+      realised: 0
+    };
+
     // Auto-calculate target_revenue if meetup_cost and meetup_capacity are provided
     let finalTargetRevenue = target_revenue;
     if (meetup_cost !== undefined && meetup_capacity !== undefined && target_meetups !== undefined) {
       finalTargetRevenue = calculateTargetRevenue(target_meetups, meetup_cost, meetup_capacity);
+    }
+
+    // Calculate new progress if target_meetups changed
+    let newProgress = currentProgress;
+    if (target_meetups !== undefined && target_meetups !== oldTargetMeetups) {
+      const delta = target_meetups - oldTargetMeetups;
+
+      if (delta > 0) {
+        // Increased: Add delta to not_picked
+        newProgress = {
+          ...currentProgress,
+          not_picked: (currentProgress.not_picked || 0) + delta
+        };
+        logger.info(`Target ${targetId}: Increased by ${delta}, adding to not_picked. New not_picked: ${newProgress.not_picked}`);
+      } else if (delta < 0) {
+        // Decreased: Remove from lowest stages first (not_picked → started → stage_1 → etc.)
+        // Priority: keep higher stages, remove from lower stages first
+        let toRemove = Math.abs(delta);
+        newProgress = { ...currentProgress };
+
+        const stageOrder: (keyof typeof newProgress)[] = [
+          'not_picked', 'started', 'stage_1', 'stage_2', 'stage_3', 'stage_4', 'realised'
+        ];
+
+        for (const stage of stageOrder) {
+          if (toRemove <= 0) break;
+          const available = (newProgress[stage] as number) || 0;
+          const removeFromStage = Math.min(available, toRemove);
+          (newProgress[stage] as number) = available - removeFromStage;
+          toRemove -= removeFromStage;
+          if (removeFromStage > 0) {
+            logger.info(`Target ${targetId}: Removed ${removeFromStage} from ${stage}`);
+          }
+        }
+      }
     }
 
     const updateQuery = `
@@ -653,6 +712,7 @@ router.put('/clubs/:clubId/dimensional/:targetId', async (req, res) => {
         meetup_capacity = COALESCE($5, meetup_capacity),
         name = COALESCE($6, name),
         day_type_id = COALESCE($7, day_type_id),
+        progress = $8,
         updated_at = CURRENT_TIMESTAMP
       WHERE id = $1
       RETURNING *
@@ -665,7 +725,8 @@ router.put('/clubs/:clubId/dimensional/:targetId', async (req, res) => {
       meetup_cost,
       meetup_capacity,
       name || null,
-      day_type_id || null
+      day_type_id || null,
+      JSON.stringify(newProgress)
     ]);
 
     if (result.rows.length === 0) {
@@ -915,10 +976,68 @@ router.put('/launches/:launchId/dimensional/:targetId', async (req, res) => {
     const targetId = parseInt(req.params.targetId);
     const { target_meetups, target_revenue, meetup_cost, meetup_capacity, name, day_type_id } = req.body;
 
+    // First, get the current target to check for target_meetups change
+    const currentTargetResult = await queryLocal(`
+      SELECT target_meetups, progress FROM launch_dimensional_targets WHERE id = $1
+    `, [targetId]);
+
+    if (currentTargetResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Target not found'
+      });
+    }
+
+    const currentTarget = currentTargetResult.rows[0];
+    const oldTargetMeetups = currentTarget.target_meetups;
+    const currentProgress = currentTarget.progress || {
+      not_picked: oldTargetMeetups,
+      started: 0,
+      stage_1: 0,
+      stage_2: 0,
+      stage_3: 0,
+      stage_4: 0,
+      realised: 0
+    };
+
     // Auto-calculate target_revenue if meetup_cost and meetup_capacity are provided
     let finalTargetRevenue = target_revenue;
     if (meetup_cost !== undefined && meetup_capacity !== undefined && target_meetups !== undefined) {
       finalTargetRevenue = calculateTargetRevenue(target_meetups, meetup_cost, meetup_capacity);
+    }
+
+    // Calculate new progress if target_meetups changed
+    let newProgress = currentProgress;
+    if (target_meetups !== undefined && target_meetups !== oldTargetMeetups) {
+      const delta = target_meetups - oldTargetMeetups;
+
+      if (delta > 0) {
+        // Increased: Add delta to not_picked
+        newProgress = {
+          ...currentProgress,
+          not_picked: (currentProgress.not_picked || 0) + delta
+        };
+        logger.info(`Launch Target ${targetId}: Increased by ${delta}, adding to not_picked. New not_picked: ${newProgress.not_picked}`);
+      } else if (delta < 0) {
+        // Decreased: Remove from lowest stages first (not_picked → started → stage_1 → etc.)
+        let toRemove = Math.abs(delta);
+        newProgress = { ...currentProgress };
+
+        const stageOrder: (keyof typeof newProgress)[] = [
+          'not_picked', 'started', 'stage_1', 'stage_2', 'stage_3', 'stage_4', 'realised'
+        ];
+
+        for (const stage of stageOrder) {
+          if (toRemove <= 0) break;
+          const available = (newProgress[stage] as number) || 0;
+          const removeFromStage = Math.min(available, toRemove);
+          (newProgress[stage] as number) = available - removeFromStage;
+          toRemove -= removeFromStage;
+          if (removeFromStage > 0) {
+            logger.info(`Launch Target ${targetId}: Removed ${removeFromStage} from ${stage}`);
+          }
+        }
+      }
     }
 
     const updateQuery = `
@@ -930,6 +1049,7 @@ router.put('/launches/:launchId/dimensional/:targetId', async (req, res) => {
         meetup_capacity = COALESCE($5, meetup_capacity),
         name = COALESCE($6, name),
         day_type_id = COALESCE($7, day_type_id),
+        progress = $8,
         updated_at = CURRENT_TIMESTAMP
       WHERE id = $1
       RETURNING *
@@ -942,7 +1062,8 @@ router.put('/launches/:launchId/dimensional/:targetId', async (req, res) => {
       meetup_cost,
       meetup_capacity,
       name || null,
-      day_type_id || null
+      day_type_id || null,
+      JSON.stringify(newProgress)
     ]);
 
     if (result.rows.length === 0) {
