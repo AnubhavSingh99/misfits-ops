@@ -454,6 +454,12 @@ export function calculateRevenueAttribution(
 
 /**
  * Match all meetups for a club to its targets
+ *
+ * Distribution priority (to maximize fully fulfilled targets):
+ * 1. Day type match first (specific day types like Weekday, Weekend)
+ * 2. Name match second (meetup name contains target name)
+ * 3. Smallest targets first (to maximize fully fulfilled targets)
+ *
  * Returns detailed match results including:
  * - Per-target matched meetups and revenue
  * - Area-level unattributed (meetups that didn't match any target)
@@ -484,26 +490,120 @@ export async function matchClubMeetups(
     total_unattributed_revenue: 0
   };
 
-  // Track which meetups matched which target
-  const targetMatches: Map<number, ActualMeetup[]> = new Map();
-  const unmatchedByArea: Map<number, ActualMeetup[]> = new Map();
-
-  // Initialize target match buckets
-  for (const target of targets) {
-    targetMatches.set(target.target_id, []);
+  // For each meetup, find ALL targets it could match (pass area + day filters)
+  // Track day type match and name match for prioritization
+  const meetupCandidates = new Map<number, { targetId: number; dayTypeMatched: boolean; nameMatched: boolean }[]>();
+  for (const meetup of meetups) {
+    const candidates: { targetId: number; dayTypeMatched: boolean; nameMatched: boolean }[] = [];
+    for (const target of targets) {
+      // HARD FILTER 1: Area
+      if (target.production_area_id !== null) {
+        if (meetup.area_id !== target.production_area_id) {
+          continue;
+        }
+      }
+      // HARD FILTER 2: Day Type (if target has specific day type)
+      let dayTypeMatched = false;
+      if (target.day_type_id !== null && target.day_type_dows) {
+        if (!target.day_type_dows.includes(meetup.dow)) {
+          continue;
+        }
+        dayTypeMatched = true;
+      }
+      // Check name match (soft filter for prioritization)
+      let nameMatched = false;
+      if (target.target_name && target.target_name.trim() !== '') {
+        const pattern = target.target_name.toLowerCase().trim();
+        const eventName = meetup.event_name.toLowerCase();
+        nameMatched = eventName.includes(pattern);
+      }
+      candidates.push({ targetId: target.target_id, dayTypeMatched, nameMatched });
+    }
+    meetupCandidates.set(meetup.event_id, candidates);
   }
 
-  // Match each meetup to a target
-  for (const meetup of meetups) {
-    const matchResult = matchMeetupToTarget(meetup, targets);
+  // Track assigned meetups and target matches
+  const assignedMeetups = new Set<number>();
+  const targetMatches: Map<number, ActualMeetup[]> = new Map();
+  const targetFillCount = new Map<number, number>();
+  for (const target of targets) {
+    targetMatches.set(target.target_id, []);
+    targetFillCount.set(target.target_id, 0);
+  }
 
-    if (matchResult.matched && matchResult.target_id !== null) {
-      // Add to matched target
-      const matches = targetMatches.get(matchResult.target_id) || [];
-      matches.push(meetup);
-      targetMatches.set(matchResult.target_id, matches);
-    } else {
-      // Add to area unattributed
+  // Sort targets by target_meetups ascending (smallest first)
+  const sortedTargets = [...targets].sort((a, b) => a.target_meetups - b.target_meetups);
+
+  // PHASE 1: Assign meetups with SPECIFIC DAY TYPE MATCH first
+  for (const target of sortedTargets) {
+    const limit = target.target_meetups;
+    let filled = targetFillCount.get(target.target_id) || 0;
+
+    for (const meetup of meetups) {
+      if (filled >= limit) break;
+      if (assignedMeetups.has(meetup.event_id)) continue;
+
+      const candidates = meetupCandidates.get(meetup.event_id) || [];
+      const match = candidates.find(c => c.targetId === target.target_id && c.dayTypeMatched);
+      if (match) {
+        const matches = targetMatches.get(target.target_id) || [];
+        matches.push(meetup);
+        targetMatches.set(target.target_id, matches);
+        assignedMeetups.add(meetup.event_id);
+        filled++;
+      }
+    }
+    targetFillCount.set(target.target_id, filled);
+  }
+
+  // PHASE 2: Assign meetups with NAME MATCH
+  for (const target of sortedTargets) {
+    const limit = target.target_meetups;
+    let filled = targetFillCount.get(target.target_id) || 0;
+
+    for (const meetup of meetups) {
+      if (filled >= limit) break;
+      if (assignedMeetups.has(meetup.event_id)) continue;
+
+      const candidates = meetupCandidates.get(meetup.event_id) || [];
+      const match = candidates.find(c => c.targetId === target.target_id && c.nameMatched);
+      if (match) {
+        const matches = targetMatches.get(target.target_id) || [];
+        matches.push(meetup);
+        targetMatches.set(target.target_id, matches);
+        assignedMeetups.add(meetup.event_id);
+        filled++;
+      }
+    }
+    targetFillCount.set(target.target_id, filled);
+  }
+
+  // PHASE 3: Assign remaining meetups (smallest first)
+  for (const target of sortedTargets) {
+    const limit = target.target_meetups;
+    let filled = targetFillCount.get(target.target_id) || 0;
+
+    for (const meetup of meetups) {
+      if (filled >= limit) break;
+      if (assignedMeetups.has(meetup.event_id)) continue;
+
+      const candidates = meetupCandidates.get(meetup.event_id) || [];
+      const match = candidates.find(c => c.targetId === target.target_id);
+      if (match) {
+        const matches = targetMatches.get(target.target_id) || [];
+        matches.push(meetup);
+        targetMatches.set(target.target_id, matches);
+        assignedMeetups.add(meetup.event_id);
+        filled++;
+      }
+    }
+    targetFillCount.set(target.target_id, filled);
+  }
+
+  // Collect unmatched meetups by area
+  const unmatchedByArea: Map<number, ActualMeetup[]> = new Map();
+  for (const meetup of meetups) {
+    if (!assignedMeetups.has(meetup.event_id)) {
       const areaMatches = unmatchedByArea.get(meetup.area_id) || [];
       areaMatches.push(meetup);
       unmatchedByArea.set(meetup.area_id, areaMatches);
@@ -553,19 +653,19 @@ export async function matchClubMeetups(
   }
 
   // Process area unattributed
-  for (const [areaId, meetups] of unmatchedByArea) {
-    const totalRevenue = meetups.reduce((sum, m) => sum + m.revenue, 0);
-    const areaName = meetups[0]?.area_name || `Area ${areaId}`;
+  for (const [areaId, areaMeetups] of unmatchedByArea) {
+    const totalRevenue = areaMeetups.reduce((sum, m) => sum + m.revenue, 0);
+    const areaName = areaMeetups[0]?.area_name || `Area ${areaId}`;
 
     result.area_unattributed.push({
       area_id: areaId,
       area_name: areaName,
-      meetups: meetups,
-      meetup_count: meetups.length,
+      meetups: areaMeetups,
+      meetup_count: areaMeetups.length,
       total_revenue: totalRevenue
     });
 
-    result.total_unattributed_meetups += meetups.length;
+    result.total_unattributed_meetups += areaMeetups.length;
     result.total_unattributed_revenue += totalRevenue;
   }
 
