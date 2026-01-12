@@ -90,6 +90,7 @@ interface MeetupDetailsTooltipProps {
   weekLabel?: string;
   weekStart?: string;
   weekEnd?: string;
+  refreshKey?: number; // Increment to force data refresh
 }
 
 // Format currency in compact form
@@ -730,7 +731,8 @@ export function MeetupDetailsTooltip({
   children,
   weekLabel,
   weekStart,
-  weekEnd
+  weekEnd,
+  refreshKey
 }: MeetupDetailsTooltipProps) {
   const [isVisible, setIsVisible] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -752,6 +754,15 @@ export function MeetupDetailsTooltip({
       prevParentWeekRef.current = weekStart;
     }
   }, [weekStart, localWeekOption]);
+
+  // Clear cached data when refreshKey changes (e.g., after target save)
+  const prevRefreshKeyRef = useRef<number | undefined>(refreshKey);
+  useEffect(() => {
+    if (refreshKey !== undefined && refreshKey !== prevRefreshKeyRef.current) {
+      setData(null);
+      prevRefreshKeyRef.current = refreshKey;
+    }
+  }, [refreshKey]);
 
   const useParentWeek = localWeekOption === null && weekStart && weekEnd;
   const effectiveWeekStart = useParentWeek ? weekStart : (localWeekOption ? formatLocalDate(getExtendedWeekBounds(localWeekOption).start) : formatLocalDate(getExtendedWeekBounds('last_completed').start));

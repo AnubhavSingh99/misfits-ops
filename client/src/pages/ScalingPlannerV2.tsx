@@ -2058,6 +2058,7 @@ function HierarchyRow({ node, level, expanded, onToggle, onEditTarget, onDeleteT
             weekLabel={formatWeekLabel(weekBounds.start, weekBounds.end)}
             weekStart={formatLocalDate(weekBounds.start)}
             weekEnd={formatLocalDate(weekBounds.end)}
+            refreshKey={tooltipRefreshKey}
           >
             <div className="flex justify-center cursor-pointer">
               <HealthDot
@@ -2101,6 +2102,7 @@ function HierarchyRow({ node, level, expanded, onToggle, onEditTarget, onDeleteT
             weekLabel={formatWeekLabel(weekBounds.start, weekBounds.end)}
             weekStart={formatLocalDate(weekBounds.start)}
             weekEnd={formatLocalDate(weekBounds.end)}
+            refreshKey={tooltipRefreshKey}
           >
             <div className="hover:bg-gray-100 rounded px-1 -mx-1 transition-colors">
               <div className="text-gray-800 font-mono">{node.current_meetups}</div>
@@ -2317,6 +2319,9 @@ export default function ScalingPlannerV2() {
 
   // Feedback modal state
   const [feedbackModalOpen, setFeedbackModalOpen] = useState(false)
+
+  // Tooltip refresh key - increment to force MeetupDetailsTooltip to refetch
+  const [tooltipRefreshKey, setTooltipRefreshKey] = useState(0)
 
   // Hierarchy filter state
   const [filters, setFilters] = useState<HierarchyFilters>({
@@ -2655,6 +2660,8 @@ export default function ScalingPlannerV2() {
 
     // Refresh data after save, preserve scroll position
     await fetchData(true)
+    // Invalidate tooltip caches so they refetch with updated target data
+    setTooltipRefreshKey(k => k + 1)
   }
 
   // Save new target handler
@@ -2681,6 +2688,8 @@ export default function ScalingPlannerV2() {
 
     // Refresh data after save, preserve scroll position
     await fetchData(true)
+    // Invalidate tooltip caches so they refetch with updated target data
+    setTooltipRefreshKey(k => k + 1)
   }
 
   // Edit target handler - opens edit modal for existing targets
@@ -2729,6 +2738,8 @@ export default function ScalingPlannerV2() {
 
     // Refresh data after save, preserve scroll position
     await fetchData(true)
+    // Invalidate tooltip caches so they refetch with updated target data
+    setTooltipRefreshKey(k => k + 1)
   }
 
   // Delete target handler - opens confirmation modal
