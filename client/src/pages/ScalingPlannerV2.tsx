@@ -3449,9 +3449,9 @@ export default function ScalingPlannerV2() {
 
         {/* Hierarchy Table */}
         <div className="bg-white rounded-lg shadow border border-gray-200">
-          <div ref={tableContainerRef} className="overflow-x-auto">
+          <div ref={tableContainerRef} className="overflow-auto max-h-[calc(100vh-180px)]">
             <table className="w-full">
-              <thead className="bg-gray-50 sticky top-14 z-20 shadow-sm">
+              <thead className="bg-gray-50 sticky top-0 z-20 shadow-sm">
                 <tr className="bg-gray-50 border-b border-gray-200">
                   <SortableHeader
                     label="Hierarchy"
