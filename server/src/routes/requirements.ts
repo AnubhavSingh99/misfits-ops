@@ -23,6 +23,7 @@ router.get('/leaders', async (req: Request, res: Response) => {
       city_id,
       area_id,
       club_id,
+      launch_id,
       team,
       status,
       search
@@ -50,6 +51,10 @@ router.get('/leaders', async (req: Request, res: Response) => {
     if (club_id) {
       query += ` AND club_id = $${paramIndex++}`;
       params.push(club_id);
+    }
+    if (launch_id) {
+      query += ` AND launch_id = $${paramIndex++}`;
+      params.push(launch_id);
     }
     if (team) {
       query += ` AND team = $${paramIndex++}`;

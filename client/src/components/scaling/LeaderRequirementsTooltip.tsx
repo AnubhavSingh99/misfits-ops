@@ -443,8 +443,11 @@ export function LeaderRequirementsTooltip({
       const params = new URLSearchParams();
 
       // Add hierarchy filters based on node type
-      if (node.type === 'club' || node.type === 'launch') {
+      if (node.type === 'club') {
         if (node.club_id) params.append('club_id', node.club_id.toString());
+      } else if (node.type === 'launch') {
+        // For launches, use launch_id filter
+        if (node.launch_id) params.append('launch_id', node.launch_id.toString());
       } else if (node.type === 'area') {
         if (node.area_id) params.append('area_id', node.area_id.toString());
       } else if (node.type === 'city') {
@@ -643,7 +646,7 @@ export function LeaderRequirementsTooltip({
       {isOpen && triggerRect && createPortal(
         <div
           ref={tooltipRef}
-          className="fixed z-[9999]"
+          className="fixed z-[9999] overflow-hidden"
           style={{
             left: tooltipStyle.left,
             top: tooltipStyle.top,
@@ -654,7 +657,7 @@ export function LeaderRequirementsTooltip({
           onMouseEnter={handleTooltipEnter}
           onMouseLeave={handleTooltipLeave}
         >
-          <div className="bg-white rounded-xl shadow-2xl border border-gray-200 overflow-hidden animate-in fade-in zoom-in-95 duration-150 flex flex-col h-full">
+          <div className="bg-white rounded-xl shadow-2xl border border-gray-200 overflow-hidden animate-in fade-in zoom-in-95 duration-150 flex flex-col max-h-full">
             {/* Header */}
             <div className="px-3 py-2 bg-gradient-to-r from-indigo-50 to-violet-50 border-b border-indigo-100 flex-shrink-0">
               <div className="flex items-center justify-between">
