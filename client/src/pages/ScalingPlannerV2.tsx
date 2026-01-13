@@ -3742,16 +3742,13 @@ export default function ScalingPlannerV2() {
             fetchHierarchyData()
           }}
           context={{
-            activity_id: leaderRequirementNode.type === 'activity' ? leaderRequirementNode.id :
-              leaderRequirementNode.type === 'city' || leaderRequirementNode.type === 'area' || leaderRequirementNode.type === 'club' || leaderRequirementNode.type === 'launch' ? leaderRequirementNode.activity_id : undefined,
+            activity_id: leaderRequirementNode.activity_id,
             activity_name: leaderRequirementNode.activity_name,
-            city_id: leaderRequirementNode.type === 'city' ? leaderRequirementNode.id :
-              leaderRequirementNode.type === 'area' || leaderRequirementNode.type === 'club' || leaderRequirementNode.type === 'launch' ? leaderRequirementNode.city_id : undefined,
+            city_id: leaderRequirementNode.city_id,
             city_name: leaderRequirementNode.city_name,
-            area_id: leaderRequirementNode.type === 'area' ? leaderRequirementNode.id :
-              leaderRequirementNode.type === 'club' || leaderRequirementNode.type === 'launch' ? leaderRequirementNode.area_id : undefined,
+            area_id: leaderRequirementNode.area_id,
             area_name: leaderRequirementNode.area_name,
-            club_id: (leaderRequirementNode.type === 'club' || leaderRequirementNode.type === 'launch') ? leaderRequirementNode.id : undefined,
+            club_id: (leaderRequirementNode.type === 'club' || leaderRequirementNode.type === 'launch') ? leaderRequirementNode.club_id : undefined,
             club_name: (leaderRequirementNode.type === 'club' || leaderRequirementNode.type === 'launch') ? leaderRequirementNode.name : undefined
           }}
         />

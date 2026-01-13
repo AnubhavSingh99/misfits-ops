@@ -68,9 +68,36 @@ router.get('/leaders', async (req: Request, res: Response) => {
     query += ` ORDER BY created_at DESC`;
 
     const result = await queryLocal(query, params);
+
+    // Fetch linked tasks for all requirements
+    let linkedTasksMap: Record<number, any[]> = {};
+    if (result.rows.length > 0) {
+      const reqIds = result.rows.map((r: any) => r.id);
+      const linkedTasksQuery = `
+        SELECT stlr.leader_requirement_id, st.id, st.title, st.status, st.assigned_to_name
+        FROM scaling_task_leader_requirements stlr
+        JOIN scaling_tasks st ON stlr.task_id = st.id
+        WHERE stlr.leader_requirement_id = ANY($1)
+        ORDER BY st.created_at DESC
+      `;
+      const linkedTasksResult = await queryLocal(linkedTasksQuery, [reqIds]);
+      for (const row of linkedTasksResult.rows) {
+        if (!linkedTasksMap[row.leader_requirement_id]) {
+          linkedTasksMap[row.leader_requirement_id] = [];
+        }
+        linkedTasksMap[row.leader_requirement_id].push({
+          id: row.id,
+          title: row.title,
+          status: row.status,
+          assigned_to_name: row.assigned_to_name
+        });
+      }
+    }
+
     const requirements = result.rows.map((r: any) => ({
       ...r,
-      type: 'leader' as const
+      type: 'leader' as const,
+      linked_tasks: linkedTasksMap[r.id] || []
     }));
 
     res.json({

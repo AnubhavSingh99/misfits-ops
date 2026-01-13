@@ -46,8 +46,8 @@ Enhancing the Leader Requirements tooltip in V2 Scaling Planner Dashboard to:
 - [x] Roll up leader requirements from club to area, city, activity nodes
 
 ### Phase 6: Testing & Deployment
-- [ ] Build frontend to check for errors
-- [ ] Test locally or deploy to production
+- [x] Build frontend to check for errors
+- [x] Deploy to production
 - [ ] Verify tooltip functionality
 - [ ] Verify task creation with pre-linked requirements
 - [ ] Verify requirement badges on tasks
@@ -58,3 +58,6 @@ Enhancing the Leader Requirements tooltip in V2 Scaling Planner Dashboard to:
 - **Task Creation**: Both global button at top + per-requirement button
 - **Cross-linking**: Show requirement badges on tasks in Tasks tooltip
 - **Hierarchy Rollup**: Leaders required should roll up at Activity/City/Area levels
+
+## Deployment History
+- **2026-01-13**: Deployed with commit 3b9c405 - Full implementation complete
