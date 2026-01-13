@@ -143,7 +143,7 @@ export function RevenueStatusPills({ revenueStatus, compact = false, showZeros =
   }
 
   return (
-    <div className={`flex flex-wrap gap-1 ${compact ? 'max-w-[300px]' : ''}`}>
+    <div className={`flex flex-wrap gap-1 ${compact ? 'max-w-[360px]' : ''}`}>
       {/* Stage revenue pills */}
       {stagePills.map(({ key, value }) => {
         const config = MEETUP_STAGE_CONFIG[key]

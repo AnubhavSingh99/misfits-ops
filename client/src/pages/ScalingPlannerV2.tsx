@@ -375,7 +375,7 @@ function StageDistribution({ progress, compact = false }: StageDistributionProps
   }
 
   return (
-    <div className={`flex flex-wrap gap-1 ${compact ? 'max-w-[280px]' : ''}`}>
+    <div className={`flex flex-wrap gap-1 ${compact ? 'max-w-[340px]' : ''}`}>
       {stages.map(s => (
         <StagePill key={s.key} stage={s.key} count={s.count} />
       ))}
@@ -2308,11 +2308,25 @@ function HierarchyRow({ node, level, expanded, onToggle, onEditTarget, onDeleteT
 // =====================================================
 // MAIN COMPONENT
 // =====================================================
+// Storage keys for persisting state
+const EXPANDED_NODES_KEY = 'scalingPlannerV2_expandedNodes'
+const SCROLL_POSITION_KEY = 'scalingPlannerV2_scrollPosition'
+
 export default function ScalingPlannerV2() {
   const [hierarchy, setHierarchy] = useState<HierarchyNode[]>([])
   const [trends, setTrends] = useState<TrendsResponse | null>(null)
   const [summary, setSummary] = useState<HierarchyResponse['summary'] | null>(null)
-  const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set())
+
+  // Initialize expanded nodes from localStorage
+  const [expandedNodes, setExpandedNodes] = useState<Set<string>>(() => {
+    try {
+      const saved = localStorage.getItem(EXPANDED_NODES_KEY)
+      return saved ? new Set(JSON.parse(saved)) : new Set()
+    } catch {
+      return new Set()
+    }
+  })
+
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -2541,6 +2555,46 @@ export default function ScalingPlannerV2() {
     fetchTaskSummaries()
   }, [includeLaunches, enabledHierarchyOrder, selectedWeek, customWeekStart])
 
+  // Restore scroll position after data loads
+  useEffect(() => {
+    if (!loading && hierarchy.length > 0 && tableContainerRef.current) {
+      try {
+        const savedScroll = sessionStorage.getItem(SCROLL_POSITION_KEY)
+        if (savedScroll) {
+          const scrollTop = parseInt(savedScroll, 10)
+          // Use requestAnimationFrame to ensure DOM is ready
+          requestAnimationFrame(() => {
+            if (tableContainerRef.current) {
+              window.scrollTo(0, scrollTop)
+            }
+          })
+        }
+      } catch {
+        // Ignore errors
+      }
+    }
+  }, [loading, hierarchy.length])
+
+  // Save scroll position on scroll (debounced via passive listener)
+  useEffect(() => {
+    let timeout: ReturnType<typeof setTimeout>
+    const handleScroll = () => {
+      clearTimeout(timeout)
+      timeout = setTimeout(() => {
+        try {
+          sessionStorage.setItem(SCROLL_POSITION_KEY, String(window.scrollY))
+        } catch {
+          // Ignore errors
+        }
+      }, 100)
+    }
+    window.addEventListener('scroll', handleScroll, { passive: true })
+    return () => {
+      window.removeEventListener('scroll', handleScroll)
+      clearTimeout(timeout)
+    }
+  }, [])
+
   // Hierarchy order handlers
   const handleDragStart = (level: HierarchyLevel) => {
     setDraggingLevel(level)
@@ -2583,7 +2637,7 @@ export default function ScalingPlannerV2() {
     })
   }
 
-  // Toggle node expansion
+  // Toggle node expansion (with localStorage persistence)
   const toggleNode = (nodeId: string) => {
     setExpandedNodes(prev => {
       const next = new Set(prev)
@@ -2591,6 +2645,12 @@ export default function ScalingPlannerV2() {
         next.delete(nodeId)
       } else {
         next.add(nodeId)
+      }
+      // Persist to localStorage
+      try {
+        localStorage.setItem(EXPANDED_NODES_KEY, JSON.stringify([...next]))
+      } catch {
+        // Ignore storage errors
       }
       return next
     })
@@ -3740,8 +3800,8 @@ export default function ScalingPlannerV2() {
           onClose={() => setLeaderRequirementNode(null)}
           onCreated={() => {
             setLeaderRequirementNode(null)
-            // Refresh hierarchy data to update leaders_required_total
-            fetchHierarchyData()
+            // Refresh hierarchy data to update leaders_required_total (preserve scroll)
+            fetchData(true)
           }}
           context={{
             activity_id: leaderRequirementNode.activity_id,

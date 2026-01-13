@@ -448,11 +448,11 @@ router.post('/leaders', async (req: Request, res: Response) => {
         activity_id, activity_name,
         city_id, city_name,
         area_id, area_name,
-        club_id, club_name,
+        club_id, club_name, launch_id,
         growth_team_effort, platform_team_effort,
         existing_leader_effort, leaders_required,
         comments, team, created_by
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
       RETURNING *`,
       [
         data.name,
@@ -463,8 +463,9 @@ router.post('/leaders', async (req: Request, res: Response) => {
         data.city_name || null,
         data.area_id || null,
         data.area_name || null,
-        data.club_id || data.launch_id || null,  // Store launch_id in club_id for now
+        data.club_id || null,  // Only store actual club_id
         data.club_name || null,
+        data.launch_id || null,  // Store launch_id in dedicated column
         data.growth_team_effort || false,
         data.platform_team_effort || false,
         data.existing_leader_effort || false,

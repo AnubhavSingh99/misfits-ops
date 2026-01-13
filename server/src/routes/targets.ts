@@ -2441,6 +2441,33 @@ router.get('/v2/hierarchy', async (req, res) => {
       }
     ]));
 
+    // Get leader requirements per launch for rollup
+    const launchLeaderRequirementsQuery = `
+      SELECT
+        launch_id,
+        SUM(CASE WHEN status != 'deprioritised' THEN leaders_required ELSE 0 END) as leaders_required_total,
+        COUNT(*) as total_requirements,
+        COUNT(CASE WHEN status = 'not_picked' THEN 1 END) as not_picked,
+        COUNT(CASE WHEN status = 'deprioritised' THEN 1 END) as deprioritised,
+        COUNT(CASE WHEN status = 'in_progress' THEN 1 END) as in_progress,
+        COUNT(CASE WHEN status = 'done' THEN 1 END) as done
+      FROM leader_requirements
+      WHERE launch_id IS NOT NULL
+      GROUP BY launch_id
+    `;
+    const launchLeaderReqResult = await queryLocal(launchLeaderRequirementsQuery);
+    const launchLeaderRequirementsMap = new Map(launchLeaderReqResult.rows.map((r: any) => [
+      parseInt(r.launch_id),
+      {
+        leaders_required_total: parseInt(r.leaders_required_total) || 0,
+        total_requirements: parseInt(r.total_requirements) || 0,
+        not_picked: parseInt(r.not_picked) || 0,
+        deprioritised: parseInt(r.deprioritised) || 0,
+        in_progress: parseInt(r.in_progress) || 0,
+        done: parseInt(r.done) || 0
+      }
+    ]));
+
     // Fetch planned launches if include_launches is true
     const includeLaunches = include_launches === 'true';
     let launchesData: any[] = [];
@@ -2774,6 +2801,16 @@ router.get('/v2/hierarchy', async (req, res) => {
           const validation = validateProgress(targetMeetups, 0, progress);
           const launchTeam = getTeamForClub(launch.activity_name, areaInfo.city_name || 'Unknown');
 
+          // Get leader requirements for this launch
+          const launchLeaderReq = launchLeaderRequirementsMap.get(launch.launch_id) || {
+            leaders_required_total: 0,
+            total_requirements: 0,
+            not_picked: 0,
+            deprioritised: 0,
+            in_progress: 0,
+            done: 0
+          };
+
           const launchNode = {
             type: 'launch',
             id: `launch:${launch.launch_id}`, // Will be updated with full path
@@ -2800,7 +2837,15 @@ router.get('/v2/hierarchy', async (req, res) => {
             milestones: launch.milestones,
             team: launchTeam,
             city_name: areaInfo.city_name || 'Unknown',
-            area_name: areaInfo.name || 'Unknown'
+            area_name: areaInfo.name || 'Unknown',
+            leaders_required_total: launchLeaderReq.leaders_required_total,
+            leader_requirements_summary: {
+              total_requirements: launchLeaderReq.total_requirements,
+              not_picked: launchLeaderReq.not_picked,
+              deprioritised: launchLeaderReq.deprioritised,
+              in_progress: launchLeaderReq.in_progress,
+              done: launchLeaderReq.done
+            }
           };
 
           const levelValues: Record<HierarchyLevel, { id: number; name: string }> = {
@@ -3804,6 +3849,16 @@ router.get('/v2/hierarchy', async (req, res) => {
         // Determine team assignment based on activity and city
         const launchTeam = getTeamForClub(launch.activity_name, areaInfo.city_name || 'Unknown');
 
+        // Get leader requirements for this launch
+        const launchLeaderReq = launchLeaderRequirementsMap.get(launch.launch_id) || {
+          leaders_required_total: 0,
+          total_requirements: 0,
+          not_picked: 0,
+          deprioritised: 0,
+          in_progress: 0,
+          done: 0
+        };
+
         const launchNode = {
           type: 'launch',
           id: `activity:${activityId}-city:${cityId}-area:${areaId}-launch:${launch.launch_id}`,
@@ -3828,7 +3883,15 @@ router.get('/v2/hierarchy', async (req, res) => {
           launch_status: launch.launch_status,
           planned_launch_date: launch.planned_launch_date,
           milestones: launch.milestones,
-          team: launchTeam
+          team: launchTeam,
+          leaders_required_total: launchLeaderReq.leaders_required_total,
+          leader_requirements_summary: {
+            total_requirements: launchLeaderReq.total_requirements,
+            not_picked: launchLeaderReq.not_picked,
+            deprioritised: launchLeaderReq.deprioritised,
+            in_progress: launchLeaderReq.in_progress,
+            done: launchLeaderReq.done
+          }
         };
 
         areaNode.children.push(launchNode);
@@ -3837,6 +3900,33 @@ router.get('/v2/hierarchy', async (req, res) => {
         // Roll up progress
         if (launchTarget || targetMeetups > 0) {
           areaNode.progress_summary = sumProgress([areaNode.progress_summary, progress]);
+        }
+
+        // Roll up leader requirements from launches to area, city, activity
+        if (launchLeaderReq.leaders_required_total > 0) {
+          // Area rollup
+          areaNode.leaders_required_total += launchLeaderReq.leaders_required_total || 0;
+          areaNode.leader_requirements_summary.total_requirements += launchLeaderReq.total_requirements || 0;
+          areaNode.leader_requirements_summary.not_picked += launchLeaderReq.not_picked || 0;
+          areaNode.leader_requirements_summary.deprioritised += launchLeaderReq.deprioritised || 0;
+          areaNode.leader_requirements_summary.in_progress += launchLeaderReq.in_progress || 0;
+          areaNode.leader_requirements_summary.done += launchLeaderReq.done || 0;
+
+          // City rollup
+          cityNode.leaders_required_total += launchLeaderReq.leaders_required_total || 0;
+          cityNode.leader_requirements_summary.total_requirements += launchLeaderReq.total_requirements || 0;
+          cityNode.leader_requirements_summary.not_picked += launchLeaderReq.not_picked || 0;
+          cityNode.leader_requirements_summary.deprioritised += launchLeaderReq.deprioritised || 0;
+          cityNode.leader_requirements_summary.in_progress += launchLeaderReq.in_progress || 0;
+          cityNode.leader_requirements_summary.done += launchLeaderReq.done || 0;
+
+          // Activity rollup
+          activityNode.leaders_required_total += launchLeaderReq.leaders_required_total || 0;
+          activityNode.leader_requirements_summary.total_requirements += launchLeaderReq.total_requirements || 0;
+          activityNode.leader_requirements_summary.not_picked += launchLeaderReq.not_picked || 0;
+          activityNode.leader_requirements_summary.deprioritised += launchLeaderReq.deprioritised || 0;
+          activityNode.leader_requirements_summary.in_progress += launchLeaderReq.in_progress || 0;
+          activityNode.leader_requirements_summary.done += launchLeaderReq.done || 0;
         }
       }
     }

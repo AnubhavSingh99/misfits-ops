@@ -772,8 +772,11 @@ export interface CreateRequirementRequest {
     area_name?: string;
     club_id?: number;
     club_name?: string;
+    launch_id?: number;
     growth_team_effort?: boolean;
     platform_team_effort?: boolean;
+    existing_leader_effort?: boolean;
+    leaders_required?: number;
     comments?: string;
     team?: 'blue' | 'green' | 'yellow';
 }
