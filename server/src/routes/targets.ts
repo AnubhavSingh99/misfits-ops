@@ -3904,7 +3904,19 @@ router.get('/v2/hierarchy', async (req, res) => {
 
         // Roll up leader requirements from launches to area, city, activity
         if (launchLeaderReq.leaders_required_total > 0) {
+          // Ensure leader_requirements_summary exists on nodes
+          if (!areaNode.leader_requirements_summary) {
+            areaNode.leader_requirements_summary = { total_requirements: 0, not_picked: 0, deprioritised: 0, in_progress: 0, done: 0 };
+          }
+          if (!cityNode.leader_requirements_summary) {
+            cityNode.leader_requirements_summary = { total_requirements: 0, not_picked: 0, deprioritised: 0, in_progress: 0, done: 0 };
+          }
+          if (!activityNode.leader_requirements_summary) {
+            activityNode.leader_requirements_summary = { total_requirements: 0, not_picked: 0, deprioritised: 0, in_progress: 0, done: 0 };
+          }
+
           // Area rollup
+          if (!areaNode.leaders_required_total) areaNode.leaders_required_total = 0;
           areaNode.leaders_required_total += launchLeaderReq.leaders_required_total || 0;
           areaNode.leader_requirements_summary.total_requirements += launchLeaderReq.total_requirements || 0;
           areaNode.leader_requirements_summary.not_picked += launchLeaderReq.not_picked || 0;
@@ -3913,6 +3925,7 @@ router.get('/v2/hierarchy', async (req, res) => {
           areaNode.leader_requirements_summary.done += launchLeaderReq.done || 0;
 
           // City rollup
+          if (!cityNode.leaders_required_total) cityNode.leaders_required_total = 0;
           cityNode.leaders_required_total += launchLeaderReq.leaders_required_total || 0;
           cityNode.leader_requirements_summary.total_requirements += launchLeaderReq.total_requirements || 0;
           cityNode.leader_requirements_summary.not_picked += launchLeaderReq.not_picked || 0;
@@ -3921,6 +3934,7 @@ router.get('/v2/hierarchy', async (req, res) => {
           cityNode.leader_requirements_summary.done += launchLeaderReq.done || 0;
 
           // Activity rollup
+          if (!activityNode.leaders_required_total) activityNode.leaders_required_total = 0;
           activityNode.leaders_required_total += launchLeaderReq.leaders_required_total || 0;
           activityNode.leader_requirements_summary.total_requirements += launchLeaderReq.total_requirements || 0;
           activityNode.leader_requirements_summary.not_picked += launchLeaderReq.not_picked || 0;
