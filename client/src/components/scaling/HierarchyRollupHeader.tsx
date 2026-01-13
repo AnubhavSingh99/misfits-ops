@@ -302,7 +302,7 @@ export function HierarchyRollupHeader({
     : 'bg-slate-50 border-l-4 border-l-slate-400';
 
   return (
-    <tr className={`${rowClasses} sticky top-[41px] z-10 shadow-[0_1px_3px_rgba(0,0,0,0.05)]`}>
+    <tr className={`${rowClasses} shadow-[0_1px_3px_rgba(0,0,0,0.05)]`}>
       {/* Name column */}
       <td className="py-3 pl-4 pr-4">
         <div className="flex items-center gap-3">
