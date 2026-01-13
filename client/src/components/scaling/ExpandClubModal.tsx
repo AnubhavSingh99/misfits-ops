@@ -171,8 +171,8 @@ export function ExpandClubModal({ isOpen, onClose, onSave, context }: ExpandClub
     const fetchAreas = async () => {
       setLoadingAreas(true)
       try {
-        // Only filter by city - show ALL areas in the city for expansion target
-        const res = await fetch(`${API_BASE}/scaling-tasks/filters/areas?city_ids=${selectedCityId}`)
+        // Only filter by city - show ALL areas in the city for expansion target (include_all=true)
+        const res = await fetch(`${API_BASE}/scaling-tasks/filters/areas?city_ids=${selectedCityId}&include_all=true`)
         const data = await res.json()
         if (data.success && data.options) {
           setAreas(data.options)

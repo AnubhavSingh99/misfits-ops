@@ -1583,13 +1583,14 @@ function LaunchModal({ isOpen, onClose, context, onSave }: LaunchModalProps) {
   }, [isOpen])
 
   // Fetch areas when city changes - uses scaling-tasks/filters API which returns production IDs
+  // For new club launches, use include_all=true to show ALL areas in the city (not just areas with existing clubs)
   useEffect(() => {
     if (!isOpen || !selectedCityId) {
       setAreas([])
       return
     }
     setLoadingAreas(true)
-    fetch(`/api/scaling-tasks/filters/areas?city_ids=${selectedCityId}`)
+    fetch(`/api/scaling-tasks/filters/areas?city_ids=${selectedCityId}&include_all=true`)
       .then(res => res.json())
       .then(data => {
         if (data.success && data.options) {

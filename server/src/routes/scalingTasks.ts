@@ -1371,10 +1371,28 @@ router.get('/filters/cities', async (req, res) => {
 });
 
 // GET /api/scaling-tasks/filters/areas - Get areas for selected cities (cascading)
+// Use include_all=true to get ALL areas in a city (for new club launches)
 router.get('/filters/areas', async (req, res) => {
   try {
-    const { activity_ids, city_ids } = req.query;
+    const { activity_ids, city_ids, include_all } = req.query;
 
+    // If include_all=true, return all areas in the city without requiring existing clubs
+    // This is used for new club launches where we want to show all possible areas
+    if (include_all === 'true' && city_ids) {
+      const ids = (city_ids as string).split(',').map(id => parseInt(id.trim())).filter(id => !isNaN(id));
+      if (ids.length > 0) {
+        const result = await queryProduction(
+          `SELECT id, name FROM area WHERE city_id = ANY($1) ORDER BY name`,
+          [ids]
+        );
+        return res.json({
+          success: true,
+          options: result.rows
+        });
+      }
+    }
+
+    // Default behavior: only return areas with active clubs
     let query = `
       SELECT DISTINCT ar.id, ar.name
       FROM area ar
