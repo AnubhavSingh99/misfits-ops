@@ -3176,6 +3176,7 @@ router.get('/v2/hierarchy', async (req, res) => {
           id: `activity:${activityId}`,
           name: club.activity_name,
           activity_id: activityId,
+          activity_name: club.activity_name, // For modal context
           target_meetups: 0,
           target_revenue: 0,
           current_meetups: 0,
@@ -3211,6 +3212,9 @@ router.get('/v2/hierarchy', async (req, res) => {
           id: `activity:${activityId}-city:${cityId}`,
           name: club.city_name || 'Unknown',
           city_id: cityId,
+          city_name: club.city_name || 'Unknown', // For modal context
+          activity_id: activityId, // For modal context
+          activity_name: club.activity_name, // For modal context
           target_meetups: 0,
           target_revenue: 0,
           current_meetups: 0,
@@ -3246,7 +3250,11 @@ router.get('/v2/hierarchy', async (req, res) => {
           id: `activity:${activityId}-city:${cityId}-area:${areaId}`,
           name: club.area_name || 'Unknown',
           area_id: areaId,
+          area_name: club.area_name || 'Unknown', // For modal context
           city_id: cityId,
+          city_name: club.city_name || 'Unknown', // For modal context
+          activity_id: activityId, // For modal context
+          activity_name: club.activity_name, // For modal context
           target_meetups: 0,
           target_revenue: 0,
           current_meetups: 0,

@@ -3810,8 +3810,9 @@ export default function ScalingPlannerV2() {
             city_name: leaderRequirementNode.city_name,
             area_id: leaderRequirementNode.area_id,
             area_name: leaderRequirementNode.area_name,
-            club_id: (leaderRequirementNode.type === 'club' || leaderRequirementNode.type === 'launch') ? leaderRequirementNode.club_id : undefined,
-            club_name: (leaderRequirementNode.type === 'club' || leaderRequirementNode.type === 'launch') ? leaderRequirementNode.name : undefined
+            club_id: leaderRequirementNode.type === 'club' ? leaderRequirementNode.club_id : undefined,
+            club_name: (leaderRequirementNode.type === 'club' || leaderRequirementNode.type === 'launch') ? leaderRequirementNode.name : undefined,
+            launch_id: leaderRequirementNode.type === 'launch' ? leaderRequirementNode.launch_id : undefined
           }}
         />
       )}

@@ -23,6 +23,7 @@ export interface CreateLeaderRequirementContext {
   area_name?: string;
   club_id?: number;
   club_name?: string;
+  launch_id?: number; // For launches
 }
 
 // Filter option type
@@ -128,10 +129,10 @@ export function CreateLeaderRequirementModal({
       setSelectedCityName(context.city_name);
       setSelectedAreaId(context.area_id);
       setSelectedAreaName(context.area_name);
-      setSelectedClubId(context.club_id);
+      setSelectedClubId(context.launch_id ? undefined : context.club_id);
       setSelectedClubName(context.club_name);
-      setSelectedLaunchId(undefined);
-      setIsLaunchSelected(false);
+      setSelectedLaunchId(context.launch_id);
+      setIsLaunchSelected(!!context.launch_id);
       setName(generateDefaultName(context));
       setDescription('');
       setGrowthEffort(false);
@@ -178,7 +179,8 @@ export function CreateLeaderRequirementModal({
     if (selectedCityId) {
       const fetchAreas = async () => {
         try {
-          const res = await fetch(`${API_BASE}/scaling-tasks/filters/areas?city_ids=${selectedCityId}`);
+          // include_all=true to show areas without active clubs (for launches)
+          const res = await fetch(`${API_BASE}/scaling-tasks/filters/areas?city_ids=${selectedCityId}&include_all=true`);
           const data = await res.json();
           if (data.success) setAreas(data.options || []);
         } catch (err) {
@@ -191,20 +193,34 @@ export function CreateLeaderRequirementModal({
     }
   }, [isOpen, selectedCityId]);
 
-  // Fetch clubs when area changes
+  // Fetch clubs and launches when area changes
   useEffect(() => {
     if (!isOpen) return;
     if (selectedActivityId && selectedCityId && selectedAreaId) {
-      const fetchClubs = async () => {
+      const fetchClubsAndLaunches = async () => {
         try {
-          const res = await fetch(`${API_BASE}/scaling-tasks/filters/clubs?activity_ids=${selectedActivityId}&city_ids=${selectedCityId}&area_ids=${selectedAreaId}`);
+          const res = await fetch(`${API_BASE}/requirements/clubs-and-launches?activity_id=${selectedActivityId}&city_id=${selectedCityId}&area_id=${selectedAreaId}`);
           const data = await res.json();
-          if (data.success) setClubs(data.options || []);
+          if (data.success) {
+            // Combine clubs and launches into options
+            const clubOptions = (data.clubs || []).map((c: any) => ({
+              id: c.id,
+              name: c.name,
+              is_launch: false
+            }));
+            const launchOptions = (data.launches || []).map((l: any) => ({
+              id: `launch_${l.id}`,
+              name: `🚀 ${l.name}`,
+              is_launch: true,
+              launch_id: l.id
+            }));
+            setClubs([...clubOptions, ...launchOptions]);
+          }
         } catch (err) {
-          console.error('Failed to fetch clubs:', err);
+          console.error('Failed to fetch clubs and launches:', err);
         }
       };
-      fetchClubs();
+      fetchClubsAndLaunches();
     } else {
       setClubs([]);
     }

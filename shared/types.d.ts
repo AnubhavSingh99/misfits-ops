@@ -575,8 +575,11 @@ export interface HierarchyNode {
     target_count?: number;
     is_launch?: boolean;
     activity_id?: number;
+    activity_name?: string;
     city_id?: number;
+    city_name?: string;
     area_id?: number;
+    area_name?: string;
     club_id?: number;
     launch_id?: number;
     target_id?: number;
