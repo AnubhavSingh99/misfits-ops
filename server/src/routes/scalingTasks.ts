@@ -522,6 +522,13 @@ router.post('/', async (req, res) => {
       });
     }
 
+    if (!assigned_to_name && !assigned_to_poc_id) {
+      return res.status(400).json({
+        success: false,
+        error: 'Assignee is required'
+      });
+    }
+
     // Insert task
     const insertQuery = `
       INSERT INTO scaling_tasks (
