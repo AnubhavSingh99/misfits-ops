@@ -15,7 +15,9 @@ import {
   Zap,
   Settings,
   UserPlus,
-  Plus
+  Plus,
+  Pencil,
+  Trash2
 } from 'lucide-react';
 import type { LeaderRequirement, HierarchyNode, RequirementStatus, ScalingTask } from '../../../../shared/types';
 import { TEAMS, getTeamByMember, type TeamKey } from '../../../../shared/teamConfig';
@@ -144,7 +146,7 @@ function CompactRequirementTile({
       {/* Main Row */}
       <div className="relative">
         {/* Grid Layout */}
-        <div className="relative grid grid-cols-[auto_1fr_auto_auto_auto] items-center gap-2 px-3 py-2.5">
+        <div className="relative grid grid-cols-[auto_1fr_auto_auto_auto_auto_auto] items-center gap-2 px-3 py-2.5">
           {/* Col 1: Leaders Required Badge */}
           <div className="flex items-center gap-1.5 w-[50px]">
             <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700 text-[10px] font-bold">
@@ -239,7 +241,46 @@ function CompactRequirementTile({
             )}
           </div>
 
-          {/* Col 5: Team Badge */}
+          {/* Col 5: Edit Button */}
+          <div className="w-6 flex justify-center">
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                window.open(`/leader-requirements?edit=${requirement.id}`, '_blank');
+              }}
+              className="p-1 rounded text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors"
+              title="Edit Requirement"
+            >
+              <Pencil className="h-3.5 w-3.5" />
+            </button>
+          </div>
+
+          {/* Col 6: Delete Button */}
+          <div className="w-6 flex justify-center">
+            <button
+              onClick={async (e) => {
+                e.stopPropagation();
+                const confirmed = window.confirm(`Delete "${requirement.name}"?`);
+                if (!confirmed) return;
+                try {
+                  const resp = await fetch(`${API_BASE}/requirements/leaders/${requirement.id}`, { method: 'DELETE' });
+                  if (resp.ok) {
+                    window.location.reload();
+                  } else {
+                    alert('Failed to delete');
+                  }
+                } catch {
+                  alert('Failed to delete');
+                }
+              }}
+              className="p-1 rounded text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+              title="Delete Requirement"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          </div>
+
+          {/* Col 7: Team Badge */}
           <div className="w-7 flex justify-center">
             {requirement.team ? (
               <div
