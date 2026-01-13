@@ -375,7 +375,7 @@ function StageDistribution({ progress, compact = false }: StageDistributionProps
   }
 
   return (
-    <div className={`flex flex-wrap gap-1 ${compact ? 'max-w-[200px]' : ''}`}>
+    <div className={`flex flex-wrap gap-1 ${compact ? 'max-w-[280px]' : ''}`}>
       {stages.map(s => (
         <StagePill key={s.key} stage={s.key} count={s.count} />
       ))}
