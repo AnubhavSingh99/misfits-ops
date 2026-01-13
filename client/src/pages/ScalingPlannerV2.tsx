@@ -1956,6 +1956,7 @@ interface HierarchyRowProps {
   onAddAtAreaLevel: (node: HierarchyNode) => void  // For areas: open choice modal (new launch vs expand)
   onExpandClub: (node: HierarchyNode) => void  // For clubs: add target (opens ExpandClubModal)
   onCreateTask: (node: HierarchyNode) => void
+  onCreateLeaderRequirement: (node: HierarchyNode) => void  // For creating leader requirement
   onEditStages: (node: HierarchyNode) => void
   onOpenSprint: (node: HierarchyNode) => void  // For opening sprint modal
   taskSummary: ScalingTaskSummary | null       // Task summary for this node
@@ -1964,7 +1965,7 @@ interface HierarchyRowProps {
   hideTooltips?: boolean                       // When true, force hide all tooltips (e.g., when modal opens)
 }
 
-function HierarchyRow({ node, level, expanded, onToggle, onEditTarget, onDeleteTarget, onAddAtAreaLevel, onExpandClub, onCreateTask, onEditStages, onOpenSprint, taskSummary, weekBounds, tooltipRefreshKey, hideTooltips }: HierarchyRowProps) {
+function HierarchyRow({ node, level, expanded, onToggle, onEditTarget, onDeleteTarget, onAddAtAreaLevel, onExpandClub, onCreateTask, onCreateLeaderRequirement, onEditStages, onOpenSprint, taskSummary, weekBounds, tooltipRefreshKey, hideTooltips }: HierarchyRowProps) {
   const hasChildren = node.children && node.children.length > 0
   const isLaunch = node.is_launch || node.type === 'launch'
   const isTarget = node.type === 'target'
@@ -2188,19 +2189,33 @@ function HierarchyRow({ node, level, expanded, onToggle, onEditTarget, onDeleteT
       <td className="py-3 px-3 text-center">
         {isTarget ? (
           <div className="text-gray-400 text-xs">-</div>
-        ) : (node.leaders_required_total || 0) > 0 ? (
-          <LeaderRequirementsTooltip
-            node={node}
-            leadersRequiredTotal={node.leaders_required_total || 0}
-            leaderRequirementsSummary={node.leader_requirements_summary}
-          >
-            <div className="inline-flex items-center justify-center gap-1 px-2 py-1 rounded-full bg-indigo-100 text-indigo-700 text-xs font-semibold cursor-pointer hover:bg-indigo-200 transition-colors">
-              <UserPlus size={12} />
-              {node.leaders_required_total}
-            </div>
-          </LeaderRequirementsTooltip>
         ) : (
-          <div className="text-gray-300 text-xs">-</div>
+          <div className="flex items-center justify-center gap-1">
+            {(node.leaders_required_total || 0) > 0 ? (
+              <LeaderRequirementsTooltip
+                node={node}
+                leadersRequiredTotal={node.leaders_required_total || 0}
+                leaderRequirementsSummary={node.leader_requirements_summary}
+              >
+                <div className="inline-flex items-center justify-center gap-1 px-2 py-1 rounded-full bg-indigo-100 text-indigo-700 text-xs font-semibold cursor-pointer hover:bg-indigo-200 transition-colors">
+                  <UserPlus size={12} />
+                  {node.leaders_required_total}
+                </div>
+              </LeaderRequirementsTooltip>
+            ) : (
+              <span className="text-gray-300 text-xs">-</span>
+            )}
+            <button
+              onClick={(e) => {
+                e.stopPropagation()
+                onCreateLeaderRequirement(node)
+              }}
+              className="p-1 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition-colors"
+              title="Create Leader Requirement"
+            >
+              <Plus size={14} />
+            </button>
+          </div>
         )}
       </td>
 
@@ -2328,6 +2343,9 @@ export default function ScalingPlannerV2() {
 
   // Scaling task create modal state
   const [scalingTaskNode, setScalingTaskNode] = useState<HierarchyNode | null>(null)
+
+  // Leader requirement modal state
+  const [leaderRequirementNode, setLeaderRequirementNode] = useState<HierarchyNode | null>(null)
 
   // Edit target modal state
   const [editTargetContext, setEditTargetContext] = useState<EditTargetContext | null>(null)
@@ -3508,6 +3526,7 @@ export default function ScalingPlannerV2() {
                   activeTeamFilter={filters.teams.length === 1 ? filters.teams[0] as TeamKey : undefined}
                   onOpenSprint={() => setSprintNode(rollupNode)}
                   onCreateTask={() => setScalingTaskNode(rollupNode)}
+                  onCreateLeaderRequirement={() => setLeaderRequirementNode(rollupNode)}
                   filterContext={rollupFilterContext}
                 />
                 {flattenedRows.length === 0 ? (
@@ -3533,6 +3552,7 @@ export default function ScalingPlannerV2() {
                       onAddAtAreaLevel={handleAddAtAreaLevel}
                       onExpandClub={handleExpandClub}
                       onCreateTask={handleCreateTask}
+                      onCreateLeaderRequirement={(n) => setLeaderRequirementNode(n)}
                       onEditStages={handleEditStages}
                       onOpenSprint={(n) => setSprintNode(n)}
                       taskSummary={getTaskSummary(node)}
@@ -3694,6 +3714,32 @@ export default function ScalingPlannerV2() {
             fetchTaskSummaries() // Refresh summaries after task creation
           }}
           context={getScalingTaskContext(scalingTaskNode)}
+        />
+      )}
+
+      {/* Leader Requirement Modal */}
+      {leaderRequirementNode && (
+        <LeaderRequirementModal
+          isOpen={leaderRequirementNode !== null}
+          onClose={() => setLeaderRequirementNode(null)}
+          onSaved={() => {
+            setLeaderRequirementNode(null)
+            // Refresh hierarchy data to update leaders_required_total
+            fetchHierarchyData()
+          }}
+          context={{
+            activity_id: leaderRequirementNode.type === 'activity' ? leaderRequirementNode.id :
+              leaderRequirementNode.type === 'city' || leaderRequirementNode.type === 'area' || leaderRequirementNode.type === 'club' || leaderRequirementNode.type === 'launch' ? leaderRequirementNode.activity_id : undefined,
+            activity_name: leaderRequirementNode.activity_name,
+            city_id: leaderRequirementNode.type === 'city' ? leaderRequirementNode.id :
+              leaderRequirementNode.type === 'area' || leaderRequirementNode.type === 'club' || leaderRequirementNode.type === 'launch' ? leaderRequirementNode.city_id : undefined,
+            city_name: leaderRequirementNode.city_name,
+            area_id: leaderRequirementNode.type === 'area' ? leaderRequirementNode.id :
+              leaderRequirementNode.type === 'club' || leaderRequirementNode.type === 'launch' ? leaderRequirementNode.area_id : undefined,
+            area_name: leaderRequirementNode.area_name,
+            club_id: (leaderRequirementNode.type === 'club' || leaderRequirementNode.type === 'launch') ? leaderRequirementNode.id : undefined,
+            club_name: (leaderRequirementNode.type === 'club' || leaderRequirementNode.type === 'launch') ? leaderRequirementNode.name : undefined
+          }}
         />
       )}
 

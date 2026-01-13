@@ -1,6 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { Sigma, Calendar, Plus } from 'lucide-react';
+import { Sigma, Calendar, Plus, UserPlus } from 'lucide-react';
 import type { HierarchyNode, StageProgress, StageKey, ScalingTaskSummary, RevenueStatus } from '../../../../shared/types';
 import { TEAMS, type TeamKey } from '../../../../shared/teamConfig';
 import { RevenueStatusPills, createEmptyRevenueStatus, rollupRevenueStatuses } from './RevenueStatusPills';
@@ -92,6 +92,7 @@ interface HierarchyRollupHeaderProps {
   // Callbacks for sprint and task actions
   onOpenSprint?: () => void;
   onCreateTask?: () => void;
+  onCreateLeaderRequirement?: () => void;
   // Current filter context to determine hierarchy level
   filterContext?: FilteredContext;
   // Task summary for the filtered data
@@ -133,6 +134,10 @@ function calculateTotals(nodes: HierarchyNode[]) {
   // Health distribution for rollup
   const healthDistribution = { green: 0, yellow: 0, red: 0, gray: 0 };
 
+  // Leaders required aggregation
+  let totalLeadersRequired = 0;
+  const leaderRequirementsSummary = { not_picked: 0, in_progress: 0, done: 0, deprioritised: 0, total_requirements: 0 };
+
   // Collect all revenue statuses for rollup
   const revenueStatuses: RevenueStatus[] = [];
 
@@ -164,6 +169,16 @@ function calculateTotals(nodes: HierarchyNode[]) {
       if (!node.is_launch && node.health_status) {
         healthDistribution[node.health_status as keyof typeof healthDistribution]++;
       }
+
+      // Aggregate leader requirements
+      totalLeadersRequired += node.leaders_required_total || 0;
+      if (node.leader_requirements_summary) {
+        leaderRequirementsSummary.not_picked += node.leader_requirements_summary.not_picked || 0;
+        leaderRequirementsSummary.in_progress += node.leader_requirements_summary.in_progress || 0;
+        leaderRequirementsSummary.done += node.leader_requirements_summary.done || 0;
+        leaderRequirementsSummary.deprioritised += node.leader_requirements_summary.deprioritised || 0;
+        leaderRequirementsSummary.total_requirements += node.leader_requirements_summary.total_requirements || 0;
+      }
     }
 
     if (node.children) {
@@ -193,7 +208,9 @@ function calculateTotals(nodes: HierarchyNode[]) {
     clubCount,
     progress: aggregatedProgress,
     revenueStatus: aggregatedRevenueStatus,
-    healthDistribution
+    healthDistribution,
+    leadersRequiredTotal: totalLeadersRequired,
+    leaderRequirementsSummary
   };
 }
 
@@ -265,6 +282,7 @@ export function HierarchyRollupHeader({
   activeTeamFilter,
   onOpenSprint,
   onCreateTask,
+  onCreateLeaderRequirement,
   filterContext,
   taskSummary
 }: HierarchyRollupHeaderProps) {
@@ -368,6 +386,29 @@ export function HierarchyRollupHeader({
       {/* Validation column - empty for totals row */}
       <td className="py-3 px-4">
         <span className="text-gray-400">—</span>
+      </td>
+
+      {/* Leaders column - shows rolled up leaders_required with create button */}
+      <td className="py-3 px-3 text-center">
+        <div className="flex items-center justify-center gap-1">
+          {totals.leadersRequiredTotal > 0 ? (
+            <div className="inline-flex items-center justify-center gap-1 px-2 py-1 rounded-full bg-indigo-100 text-indigo-700 text-xs font-semibold">
+              <UserPlus size={12} />
+              {totals.leadersRequiredTotal}
+            </div>
+          ) : (
+            <span className="text-gray-300 text-xs">-</span>
+          )}
+          {onCreateLeaderRequirement && (
+            <button
+              onClick={onCreateLeaderRequirement}
+              className="p-1 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition-colors"
+              title="Create Leader Requirement"
+            >
+              <Plus size={14} />
+            </button>
+          )}
+        </div>
       </td>
 
       {/* Tasks column - Sprint and Task buttons matching hierarchy rows */}
