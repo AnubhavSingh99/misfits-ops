@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import {
   Loader2,
@@ -350,8 +350,46 @@ export function LeaderRequirementsTooltip({
   // Only show tooltip if there are leader requirements
   const shouldShowTooltip = leadersRequiredTotal > 0;
 
-  // Can change status only at club level
-  const canChangeStatus = node.type === 'club' || node.type === 'launch';
+  // Allow status change at all hierarchy levels (each requirement is individual)
+  const canChangeStatus = true;
+
+  // Calculate effort type summary from loaded requirements
+  const effortSummary = useMemo(() => {
+    const summary = {
+      growth: { total: 0, not_picked: 0, in_progress: 0, done: 0, deprioritised: 0 },
+      platform: { total: 0, not_picked: 0, in_progress: 0, done: 0, deprioritised: 0 },
+      existing: { total: 0, not_picked: 0, in_progress: 0, done: 0, deprioritised: 0 }
+    };
+
+    requirements.forEach(req => {
+      const leaders = (req as any).leaders_required || 1;
+      const status = req.status || 'not_picked';
+
+      if (req.growth_team_effort) {
+        summary.growth.total += leaders;
+        if (status === 'not_picked') summary.growth.not_picked += leaders;
+        else if (status === 'in_progress') summary.growth.in_progress += leaders;
+        else if (status === 'done') summary.growth.done += leaders;
+        else if (status === 'deprioritised') summary.growth.deprioritised += leaders;
+      }
+      if (req.platform_team_effort) {
+        summary.platform.total += leaders;
+        if (status === 'not_picked') summary.platform.not_picked += leaders;
+        else if (status === 'in_progress') summary.platform.in_progress += leaders;
+        else if (status === 'done') summary.platform.done += leaders;
+        else if (status === 'deprioritised') summary.platform.deprioritised += leaders;
+      }
+      if ((req as any).existing_leader_effort) {
+        summary.existing.total += leaders;
+        if (status === 'not_picked') summary.existing.not_picked += leaders;
+        else if (status === 'in_progress') summary.existing.in_progress += leaders;
+        else if (status === 'done') summary.existing.done += leaders;
+        else if (status === 'deprioritised') summary.existing.deprioritised += leaders;
+      }
+    });
+
+    return summary;
+  }, [requirements]);
 
   // Fetch requirements when hovering
   const fetchRequirements = useCallback(async () => {
@@ -631,6 +669,29 @@ export function LeaderRequirementsTooltip({
                   </span>
                 )}
               </div>
+              {/* Effort Type Summary - only show when requirements are loaded */}
+              {requirements.length > 0 && (effortSummary.growth.total > 0 || effortSummary.platform.total > 0 || effortSummary.existing.total > 0) && (
+                <div className="flex flex-wrap items-center gap-2 mt-2 pt-2 border-t border-indigo-100/50">
+                  {effortSummary.growth.total > 0 && (
+                    <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-violet-100 text-violet-700 text-[9px] font-semibold">
+                      <span className="w-1.5 h-1.5 rounded-full bg-violet-500" />
+                      Growth: {effortSummary.growth.done}/{effortSummary.growth.total}
+                    </span>
+                  )}
+                  {effortSummary.platform.total > 0 && (
+                    <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-cyan-100 text-cyan-700 text-[9px] font-semibold">
+                      <span className="w-1.5 h-1.5 rounded-full bg-cyan-500" />
+                      Platform: {effortSummary.platform.done}/{effortSummary.platform.total}
+                    </span>
+                  )}
+                  {effortSummary.existing.total > 0 && (
+                    <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 text-[9px] font-semibold">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                      Existing: {effortSummary.existing.done}/{effortSummary.existing.total}
+                    </span>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Content - scrollable area */}

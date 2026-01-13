@@ -38,7 +38,8 @@ import type {
   ScalingTaskSummary,
   LeaderRequirement
 } from '../../shared/types'
-import { SprintViewModal, TaskSummaryCell, ScalingTaskCreateModal, SummaryTiles, HierarchyFilterBar, HierarchyRollupHeader, RevenueStatusPills, DayTypeTags, StageInfoModal, InfoIconButton, buildRolledUpSummaryMap, buildSummaryKey, type HierarchyFilters, type HierarchyLevel, type HealthFilter, MeetupDetailsTooltip, ExpandClubModal, AddChoiceModal, type ExpandClubTargetData, WeekSelector, getWeekBounds, formatWeekLabel, type WeekOption, HealthDot, HealthDistributionBar, HealthInfoModal, type HealthStatus, TaskListTooltip, LeaderRequirementsTooltip, LeaderRequirementModal } from '../components/scaling'
+import { SprintViewModal, TaskSummaryCell, ScalingTaskCreateModal, SummaryTiles, HierarchyFilterBar, HierarchyRollupHeader, RevenueStatusPills, DayTypeTags, StageInfoModal, InfoIconButton, buildRolledUpSummaryMap, buildSummaryKey, type HierarchyFilters, type HierarchyLevel, type HealthFilter, MeetupDetailsTooltip, ExpandClubModal, AddChoiceModal, type ExpandClubTargetData, WeekSelector, getWeekBounds, formatWeekLabel, type WeekOption, HealthDot, HealthDistributionBar, HealthInfoModal, type HealthStatus, TaskListTooltip, LeaderRequirementsTooltip } from '../components/scaling'
+import { CreateLeaderRequirementModal } from '../components/scaling/CreateLeaderRequirementModal'
 import { UserPlus } from 'lucide-react'
 import { getTeamForClub, type TeamKey } from '../../shared/teamConfig'
 import { DimensionalTargetsService } from '../services/api'
@@ -3733,10 +3734,10 @@ export default function ScalingPlannerV2() {
 
       {/* Leader Requirement Modal */}
       {leaderRequirementNode && (
-        <LeaderRequirementModal
+        <CreateLeaderRequirementModal
           isOpen={leaderRequirementNode !== null}
           onClose={() => setLeaderRequirementNode(null)}
-          onSaved={() => {
+          onCreated={() => {
             setLeaderRequirementNode(null)
             // Refresh hierarchy data to update leaders_required_total
             fetchHierarchyData()
