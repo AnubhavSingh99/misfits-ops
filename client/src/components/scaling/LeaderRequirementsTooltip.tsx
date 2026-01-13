@@ -14,7 +14,8 @@ import {
   ListTodo,
   Zap,
   Settings,
-  UserPlus
+  UserPlus,
+  Plus
 } from 'lucide-react';
 import type { LeaderRequirement, HierarchyNode, RequirementStatus, ScalingTask } from '../../../../shared/types';
 import { TEAMS, getTeamByMember, type TeamKey } from '../../../../shared/teamConfig';
@@ -74,7 +75,8 @@ function getTeamAccent(team: string | null | undefined): string {
 function CompactRequirementTile({
   requirement,
   onStatusChange,
-  canChangeStatus
+  canChangeStatus,
+  onCreateTask
 }: {
   requirement: LeaderRequirement & {
     leaders_required?: number;
@@ -83,6 +85,7 @@ function CompactRequirementTile({
   };
   onStatusChange?: (req: LeaderRequirement, newStatus: RequirementStatus) => void;
   canChangeStatus: boolean;
+  onCreateTask?: (requirement: LeaderRequirement) => void;
 }) {
   const [statusDropdownOpen, setStatusDropdownOpen] = useState(false);
   const [tasksExpanded, setTasksExpanded] = useState(false);
@@ -141,7 +144,7 @@ function CompactRequirementTile({
       {/* Main Row */}
       <div className="relative">
         {/* Grid Layout */}
-        <div className="relative grid grid-cols-[auto_1fr_auto_auto] items-center gap-3 px-3 py-2.5">
+        <div className="relative grid grid-cols-[auto_1fr_auto_auto_auto] items-center gap-2 px-3 py-2.5">
           {/* Col 1: Leaders Required Badge */}
           <div className="flex items-center gap-1.5 w-[50px]">
             <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700 text-[10px] font-bold">
@@ -220,7 +223,23 @@ function CompactRequirementTile({
             </button>
           </div>
 
-          {/* Col 4: Team Badge */}
+          {/* Col 4: Create Task Button */}
+          <div className="w-6 flex justify-center">
+            {onCreateTask && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onCreateTask(requirement);
+                }}
+                className="p-1 rounded text-gray-400 hover:text-green-600 hover:bg-green-50 transition-colors"
+                title="Create Task for this Requirement"
+              >
+                <Plus className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
+
+          {/* Col 5: Team Badge */}
           <div className="w-7 flex justify-center">
             {requirement.team ? (
               <div
@@ -304,6 +323,8 @@ interface LeaderRequirementsTooltipProps {
   } | null;
   children: React.ReactNode;
   onRefresh?: () => void;
+  onCreateTask?: (node: HierarchyNode) => void;
+  onCreateTaskForRequirement?: (requirement: LeaderRequirement, node: HierarchyNode) => void;
 }
 
 export function LeaderRequirementsTooltip({
@@ -311,7 +332,9 @@ export function LeaderRequirementsTooltip({
   leadersRequiredTotal,
   leaderRequirementsSummary,
   children,
-  onRefresh
+  onRefresh,
+  onCreateTask,
+  onCreateTaskForRequirement
 }: LeaderRequirementsTooltipProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [requirements, setRequirements] = useState<(LeaderRequirement & { leaders_required?: number; existing_leader_effort?: boolean; linked_tasks?: ScalingTask[] })[]>([]);
@@ -562,9 +585,24 @@ export function LeaderRequirementsTooltip({
                     Leader Requirements ({leadersRequiredTotal})
                   </span>
                 </div>
-                <span className="text-[10px] font-medium text-gray-500 bg-white px-2 py-0.5 rounded-full border border-gray-200 max-w-[200px] truncate">
-                  {node.name}
-                </span>
+                <div className="flex items-center gap-2">
+                  {onCreateTask && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setIsOpen(false);
+                        onCreateTask(node);
+                      }}
+                      className="inline-flex items-center gap-1 px-2 py-1 text-[10px] font-semibold text-green-700 bg-green-100 hover:bg-green-200 rounded-md transition-colors"
+                    >
+                      <Plus className="h-3 w-3" />
+                      Create Task
+                    </button>
+                  )}
+                  <span className="text-[10px] font-medium text-gray-500 bg-white px-2 py-0.5 rounded-full border border-gray-200 max-w-[150px] truncate">
+                    {node.name}
+                  </span>
+                </div>
               </div>
               {/* Summary Stats */}
               <div className="flex items-center gap-3 mt-2">
@@ -615,6 +653,10 @@ export function LeaderRequirementsTooltip({
                     requirement={req}
                     onStatusChange={canChangeStatus ? handleStatusChange : undefined}
                     canChangeStatus={canChangeStatus}
+                    onCreateTask={onCreateTaskForRequirement ? (r) => {
+                      setIsOpen(false);
+                      onCreateTaskForRequirement(r, node);
+                    } : undefined}
                   />
                 ))
               )}

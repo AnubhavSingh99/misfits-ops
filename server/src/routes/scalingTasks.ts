@@ -124,10 +124,46 @@ router.get('/', async (req, res) => {
 
     const result = await queryLocal(query, params);
 
-    // Add team colors to each task
+    // If we have tasks, fetch their linked leader requirements
+    let leaderReqsByTask: Record<number, any[]> = {};
+    if (result.rows.length > 0) {
+      const taskIds = result.rows.map((t: any) => t.id);
+      const leaderReqQuery = `
+        SELECT
+          stlr.task_id,
+          lr.id,
+          lr.name,
+          lr.status,
+          lr.growth_team_effort,
+          lr.platform_team_effort,
+          lr.existing_leader_effort,
+          lr.leaders_required
+        FROM scaling_task_leader_requirements stlr
+        JOIN leader_requirements lr ON stlr.leader_requirement_id = lr.id
+        WHERE stlr.task_id = ANY($1)
+      `;
+      const leaderReqResult = await queryLocal(leaderReqQuery, [taskIds]);
+      leaderReqResult.rows.forEach((req: any) => {
+        if (!leaderReqsByTask[req.task_id]) {
+          leaderReqsByTask[req.task_id] = [];
+        }
+        leaderReqsByTask[req.task_id].push({
+          id: req.id,
+          name: req.name,
+          status: req.status,
+          growth_team_effort: req.growth_team_effort,
+          platform_team_effort: req.platform_team_effort,
+          existing_leader_effort: req.existing_leader_effort,
+          leaders_required: req.leaders_required
+        });
+      });
+    }
+
+    // Add team colors and linked requirements to each task
     const tasksWithColors = result.rows.map((task: any) => ({
       ...task,
-      team_color: getTeamColor(task.assigned_team_lead)
+      team_color: getTeamColor(task.assigned_team_lead),
+      linked_leader_requirements: leaderReqsByTask[task.id] || []
     }));
 
     res.json({

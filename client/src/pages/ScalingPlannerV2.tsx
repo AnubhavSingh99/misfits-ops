@@ -35,7 +35,8 @@ import type {
   TrendsResponse,
   StageProgress,
   ValidationStatus,
-  ScalingTaskSummary
+  ScalingTaskSummary,
+  LeaderRequirement
 } from '../../shared/types'
 import { SprintViewModal, TaskSummaryCell, ScalingTaskCreateModal, SummaryTiles, HierarchyFilterBar, HierarchyRollupHeader, RevenueStatusPills, DayTypeTags, StageInfoModal, InfoIconButton, buildRolledUpSummaryMap, buildSummaryKey, type HierarchyFilters, type HierarchyLevel, type HealthFilter, MeetupDetailsTooltip, ExpandClubModal, AddChoiceModal, type ExpandClubTargetData, WeekSelector, getWeekBounds, formatWeekLabel, type WeekOption, HealthDot, HealthDistributionBar, HealthInfoModal, type HealthStatus, TaskListTooltip, LeaderRequirementsTooltip, LeaderRequirementModal } from '../components/scaling'
 import { UserPlus } from 'lucide-react'
@@ -1956,6 +1957,7 @@ interface HierarchyRowProps {
   onAddAtAreaLevel: (node: HierarchyNode) => void  // For areas: open choice modal (new launch vs expand)
   onExpandClub: (node: HierarchyNode) => void  // For clubs: add target (opens ExpandClubModal)
   onCreateTask: (node: HierarchyNode) => void
+  onCreateTaskForRequirement: (requirement: LeaderRequirement, node: HierarchyNode) => void  // For creating task with pre-linked requirement
   onCreateLeaderRequirement: (node: HierarchyNode) => void  // For creating leader requirement
   onEditStages: (node: HierarchyNode) => void
   onOpenSprint: (node: HierarchyNode) => void  // For opening sprint modal
@@ -1965,7 +1967,7 @@ interface HierarchyRowProps {
   hideTooltips?: boolean                       // When true, force hide all tooltips (e.g., when modal opens)
 }
 
-function HierarchyRow({ node, level, expanded, onToggle, onEditTarget, onDeleteTarget, onAddAtAreaLevel, onExpandClub, onCreateTask, onCreateLeaderRequirement, onEditStages, onOpenSprint, taskSummary, weekBounds, tooltipRefreshKey, hideTooltips }: HierarchyRowProps) {
+function HierarchyRow({ node, level, expanded, onToggle, onEditTarget, onDeleteTarget, onAddAtAreaLevel, onExpandClub, onCreateTask, onCreateTaskForRequirement, onCreateLeaderRequirement, onEditStages, onOpenSprint, taskSummary, weekBounds, tooltipRefreshKey, hideTooltips }: HierarchyRowProps) {
   const hasChildren = node.children && node.children.length > 0
   const isLaunch = node.is_launch || node.type === 'launch'
   const isTarget = node.type === 'target'
@@ -2196,6 +2198,8 @@ function HierarchyRow({ node, level, expanded, onToggle, onEditTarget, onDeleteT
                 node={node}
                 leadersRequiredTotal={node.leaders_required_total || 0}
                 leaderRequirementsSummary={node.leader_requirements_summary}
+                onCreateTask={onCreateTask}
+                onCreateTaskForRequirement={onCreateTaskForRequirement}
               >
                 <div className="inline-flex items-center justify-center gap-1 px-2 py-1 rounded-full bg-indigo-100 text-indigo-700 text-xs font-semibold cursor-pointer hover:bg-indigo-200 transition-colors">
                   <UserPlus size={12} />
@@ -2343,6 +2347,7 @@ export default function ScalingPlannerV2() {
 
   // Scaling task create modal state
   const [scalingTaskNode, setScalingTaskNode] = useState<HierarchyNode | null>(null)
+  const [prelinkedRequirement, setPrelinkedRequirement] = useState<LeaderRequirement | null>(null)
 
   // Leader requirement modal state
   const [leaderRequirementNode, setLeaderRequirementNode] = useState<HierarchyNode | null>(null)
@@ -3552,6 +3557,10 @@ export default function ScalingPlannerV2() {
                       onAddAtAreaLevel={handleAddAtAreaLevel}
                       onExpandClub={handleExpandClub}
                       onCreateTask={handleCreateTask}
+                      onCreateTaskForRequirement={(req, n) => {
+                        setPrelinkedRequirement(req)
+                        setScalingTaskNode(n)
+                      }}
                       onCreateLeaderRequirement={(n) => setLeaderRequirementNode(n)}
                       onEditStages={handleEditStages}
                       onOpenSprint={(n) => setSprintNode(n)}
@@ -3708,12 +3717,17 @@ export default function ScalingPlannerV2() {
       {scalingTaskNode && (
         <ScalingTaskCreateModal
           isOpen={scalingTaskNode !== null}
-          onClose={() => setScalingTaskNode(null)}
+          onClose={() => {
+            setScalingTaskNode(null)
+            setPrelinkedRequirement(null)
+          }}
           onCreated={() => {
             setScalingTaskNode(null)
+            setPrelinkedRequirement(null)
             fetchTaskSummaries() // Refresh summaries after task creation
           }}
           context={getScalingTaskContext(scalingTaskNode)}
+          prelinkedLeaderRequirement={prelinkedRequirement}
         />
       )}
 

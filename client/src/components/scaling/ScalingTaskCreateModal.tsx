@@ -58,6 +58,7 @@ interface ScalingTaskCreateModalProps {
   onCreated: () => void;
   context: CreateContext;
   defaultWeekStart?: string;
+  prelinkedLeaderRequirement?: LeaderRequirement | null;
 }
 
 export function ScalingTaskCreateModal({
@@ -65,7 +66,8 @@ export function ScalingTaskCreateModal({
   onClose,
   onCreated,
   context,
-  defaultWeekStart
+  defaultWeekStart,
+  prelinkedLeaderRequirement
 }: ScalingTaskCreateModalProps) {
   const [loading, setLoading] = useState(false);
   const [assignees, setAssignees] = useState<TaskAssignee[]>([]);
@@ -118,6 +120,14 @@ export function ScalingTaskCreateModal({
     venueReqRef.current = reqs;
     setSelectedVenueRequirements(reqs);
   };
+
+  // Auto-add prelinked requirement when modal opens
+  useEffect(() => {
+    if (isOpen && prelinkedLeaderRequirement) {
+      // Add to selected requirements if not already present
+      updateLeaderRequirements([prelinkedLeaderRequirement]);
+    }
+  }, [isOpen, prelinkedLeaderRequirement]);
 
   // SINGLE SOURCE OF TRUTH for week dates
   // Week starts on Monday (0 = Monday, 6 = Sunday)

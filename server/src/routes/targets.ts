@@ -3140,6 +3140,8 @@ router.get('/v2/hierarchy', async (req, res) => {
           club_count: 0,
           last_4w_revenue_total: 0,
           revenue_status_list: [] as RevenueStatus[], // Collect for rollup
+          leaders_required_total: 0,
+          leader_requirements_summary: { total_requirements: 0, not_picked: 0, deprioritised: 0, in_progress: 0, done: 0 },
           children: new Map<number, any>()
         });
       }
@@ -3173,6 +3175,8 @@ router.get('/v2/hierarchy', async (req, res) => {
           club_count: 0,
           last_4w_revenue_total: 0,
           revenue_status_list: [] as RevenueStatus[], // Collect for rollup
+          leaders_required_total: 0,
+          leader_requirements_summary: { total_requirements: 0, not_picked: 0, deprioritised: 0, in_progress: 0, done: 0 },
           children: new Map<number, any>()
         });
       }
@@ -3207,6 +3211,8 @@ router.get('/v2/hierarchy', async (req, res) => {
           club_count: 0,
           last_4w_revenue_total: 0,
           revenue_status_list: [] as RevenueStatus[], // Collect for rollup
+          leaders_required_total: 0,
+          leader_requirements_summary: { total_requirements: 0, not_picked: 0, deprioritised: 0, in_progress: 0, done: 0 },
           children: []
         });
       }
@@ -3348,6 +3354,34 @@ router.get('/v2/hierarchy', async (req, res) => {
       // Roll up progress only if club has targets
       if (hasTargets) {
         areaNode.progress_summary = sumProgress([areaNode.progress_summary, aggregatedProgress]);
+      }
+
+      // Roll up leader requirements to area, city, activity
+      const clubLeaderReq = leaderRequirementsMap.get(clubId);
+      if (clubLeaderReq) {
+        // Area rollup
+        areaNode.leaders_required_total += clubLeaderReq.leaders_required_total || 0;
+        areaNode.leader_requirements_summary.total_requirements += clubLeaderReq.total_requirements || 0;
+        areaNode.leader_requirements_summary.not_picked += clubLeaderReq.not_picked || 0;
+        areaNode.leader_requirements_summary.deprioritised += clubLeaderReq.deprioritised || 0;
+        areaNode.leader_requirements_summary.in_progress += clubLeaderReq.in_progress || 0;
+        areaNode.leader_requirements_summary.done += clubLeaderReq.done || 0;
+
+        // City rollup
+        cityNode.leaders_required_total += clubLeaderReq.leaders_required_total || 0;
+        cityNode.leader_requirements_summary.total_requirements += clubLeaderReq.total_requirements || 0;
+        cityNode.leader_requirements_summary.not_picked += clubLeaderReq.not_picked || 0;
+        cityNode.leader_requirements_summary.deprioritised += clubLeaderReq.deprioritised || 0;
+        cityNode.leader_requirements_summary.in_progress += clubLeaderReq.in_progress || 0;
+        cityNode.leader_requirements_summary.done += clubLeaderReq.done || 0;
+
+        // Activity rollup
+        activityNode.leaders_required_total += clubLeaderReq.leaders_required_total || 0;
+        activityNode.leader_requirements_summary.total_requirements += clubLeaderReq.total_requirements || 0;
+        activityNode.leader_requirements_summary.not_picked += clubLeaderReq.not_picked || 0;
+        activityNode.leader_requirements_summary.deprioritised += clubLeaderReq.deprioritised || 0;
+        activityNode.leader_requirements_summary.in_progress += clubLeaderReq.in_progress || 0;
+        activityNode.leader_requirements_summary.done += clubLeaderReq.done || 0;
       }
     }
 

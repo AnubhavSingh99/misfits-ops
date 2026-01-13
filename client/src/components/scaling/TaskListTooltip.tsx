@@ -10,7 +10,8 @@ import {
   MapPin,
   Home,
   Send,
-  X
+  X,
+  UserPlus
 } from 'lucide-react';
 import type { ScalingTask, HierarchyNode, ScalingTaskSummary } from '../../../../shared/types';
 import { TEAMS, getTeamByMember, type TeamKey } from '../../../../shared/teamConfig';
@@ -385,6 +386,26 @@ function CompactTaskTile({
                 </span>
               )}
             </div>
+            {/* Linked Leader Requirements Row */}
+            {task.linked_leader_requirements && task.linked_leader_requirements.length > 0 && (
+              <div className="flex items-center gap-1 mt-1 flex-wrap">
+                <UserPlus className="h-2.5 w-2.5 text-indigo-400 flex-shrink-0" />
+                {task.linked_leader_requirements.slice(0, 3).map((req) => (
+                  <span
+                    key={req.id}
+                    className="inline-flex items-center px-1.5 py-0.5 rounded text-[8px] font-medium bg-indigo-50 text-indigo-600 whitespace-nowrap max-w-[100px] border border-indigo-100"
+                    title={req.name}
+                  >
+                    <span className="truncate">{req.name}</span>
+                  </span>
+                ))}
+                {task.linked_leader_requirements.length > 3 && (
+                  <span className="text-[8px] text-indigo-400 font-medium">
+                    +{task.linked_leader_requirements.length - 3}
+                  </span>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Col 3: Assignee (fixed width) */}
