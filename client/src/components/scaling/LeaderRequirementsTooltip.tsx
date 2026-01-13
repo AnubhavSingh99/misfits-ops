@@ -15,9 +15,7 @@ import {
   Zap,
   Settings,
   UserPlus,
-  Plus,
-  Pencil,
-  Trash2
+  Plus
 } from 'lucide-react';
 import type { LeaderRequirement, HierarchyNode, RequirementStatus, ScalingTask } from '../../../../shared/types';
 import { TEAMS, getTeamByMember, type TeamKey } from '../../../../shared/teamConfig';
@@ -78,9 +76,7 @@ function CompactRequirementTile({
   requirement,
   onStatusChange,
   canChangeStatus,
-  onCreateTask,
-  onEdit,
-  onDelete
+  onCreateTask
 }: {
   requirement: LeaderRequirement & {
     leaders_required?: number;
@@ -90,8 +86,6 @@ function CompactRequirementTile({
   onStatusChange?: (req: LeaderRequirement, newStatus: RequirementStatus) => void;
   canChangeStatus: boolean;
   onCreateTask?: (requirement: LeaderRequirement) => void;
-  onEdit?: (requirement: LeaderRequirement) => void;
-  onDelete?: (requirement: LeaderRequirement) => void;
 }) {
   const [statusDropdownOpen, setStatusDropdownOpen] = useState(false);
   const [tasksExpanded, setTasksExpanded] = useState(false);
@@ -150,7 +144,7 @@ function CompactRequirementTile({
       {/* Main Row */}
       <div className="relative">
         {/* Grid Layout */}
-        <div className="relative grid grid-cols-[auto_1fr_auto_auto_auto_auto_auto] items-center gap-2 px-3 py-2.5">
+        <div className="relative grid grid-cols-[auto_1fr_auto_auto_auto] items-center gap-2 px-3 py-2.5">
           {/* Col 1: Leaders Required Badge */}
           <div className="flex items-center gap-1.5 w-[50px]">
             <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700 text-[10px] font-bold">
@@ -245,39 +239,7 @@ function CompactRequirementTile({
             )}
           </div>
 
-          {/* Col 5: Edit Button */}
-          <div className="w-6 flex justify-center">
-            {onEdit && (
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onEdit(requirement);
-                }}
-                className="p-1 rounded text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors"
-                title="Edit Requirement"
-              >
-                <Pencil className="h-3.5 w-3.5" />
-              </button>
-            )}
-          </div>
-
-          {/* Col 6: Delete Button */}
-          <div className="w-6 flex justify-center">
-            {onDelete && (
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onDelete(requirement);
-                }}
-                className="p-1 rounded text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors"
-                title="Delete Requirement"
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-              </button>
-            )}
-          </div>
-
-          {/* Col 7: Team Badge */}
+          {/* Col 5: Team Badge */}
           <div className="w-7 flex justify-center">
             {requirement.team ? (
               <div
@@ -363,8 +325,6 @@ interface LeaderRequirementsTooltipProps {
   onRefresh?: () => void;
   onCreateTask?: (node: HierarchyNode) => void;
   onCreateTaskForRequirement?: (requirement: LeaderRequirement, node: HierarchyNode) => void;
-  onEditRequirement?: (requirement: LeaderRequirement) => void;
-  onDeleteRequirement?: (requirement: LeaderRequirement) => Promise<boolean>;
 }
 
 export function LeaderRequirementsTooltip({
@@ -374,9 +334,7 @@ export function LeaderRequirementsTooltip({
   children,
   onRefresh,
   onCreateTask,
-  onCreateTaskForRequirement,
-  onEditRequirement,
-  onDeleteRequirement
+  onCreateTaskForRequirement
 }: LeaderRequirementsTooltipProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [requirements, setRequirements] = useState<(LeaderRequirement & { leaders_required?: number; existing_leader_effort?: boolean; linked_tasks?: ScalingTask[] })[]>([]);
@@ -501,28 +459,6 @@ export function LeaderRequirementsTooltip({
       setRequirements(prev => prev.map(r =>
         r.id === req.id ? { ...r, status: originalStatus } : r
       ));
-    }
-  };
-
-  // Handle edit requirement
-  const handleEdit = (req: LeaderRequirement) => {
-    setIsOpen(false);
-    onEditRequirement?.(req);
-  };
-
-  // Handle delete requirement
-  const handleDelete = async (req: LeaderRequirement) => {
-    if (!onDeleteRequirement) return;
-
-    // Show confirmation
-    const confirmed = window.confirm(`Are you sure you want to delete "${req.name}"? This action cannot be undone.`);
-    if (!confirmed) return;
-
-    const success = await onDeleteRequirement(req);
-    if (success) {
-      // Remove from local state
-      setRequirements(prev => prev.filter(r => r.id !== req.id));
-      onRefresh?.();
     }
   };
 
@@ -782,8 +718,6 @@ export function LeaderRequirementsTooltip({
                       setIsOpen(false);
                       onCreateTaskForRequirement(r, node);
                     } : undefined}
-                    onEdit={onEditRequirement ? handleEdit : undefined}
-                    onDelete={onDeleteRequirement ? handleDelete : undefined}
                   />
                 ))
               )}
