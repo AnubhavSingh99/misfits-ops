@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { Search, Plus, X, User, MapPin, ChevronDown, Check, Loader2 } from 'lucide-react';
+import { Search, Plus, X, User, MapPin, ChevronDown, Check, Loader2, Users } from 'lucide-react';
 import type { LeaderRequirement, VenueRequirement, CreateRequirementRequest } from '../../../../shared/types';
 import { getTeamForClub } from '../../../../shared/teamConfig';
 
@@ -336,6 +336,8 @@ function CreateRequirementModal({ type, context, onClose, onCreate }: CreateRequ
   const [description, setDescription] = useState('');
   const [growthEffort, setGrowthEffort] = useState(false);
   const [platformEffort, setPlatformEffort] = useState(false);
+  const [existingLeaderEffort, setExistingLeaderEffort] = useState(false);
+  const [leadersRequired, setLeadersRequired] = useState(1);
   const [creating, setCreating] = useState(false);
 
   const typeLabel = type === 'leader' ? 'Leader' : 'Venue';
@@ -361,6 +363,8 @@ function CreateRequirementModal({ type, context, onClose, onCreate }: CreateRequ
       club_name: context.club_name,
       growth_team_effort: growthEffort,
       platform_team_effort: platformEffort,
+      existing_leader_effort: type === 'leader' ? existingLeaderEffort : undefined,
+      leaders_required: type === 'leader' ? leadersRequired : undefined,
       team: autoTeam || undefined
     });
     setCreating(false);
@@ -437,15 +441,34 @@ function CreateRequirementModal({ type, context, onClose, onCreate }: CreateRequ
               />
             </div>
 
+            {/* Leaders Required - Only for leader type */}
+            {type === 'leader' && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  <Users className="inline h-4 w-4 mr-1" />
+                  Leaders Required
+                </label>
+                <input
+                  type="number"
+                  min="1"
+                  max="50"
+                  value={leadersRequired}
+                  onChange={(e) => setLeadersRequired(parseInt(e.target.value) || 1)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                />
+                <p className="mt-1 text-xs text-gray-500">How many leaders are needed?</p>
+              </div>
+            )}
+
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">Effort Required</label>
-              <div className="flex gap-4">
+              <div className="flex flex-wrap gap-4">
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input
                     type="checkbox"
                     checked={growthEffort}
                     onChange={(e) => setGrowthEffort(e.target.checked)}
-                    className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                    className="w-4 h-4 rounded border-gray-300 text-violet-600 focus:ring-violet-500"
                   />
                   <span className="text-sm text-gray-700">Growth Team</span>
                 </label>
@@ -454,10 +477,21 @@ function CreateRequirementModal({ type, context, onClose, onCreate }: CreateRequ
                     type="checkbox"
                     checked={platformEffort}
                     onChange={(e) => setPlatformEffort(e.target.checked)}
-                    className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                    className="w-4 h-4 rounded border-gray-300 text-cyan-600 focus:ring-cyan-500"
                   />
                   <span className="text-sm text-gray-700">Platform Team</span>
                 </label>
+                {type === 'leader' && (
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={existingLeaderEffort}
+                      onChange={(e) => setExistingLeaderEffort(e.target.checked)}
+                      className="w-4 h-4 rounded border-gray-300 text-emerald-600 focus:ring-emerald-500"
+                    />
+                    <span className="text-sm text-gray-700">Existing Leader</span>
+                  </label>
+                )}
               </div>
             </div>
 
