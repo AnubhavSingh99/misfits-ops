@@ -199,22 +199,11 @@ export function CreateLeaderRequirementModal({
     if (selectedActivityId && selectedCityId && selectedAreaId) {
       const fetchClubsAndLaunches = async () => {
         try {
-          const res = await fetch(`${API_BASE}/requirements/clubs-and-launches?activity_id=${selectedActivityId}&city_id=${selectedCityId}&area_id=${selectedAreaId}`);
+          // Use the original endpoint which already handles both clubs and launches
+          const res = await fetch(`${API_BASE}/scaling-tasks/filters/clubs?activity_ids=${selectedActivityId}&city_ids=${selectedCityId}&area_ids=${selectedAreaId}`);
           const data = await res.json();
           if (data.success) {
-            // Combine clubs and launches into options
-            const clubOptions = (data.clubs || []).map((c: any) => ({
-              id: c.id,
-              name: c.name,
-              is_launch: false
-            }));
-            const launchOptions = (data.launches || []).map((l: any) => ({
-              id: `launch_${l.id}`,
-              name: `🚀 ${l.name}`,
-              is_launch: true,
-              launch_id: l.id
-            }));
-            setClubs([...clubOptions, ...launchOptions]);
+            setClubs(data.options || []);
           }
         } catch (err) {
           console.error('Failed to fetch clubs and launches:', err);

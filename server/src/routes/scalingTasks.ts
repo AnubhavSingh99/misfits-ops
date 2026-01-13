@@ -1517,6 +1517,9 @@ router.get('/filters/clubs', async (req, res) => {
     // Also fetch launches from local database that match the filters
     let launches: any[] = [];
     if (areaNames.length > 0 && activityNames.length > 0) {
+      // Use case-insensitive matching for area and activity names
+      const lowerAreaNames = areaNames.map(n => n.toLowerCase());
+      const lowerActivityNames = activityNames.map(n => n.toLowerCase());
       const launchResult = await queryLocal(`
         SELECT
           id,
@@ -1524,10 +1527,10 @@ router.get('/filters/clubs', async (req, res) => {
           'launch' as type
         FROM new_club_launches
         WHERE launch_status IN ('planned', 'in_progress')
-          AND planned_area = ANY($1)
-          AND activity_name = ANY($2)
+          AND LOWER(planned_area) = ANY($1)
+          AND LOWER(activity_name) = ANY($2)
         ORDER BY planned_club_name
-      `, [areaNames, activityNames]);
+      `, [lowerAreaNames, lowerActivityNames]);
       launches = launchResult.rows.map((l: any) => ({
         id: `launch_${l.id}`,
         name: `🚀 ${l.name}`,

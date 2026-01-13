@@ -1090,6 +1090,24 @@ router.get('/clubs-and-launches', async (req: Request, res: Response) => {
     // Import queryProduction for reading from production DB
     const { queryProduction } = await import('../services/database');
 
+    // First, resolve names from IDs for launch filtering
+    let activityName: string | null = null;
+    let cityName: string | null = null;
+    let areaName: string | null = null;
+
+    if (activity_id) {
+      const activityResult = await queryProduction('SELECT name FROM activity WHERE pk = $1', [activity_id]);
+      if (activityResult.rows.length > 0) activityName = activityResult.rows[0].name;
+    }
+    if (city_id) {
+      const cityResult = await queryProduction('SELECT name FROM city WHERE pk = $1', [city_id]);
+      if (cityResult.rows.length > 0) cityName = cityResult.rows[0].name;
+    }
+    if (area_id) {
+      const areaResult = await queryProduction('SELECT name FROM area WHERE id = $1', [area_id]);
+      if (areaResult.rows.length > 0) areaName = areaResult.rows[0].name;
+    }
+
     // Build club query from production database
     let clubQuery = `
       SELECT
@@ -1132,34 +1150,32 @@ router.get('/clubs-and-launches', async (req: Request, res: Response) => {
     clubQuery += ` ORDER BY c.name LIMIT 50`;
 
     // Build launch query from local database
+    // Note: new_club_launches stores activity_name, planned_city, planned_area as strings
     let launchQuery = `
       SELECT
         id,
         COALESCE(planned_club_name, activity_name || ' Launch') as name,
         'launch' as type,
-        activity_id,
         activity_name,
-        city_id,
-        city_name,
-        area_id,
-        area_name
+        planned_city as city_name,
+        planned_area as area_name
       FROM new_club_launches
       WHERE launch_status IN ('planned', 'in_progress')
     `;
     const launchParams: any[] = [];
     let launchParamIndex = 1;
 
-    if (activity_id) {
-      launchQuery += ` AND activity_id = $${launchParamIndex++}`;
-      launchParams.push(activity_id);
+    if (activityName) {
+      launchQuery += ` AND LOWER(activity_name) = LOWER($${launchParamIndex++})`;
+      launchParams.push(activityName);
     }
-    if (city_id) {
-      launchQuery += ` AND city_id = $${launchParamIndex++}`;
-      launchParams.push(city_id);
+    if (cityName) {
+      launchQuery += ` AND LOWER(planned_city) = LOWER($${launchParamIndex++})`;
+      launchParams.push(cityName);
     }
-    if (area_id) {
-      launchQuery += ` AND area_id = $${launchParamIndex++}`;
-      launchParams.push(area_id);
+    if (areaName) {
+      launchQuery += ` AND LOWER(planned_area) = LOWER($${launchParamIndex++})`;
+      launchParams.push(areaName);
     }
     if (search) {
       launchQuery += ` AND (planned_club_name ILIKE $${launchParamIndex} OR activity_name ILIKE $${launchParamIndex})`;
