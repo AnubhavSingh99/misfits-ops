@@ -408,6 +408,74 @@ router.get('/summary/by-hierarchy', async (req, res) => {
   }
 });
 
+// GET /api/scaling-tasks/search - Search tasks for reverse linking
+router.get('/search', async (req, res) => {
+  try {
+    const { q, activity_id, city_id, area_id, club_id, limit = 15 } = req.query;
+
+    let whereConditions: string[] = ['status NOT IN (\'completed\', \'cancelled\')'];
+    const params: any[] = [];
+    let paramIndex = 1;
+
+    if (q) {
+      whereConditions.push(`(title ILIKE $${paramIndex} OR description ILIKE $${paramIndex})`);
+      params.push(`%${q}%`);
+      paramIndex++;
+    }
+    if (activity_id) {
+      whereConditions.push(`activity_id = $${paramIndex++}`);
+      params.push(parseInt(activity_id as string));
+    }
+    if (city_id) {
+      whereConditions.push(`city_id = $${paramIndex++}`);
+      params.push(parseInt(city_id as string));
+    }
+    if (area_id) {
+      whereConditions.push(`area_id = $${paramIndex++}`);
+      params.push(parseInt(area_id as string));
+    }
+    if (club_id) {
+      whereConditions.push(`club_id = $${paramIndex++}`);
+      params.push(parseInt(club_id as string));
+    }
+
+    const whereClause = whereConditions.length > 0 ? `WHERE ${whereConditions.join(' AND ')}` : '';
+
+    const result = await queryLocal(`
+      SELECT
+        id, task_scope, title, description,
+        activity_id, activity_name,
+        city_id, city_name,
+        area_id, area_name,
+        club_id, club_name,
+        status, assigned_to_name, assigned_team_lead,
+        created_at
+      FROM scaling_tasks
+      ${whereClause}
+      ORDER BY created_at DESC
+      LIMIT $${paramIndex}
+    `, [...params, parseInt(limit as string)]);
+
+    const tasks = result.rows.map((task: any) => ({
+      ...task,
+      team_color: getTeamColor(task.assigned_team_lead)
+    }));
+
+    res.json({
+      success: true,
+      tasks,
+      total: tasks.length
+    });
+  } catch (error) {
+    logger.error('Failed to search tasks:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to search tasks',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
 // GET /api/scaling-tasks/:id - Get single task with comments and linked requirements
 router.get('/:id', async (req, res) => {
   try {

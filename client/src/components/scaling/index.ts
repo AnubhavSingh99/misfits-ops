@@ -18,4 +18,7 @@ export { WeekSelector, getWeekBounds, formatWeekLabel, type WeekOption } from '.
 export { HealthDot, HealthDistributionBar, type HealthStatus } from './HealthDot';
 export { HealthInfoModal } from './HealthInfoModal';
 export { TaskListTooltip } from './TaskListTooltip';
+export { LeaderRequirementsTooltip } from './LeaderRequirementsTooltip';
+export { LeaderRequirementModal } from './LeaderRequirementModal';
+export { TaskSelector } from './TaskSelector';
 export * from './taskRollup';

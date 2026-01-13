@@ -471,6 +471,19 @@ export interface NewClubLaunch {
   updated_at?: string;
 }
 
+// Club or Launch reference (for requirement linking)
+export interface ClubOrLaunch {
+  id: number;
+  name: string;
+  type: 'club' | 'launch';
+  activity_id?: number;
+  activity_name?: string;
+  city_id?: number;
+  city_name?: string;
+  area_id?: number;
+  area_name?: string;
+}
+
 // =====================================================
 // SCALING PLANNER V2 TYPES
 // =====================================================
@@ -705,6 +718,15 @@ export interface HierarchyNode {
     red: number;
     gray: number;  // Dormant/inactive
   };
+  // Leader requirements (rolled up from children or direct)
+  leaders_required_total?: number;  // Sum of leaders_required from all requirements
+  leader_requirements_summary?: {
+    not_picked: number;
+    deprioritised: number;
+    in_progress: number;
+    done: number;
+    total_requirements: number;
+  };
 }
 
 // Weekly trend data for charts
@@ -905,6 +927,7 @@ export interface BaseRequirement {
   area_name?: string;
   club_id?: number;
   club_name?: string;
+  launch_id?: number;  // For new club launches (alternative to club_id)
 
   // Status
   status: RequirementStatus;
@@ -912,6 +935,13 @@ export interface BaseRequirement {
   // Effort attributes
   growth_team_effort: boolean;
   platform_team_effort: boolean;
+  existing_leader_effort: boolean;  // Current leader finds leaders
+
+  // Number of leaders/venues required (for roll-up calculations)
+  leaders_required: number;  // Default 1
+
+  // Linked tasks (for reverse linking feature)
+  linked_tasks?: ScalingTask[];
 
   // Comments
   comments?: string;
@@ -943,10 +973,13 @@ export interface CreateRequirementRequest {
   city_name?: string;
   area_id?: number;
   area_name?: string;
-  club_id?: number;
+  club_id?: number;  // Required for V2 - must link to club or launch
   club_name?: string;
+  launch_id?: number;  // Alternative to club_id for new launches
   growth_team_effort?: boolean;
   platform_team_effort?: boolean;
+  existing_leader_effort?: boolean;  // New effort type
+  leaders_required?: number;  // Default 1
   comments?: string;
   team?: 'blue' | 'green' | 'yellow';
 }

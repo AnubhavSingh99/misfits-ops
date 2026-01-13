@@ -37,7 +37,8 @@ import type {
   ValidationStatus,
   ScalingTaskSummary
 } from '../../shared/types'
-import { SprintViewModal, TaskSummaryCell, ScalingTaskCreateModal, SummaryTiles, HierarchyFilterBar, HierarchyRollupHeader, RevenueStatusPills, DayTypeTags, StageInfoModal, InfoIconButton, buildRolledUpSummaryMap, buildSummaryKey, type HierarchyFilters, type HierarchyLevel, type HealthFilter, MeetupDetailsTooltip, ExpandClubModal, AddChoiceModal, type ExpandClubTargetData, WeekSelector, getWeekBounds, formatWeekLabel, type WeekOption, HealthDot, HealthDistributionBar, HealthInfoModal, type HealthStatus, TaskListTooltip } from '../components/scaling'
+import { SprintViewModal, TaskSummaryCell, ScalingTaskCreateModal, SummaryTiles, HierarchyFilterBar, HierarchyRollupHeader, RevenueStatusPills, DayTypeTags, StageInfoModal, InfoIconButton, buildRolledUpSummaryMap, buildSummaryKey, type HierarchyFilters, type HierarchyLevel, type HealthFilter, MeetupDetailsTooltip, ExpandClubModal, AddChoiceModal, type ExpandClubTargetData, WeekSelector, getWeekBounds, formatWeekLabel, type WeekOption, HealthDot, HealthDistributionBar, HealthInfoModal, type HealthStatus, TaskListTooltip, LeaderRequirementsTooltip, LeaderRequirementModal } from '../components/scaling'
+import { UserPlus } from 'lucide-react'
 import { getTeamForClub, type TeamKey } from '../../shared/teamConfig'
 import { DimensionalTargetsService } from '../services/api'
 import FeedbackModal from '../components/FeedbackModal'
@@ -2183,6 +2184,26 @@ function HierarchyRow({ node, level, expanded, onToggle, onEditTarget, onDeleteT
         <ValidationIndicator status={node.validation_status} message={node.validation_message} />
       </td>
 
+      {/* Leaders column - shows rolled up leaders_required from requirements */}
+      <td className="py-3 px-3 text-center">
+        {isTarget ? (
+          <div className="text-gray-400 text-xs">-</div>
+        ) : (node.leaders_required_total || 0) > 0 ? (
+          <LeaderRequirementsTooltip
+            node={node}
+            leadersRequiredTotal={node.leaders_required_total || 0}
+            leaderRequirementsSummary={node.leader_requirements_summary}
+          >
+            <div className="inline-flex items-center justify-center gap-1 px-2 py-1 rounded-full bg-indigo-100 text-indigo-700 text-xs font-semibold cursor-pointer hover:bg-indigo-200 transition-colors">
+              <UserPlus size={12} />
+              {node.leaders_required_total}
+            </div>
+          </LeaderRequirementsTooltip>
+        ) : (
+          <div className="text-gray-300 text-xs">-</div>
+        )}
+      </td>
+
       {/* Tasks column */}
       <td className="py-3 px-4 text-center">
         <TaskListTooltip node={node} taskSummary={taskSummary}>
@@ -3464,6 +3485,12 @@ export default function ScalingPlannerV2() {
                   <th className="py-3 px-4 text-xs font-semibold text-gray-600 uppercase tracking-wider">
                     Status Update
                   </th>
+                  <th className="text-center py-3 px-3 text-xs font-semibold text-gray-600 uppercase tracking-wider w-16">
+                    <div className="flex items-center justify-center gap-1">
+                      <UserPlus size={14} />
+                      Leaders
+                    </div>
+                  </th>
                   <th className="text-center py-3 px-4 text-xs font-semibold text-gray-600 uppercase tracking-wider">
                     Tasks
                   </th>
@@ -3485,7 +3512,7 @@ export default function ScalingPlannerV2() {
                 />
                 {flattenedRows.length === 0 ? (
                   <tr>
-                    <td colSpan={11} className="py-12 text-center">
+                    <td colSpan={12} className="py-12 text-center">
                       <div className="text-gray-400">
                         <Target size={48} className="mx-auto mb-4 opacity-50" />
                         <p className="font-medium">No targets found</p>

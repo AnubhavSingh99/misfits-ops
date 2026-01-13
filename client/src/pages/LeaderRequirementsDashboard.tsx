@@ -574,9 +574,17 @@ export default function LeaderRequirementsDashboard() {
           </select>
         </td>
 
+        {/* Leaders Required */}
+        <td className="py-2.5 px-4 text-center">
+          <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-indigo-100 text-indigo-700 text-xs font-semibold">
+            <Users className="h-3 w-3" />
+            {(req as any).leaders_required || 1}
+          </span>
+        </td>
+
         {/* Effort flags */}
         <td className="py-2.5 px-4">
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1.5 flex-wrap">
             {req.growth_team_effort && (
               <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-violet-50 text-violet-600 border border-violet-200">
                 Growth
@@ -585,6 +593,11 @@ export default function LeaderRequirementsDashboard() {
             {req.platform_team_effort && (
               <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-cyan-50 text-cyan-600 border border-cyan-200">
                 Platform
+              </span>
+            )}
+            {(req as any).existing_leader_effort && (
+              <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-50 text-emerald-600 border border-emerald-200">
+                Existing
               </span>
             )}
           </div>
@@ -980,6 +993,12 @@ export default function LeaderRequirementsDashboard() {
                   <th className="text-left py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">
                     Status
                   </th>
+                  <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                    <div className="flex items-center justify-center gap-1">
+                      <Users className="h-3.5 w-3.5" />
+                      Leaders
+                    </div>
+                  </th>
                   <th className="text-left py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">
                     Effort
                   </th>
@@ -1093,6 +1112,8 @@ function EditRequirementModal({
   const [status, setStatus] = useState(requirement.status);
   const [growthEffort, setGrowthEffort] = useState(requirement.growth_team_effort);
   const [platformEffort, setPlatformEffort] = useState(requirement.platform_team_effort);
+  const [existingLeaderEffort, setExistingLeaderEffort] = useState((requirement as any).existing_leader_effort || false);
+  const [leadersRequired, setLeadersRequired] = useState((requirement as any).leaders_required || 1);
   const [submitting, setSubmitting] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -1105,8 +1126,10 @@ function EditRequirementModal({
       description: description.trim() || undefined,
       status,
       growth_team_effort: growthEffort,
-      platform_team_effort: platformEffort
-    });
+      platform_team_effort: platformEffort,
+      existing_leader_effort: existingLeaderEffort,
+      leaders_required: leadersRequired
+    } as any);
     setSubmitting(false);
   };
 
@@ -1166,9 +1189,25 @@ function EditRequirementModal({
               </select>
             </div>
 
+            {/* Leaders Required */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                <Users className="inline h-4 w-4 mr-1" />
+                Leaders Required
+              </label>
+              <input
+                type="number"
+                min="1"
+                max="50"
+                value={leadersRequired}
+                onChange={(e) => setLeadersRequired(parseInt(e.target.value) || 1)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-sm"
+              />
+            </div>
+
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">Effort Required</label>
-              <div className="flex gap-4">
+              <div className="flex flex-wrap gap-4">
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input
                     type="checkbox"
@@ -1186,6 +1225,15 @@ function EditRequirementModal({
                     className="w-4 h-4 text-cyan-600 border-gray-300 rounded focus:ring-cyan-500"
                   />
                   <span className="text-sm text-gray-600">Platform Team</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={existingLeaderEffort}
+                    onChange={(e) => setExistingLeaderEffort(e.target.checked)}
+                    className="w-4 h-4 text-emerald-600 border-gray-300 rounded focus:ring-emerald-500"
+                  />
+                  <span className="text-sm text-gray-600">Existing Leader</span>
                 </label>
               </div>
             </div>
@@ -1272,6 +1320,8 @@ function CreateRequirementModal({
   const [description, setDescription] = useState('');
   const [growthEffort, setGrowthEffort] = useState(false);
   const [platformEffort, setPlatformEffort] = useState(false);
+  const [existingLeaderEffort, setExistingLeaderEffort] = useState(false);
+  const [leadersRequired, setLeadersRequired] = useState(1);
   const [submitting, setSubmitting] = useState(false);
 
   // Hierarchy selection state
@@ -1450,6 +1500,8 @@ function CreateRequirementModal({
       club_name: selectedClubName,
       growth_team_effort: growthEffort,
       platform_team_effort: platformEffort,
+      existing_leader_effort: existingLeaderEffort,
+      leaders_required: leadersRequired,
       team
     });
     setSubmitting(false);
@@ -1570,9 +1622,26 @@ function CreateRequirementModal({
               />
             </div>
 
+            {/* Leaders Required */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                <Users className="inline h-4 w-4 mr-1" />
+                Leaders Required
+              </label>
+              <input
+                type="number"
+                min="1"
+                max="50"
+                value={leadersRequired}
+                onChange={(e) => setLeadersRequired(parseInt(e.target.value) || 1)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-sm"
+              />
+              <p className="mt-1 text-xs text-gray-500">How many leaders are needed?</p>
+            </div>
+
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">Effort Required</label>
-              <div className="flex gap-4">
+              <div className="flex flex-wrap gap-4">
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input
                     type="checkbox"
@@ -1590,6 +1659,15 @@ function CreateRequirementModal({
                     className="w-4 h-4 text-cyan-600 border-gray-300 rounded focus:ring-cyan-500"
                   />
                   <span className="text-sm text-gray-600">Platform Team</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={existingLeaderEffort}
+                    onChange={(e) => setExistingLeaderEffort(e.target.checked)}
+                    className="w-4 h-4 text-emerald-600 border-gray-300 rounded focus:ring-emerald-500"
+                  />
+                  <span className="text-sm text-gray-600">Existing Leader</span>
                 </label>
               </div>
             </div>

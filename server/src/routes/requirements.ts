@@ -263,9 +263,11 @@ router.get('/leaders/hierarchy', async (req: Request, res: Response) => {
             city_id: reqData.city_id,
             area_id: reqData.area_id,
             count: 0,
+            leaders_required_total: 0,  // Sum of leaders_required
             status_counts: { not_picked: 0, deprioritised: 0, in_progress: 0, done: 0 },
             growth_effort_count: 0,
-            platform_effort_count: 0
+            platform_effort_count: 0,
+            existing_leader_effort_count: 0
           };
 
           if (isLastLevel) {
@@ -281,9 +283,11 @@ router.get('/leaders/hierarchy', async (req: Request, res: Response) => {
 
         // Update counts at each level
         node.count++;
+        node.leaders_required_total += reqData.leaders_required || 1;  // Sum leaders_required
         node.status_counts[reqData.status as RequirementStatus]++;
         if (reqData.growth_team_effort) node.growth_effort_count++;
         if (reqData.platform_team_effort) node.platform_effort_count++;
+        if (reqData.existing_leader_effort) node.existing_leader_effort_count++;
 
         // If this is the last level, add the requirement
         if (i === hierarchyOrder.length - 1) {
@@ -308,6 +312,7 @@ router.get('/leaders/hierarchy', async (req: Request, res: Response) => {
     // Calculate summary
     const summary = {
       total: requirements.length,
+      leaders_required_total: requirements.reduce((sum: number, r: any) => sum + (r.leaders_required || 1), 0),
       not_picked: requirements.filter((r: any) => r.status === 'not_picked').length,
       deprioritised: requirements.filter((r: any) => r.status === 'deprioritised').length,
       in_progress: requirements.filter((r: any) => r.status === 'in_progress').length,
@@ -396,6 +401,14 @@ router.post('/leaders', async (req: Request, res: Response) => {
   try {
     const data: CreateRequirementRequest = req.body;
 
+    // Validate club_id or launch_id is required
+    if (!data.club_id && !data.launch_id) {
+      return res.status(400).json({
+        success: false,
+        error: 'Either club_id or launch_id is required. Every requirement must be linked to a club or launch.'
+      });
+    }
+
     // Auto-calculate team if not provided
     let team = data.team;
     if (!team && data.activity_name && data.city_name) {
@@ -410,8 +423,9 @@ router.post('/leaders', async (req: Request, res: Response) => {
         area_id, area_name,
         club_id, club_name,
         growth_team_effort, platform_team_effort,
+        existing_leader_effort, leaders_required,
         comments, team, created_by
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
       RETURNING *`,
       [
         data.name,
@@ -422,10 +436,12 @@ router.post('/leaders', async (req: Request, res: Response) => {
         data.city_name || null,
         data.area_id || null,
         data.area_name || null,
-        data.club_id || null,
+        data.club_id || data.launch_id || null,  // Store launch_id in club_id for now
         data.club_name || null,
         data.growth_team_effort || false,
         data.platform_team_effort || false,
+        data.existing_leader_effort || false,
+        data.leaders_required || 1,
         data.comments || null,
         team || null,
         'system' // TODO: Get from auth
@@ -472,6 +488,14 @@ router.put('/leaders/:id', async (req: Request, res: Response) => {
     if (data.platform_team_effort !== undefined) {
       updates.push(`platform_team_effort = $${paramIndex++}`);
       params.push(data.platform_team_effort);
+    }
+    if (data.existing_leader_effort !== undefined) {
+      updates.push(`existing_leader_effort = $${paramIndex++}`);
+      params.push(data.existing_leader_effort);
+    }
+    if (data.leaders_required !== undefined) {
+      updates.push(`leaders_required = $${paramIndex++}`);
+      params.push(data.leaders_required);
     }
     if (data.comments !== undefined) {
       updates.push(`comments = $${paramIndex++}`);
@@ -1018,6 +1042,119 @@ router.delete('/venues/:id', async (req: Request, res: Response) => {
   } catch (error) {
     console.error('Error deleting venue requirement:', error);
     res.status(500).json({ success: false, error: 'Failed to delete requirement' });
+  }
+});
+
+// =====================================================
+// CLUBS AND LAUNCHES ENDPOINT
+// =====================================================
+
+// GET /api/requirements/clubs-and-launches - Get clubs and launches for requirement linking
+router.get('/clubs-and-launches', async (req: Request, res: Response) => {
+  try {
+    const { activity_id, city_id, area_id, search } = req.query;
+
+    // Import queryProduction for reading from production DB
+    const { queryProduction } = await import('../services/database');
+
+    // Build club query from production database
+    let clubQuery = `
+      SELECT
+        c.pk as id,
+        c.name,
+        'club' as type,
+        a.pk as activity_id,
+        a.name as activity_name,
+        ci.pk as city_id,
+        ci.name as city_name,
+        ar.pk as area_id,
+        ar.name as area_name
+      FROM club c
+      JOIN activity a ON c.activity_id = a.pk
+      JOIN location l ON c.location_id = l.pk
+      JOIN city ci ON l.city_id = ci.pk
+      LEFT JOIN area ar ON l.area_id = ar.pk
+      WHERE c.status = 'ACTIVE'
+    `;
+    const clubParams: any[] = [];
+    let clubParamIndex = 1;
+
+    if (activity_id) {
+      clubQuery += ` AND a.pk = $${clubParamIndex++}`;
+      clubParams.push(activity_id);
+    }
+    if (city_id) {
+      clubQuery += ` AND ci.pk = $${clubParamIndex++}`;
+      clubParams.push(city_id);
+    }
+    if (area_id) {
+      clubQuery += ` AND ar.pk = $${clubParamIndex++}`;
+      clubParams.push(area_id);
+    }
+    if (search) {
+      clubQuery += ` AND c.name ILIKE $${clubParamIndex++}`;
+      clubParams.push(`%${search}%`);
+    }
+
+    clubQuery += ` ORDER BY c.name LIMIT 50`;
+
+    // Build launch query from local database
+    let launchQuery = `
+      SELECT
+        id,
+        COALESCE(planned_club_name, activity_name || ' Launch') as name,
+        'launch' as type,
+        activity_id,
+        activity_name,
+        city_id,
+        city_name,
+        area_id,
+        area_name
+      FROM new_club_launches
+      WHERE launch_status IN ('planned', 'in_progress')
+    `;
+    const launchParams: any[] = [];
+    let launchParamIndex = 1;
+
+    if (activity_id) {
+      launchQuery += ` AND activity_id = $${launchParamIndex++}`;
+      launchParams.push(activity_id);
+    }
+    if (city_id) {
+      launchQuery += ` AND city_id = $${launchParamIndex++}`;
+      launchParams.push(city_id);
+    }
+    if (area_id) {
+      launchQuery += ` AND area_id = $${launchParamIndex++}`;
+      launchParams.push(area_id);
+    }
+    if (search) {
+      launchQuery += ` AND (planned_club_name ILIKE $${launchParamIndex} OR activity_name ILIKE $${launchParamIndex})`;
+      launchParams.push(`%${search}%`);
+      launchParamIndex++;
+    }
+
+    launchQuery += ` ORDER BY activity_name LIMIT 20`;
+
+    // Execute both queries in parallel
+    const [clubResult, launchResult] = await Promise.all([
+      queryProduction(clubQuery, clubParams),
+      queryLocal(launchQuery, launchParams)
+    ]);
+
+    // Combine and return
+    const clubs = clubResult.rows;
+    const launches = launchResult.rows;
+
+    res.json({
+      success: true,
+      clubs,
+      launches,
+      total: clubs.length + launches.length
+    });
+  } catch (error) {
+    console.error('Error fetching clubs and launches:', error);
+    res.status(500).json({ success: false, error: 'Failed to fetch clubs and launches' });
   }
 });
 

@@ -2413,6 +2413,33 @@ router.get('/v2/hierarchy', async (req, res) => {
       targetsMap.get(clubId)!.push(t);
     }
 
+    // Get leader requirements per club for rollup
+    const leaderRequirementsQuery = `
+      SELECT
+        club_id,
+        SUM(leaders_required) as leaders_required_total,
+        COUNT(*) as total_requirements,
+        COUNT(CASE WHEN status = 'not_picked' THEN 1 END) as not_picked,
+        COUNT(CASE WHEN status = 'deprioritised' THEN 1 END) as deprioritised,
+        COUNT(CASE WHEN status = 'in_progress' THEN 1 END) as in_progress,
+        COUNT(CASE WHEN status = 'done' THEN 1 END) as done
+      FROM leader_requirements
+      WHERE club_id IS NOT NULL
+      GROUP BY club_id
+    `;
+    const leaderReqResult = await queryLocal(leaderRequirementsQuery);
+    const leaderRequirementsMap = new Map(leaderReqResult.rows.map((r: any) => [
+      parseInt(r.club_id),
+      {
+        leaders_required_total: parseInt(r.leaders_required_total) || 0,
+        total_requirements: parseInt(r.total_requirements) || 0,
+        not_picked: parseInt(r.not_picked) || 0,
+        deprioritised: parseInt(r.deprioritised) || 0,
+        in_progress: parseInt(r.in_progress) || 0,
+        done: parseInt(r.done) || 0
+      }
+    ]));
+
     // Fetch planned launches if include_launches is true
     const includeLaunches = include_launches === 'true';
     let launchesData: any[] = [];
@@ -2673,7 +2700,10 @@ router.get('/v2/hierarchy', async (req, res) => {
           // Individual metric health status
           capacity_health: getMetricHealth(healthMetrics.capacity_pct, HEALTH_THRESHOLDS.capacity_utilization),
           repeat_health: healthMetrics.is_new_club ? 'green' : getMetricHealth(healthMetrics.repeat_rate_pct, HEALTH_THRESHOLDS.repeat_rate),
-          rating_health: getMetricHealth(healthMetrics.avg_rating, HEALTH_THRESHOLDS.avg_rating)
+          rating_health: getMetricHealth(healthMetrics.avg_rating, HEALTH_THRESHOLDS.avg_rating),
+          // Leader requirements summary
+          leaders_required_total: leaderRequirementsMap.get(clubId)?.leaders_required_total || 0,
+          leader_requirements_summary: leaderRequirementsMap.get(clubId) || null
         };
 
         const levelValues: Record<HierarchyLevel, { id: number; name: string }> = {
@@ -3307,7 +3337,10 @@ router.get('/v2/hierarchy', async (req, res) => {
         // Individual metric health status
         capacity_health: getMetricHealth(healthMetrics.capacity_pct, HEALTH_THRESHOLDS.capacity_utilization),
         repeat_health: healthMetrics.is_new_club ? 'green' : getMetricHealth(healthMetrics.repeat_rate_pct, HEALTH_THRESHOLDS.repeat_rate),
-        rating_health: getMetricHealth(healthMetrics.avg_rating, HEALTH_THRESHOLDS.avg_rating)
+        rating_health: getMetricHealth(healthMetrics.avg_rating, HEALTH_THRESHOLDS.avg_rating),
+        // Leader requirements summary
+        leaders_required_total: leaderRequirementsMap.get(clubId)?.leaders_required_total || 0,
+        leader_requirements_summary: leaderRequirementsMap.get(clubId) || null
       };
 
       areaNode.children.push(clubNode);
