@@ -1960,15 +1960,18 @@ interface HierarchyRowProps {
   onCreateTask: (node: HierarchyNode) => void
   onCreateTaskForRequirement: (requirement: LeaderRequirement, node: HierarchyNode) => void  // For creating task with pre-linked requirement
   onCreateLeaderRequirement: (node: HierarchyNode) => void  // For creating leader requirement
+  onEditLeaderRequirement: (req: LeaderRequirement) => void  // For editing leader requirement
+  onDeleteLeaderRequirement: (req: LeaderRequirement) => Promise<boolean>  // For deleting leader requirement
   onEditStages: (node: HierarchyNode) => void
   onOpenSprint: (node: HierarchyNode) => void  // For opening sprint modal
   taskSummary: ScalingTaskSummary | null       // Task summary for this node
   weekBounds: { start: Date; end: Date }       // Week bounds for tooltip
   tooltipRefreshKey?: number                   // Key to force tooltip data refresh
   hideTooltips?: boolean                       // When true, force hide all tooltips (e.g., when modal opens)
+  onRefresh?: () => void                       // For refreshing data after edit/delete
 }
 
-function HierarchyRow({ node, level, expanded, onToggle, onEditTarget, onDeleteTarget, onAddAtAreaLevel, onExpandClub, onCreateTask, onCreateTaskForRequirement, onCreateLeaderRequirement, onEditStages, onOpenSprint, taskSummary, weekBounds, tooltipRefreshKey, hideTooltips }: HierarchyRowProps) {
+function HierarchyRow({ node, level, expanded, onToggle, onEditTarget, onDeleteTarget, onAddAtAreaLevel, onExpandClub, onCreateTask, onCreateTaskForRequirement, onCreateLeaderRequirement, onEditLeaderRequirement, onDeleteLeaderRequirement, onEditStages, onOpenSprint, taskSummary, weekBounds, tooltipRefreshKey, hideTooltips, onRefresh }: HierarchyRowProps) {
   const hasChildren = node.children && node.children.length > 0
   const isLaunch = node.is_launch || node.type === 'launch'
   const isTarget = node.type === 'target'
@@ -2201,6 +2204,9 @@ function HierarchyRow({ node, level, expanded, onToggle, onEditTarget, onDeleteT
                 leaderRequirementsSummary={node.leader_requirements_summary}
                 onCreateTask={onCreateTask}
                 onCreateTaskForRequirement={onCreateTaskForRequirement}
+                onEditRequirement={onEditLeaderRequirement}
+                onDeleteRequirement={onDeleteLeaderRequirement}
+                onRefresh={onRefresh}
               >
                 <div className="inline-flex items-center justify-center gap-1 px-2 py-1 rounded-full bg-indigo-100 text-indigo-700 text-xs font-semibold cursor-pointer hover:bg-indigo-200 transition-colors">
                   <UserPlus size={12} />
@@ -2847,6 +2853,33 @@ export default function ScalingPlannerV2() {
   // Create task handler - opens scaling task modal with context
   const handleCreateTask = (node: HierarchyNode) => {
     setScalingTaskNode(node)
+  }
+
+  // Edit leader requirement handler - opens modal (for now just alert - will add modal later)
+  const handleEditLeaderRequirement = (req: LeaderRequirement) => {
+    // For now, redirect to the leader requirements dashboard for editing
+    // TODO: Add inline edit modal in future
+    window.open(`/leader-requirements?edit=${req.id}`, '_blank')
+  }
+
+  // Delete leader requirement handler
+  const handleDeleteLeaderRequirement = async (req: LeaderRequirement): Promise<boolean> => {
+    try {
+      const response = await fetch(`${API_BASE}/requirements/leaders/${req.id}`, {
+        method: 'DELETE'
+      })
+
+      if (!response.ok) {
+        const err = await response.json()
+        throw new Error(err.error || 'Failed to delete requirement')
+      }
+
+      return true
+    } catch (error) {
+      console.error('Failed to delete requirement:', error)
+      alert(error instanceof Error ? error.message : 'Failed to delete requirement')
+      return false
+    }
   }
 
   // Get scaling task context from node - includes all parent hierarchy names
@@ -3563,12 +3596,15 @@ export default function ScalingPlannerV2() {
                         setScalingTaskNode(n)
                       }}
                       onCreateLeaderRequirement={(n) => setLeaderRequirementNode(n)}
+                      onEditLeaderRequirement={handleEditLeaderRequirement}
+                      onDeleteLeaderRequirement={handleDeleteLeaderRequirement}
                       onEditStages={handleEditStages}
                       onOpenSprint={(n) => setSprintNode(n)}
                       taskSummary={getTaskSummary(node)}
                       weekBounds={weekBounds}
                       tooltipRefreshKey={tooltipRefreshKey}
                       hideTooltips={editTargetContext !== null}
+                      onRefresh={fetchHierarchyData}
                     />
                   ))
                 )}

@@ -2414,10 +2414,11 @@ router.get('/v2/hierarchy', async (req, res) => {
     }
 
     // Get leader requirements per club for rollup
+    // Note: leaders_required_total excludes deprioritised requirements
     const leaderRequirementsQuery = `
       SELECT
         club_id,
-        SUM(leaders_required) as leaders_required_total,
+        SUM(CASE WHEN status != 'deprioritised' THEN leaders_required ELSE 0 END) as leaders_required_total,
         COUNT(*) as total_requirements,
         COUNT(CASE WHEN status = 'not_picked' THEN 1 END) as not_picked,
         COUNT(CASE WHEN status = 'deprioritised' THEN 1 END) as deprioritised,

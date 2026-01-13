@@ -1422,10 +1422,38 @@ router.get('/filters/areas', async (req, res) => {
 });
 
 // GET /api/scaling-tasks/filters/clubs - Get clubs for selected areas (cascading)
+// Also includes launches from local database
 router.get('/filters/clubs', async (req, res) => {
   try {
     const { activity_ids, city_ids, area_ids } = req.query;
 
+    // First, get area names for matching launches
+    let areaNames: string[] = [];
+    let activityNames: string[] = [];
+
+    if (area_ids) {
+      const areaIds = (area_ids as string).split(',').map(id => parseInt(id.trim())).filter(id => !isNaN(id));
+      if (areaIds.length > 0) {
+        const areaResult = await queryProduction(
+          `SELECT name FROM area WHERE id = ANY($1)`,
+          [areaIds]
+        );
+        areaNames = areaResult.rows.map((r: any) => r.name);
+      }
+    }
+
+    if (activity_ids) {
+      const actIds = (activity_ids as string).split(',').map(id => parseInt(id.trim())).filter(id => !isNaN(id));
+      if (actIds.length > 0) {
+        const actResult = await queryProduction(
+          `SELECT name FROM activity WHERE id = ANY($1)`,
+          [actIds]
+        );
+        activityNames = actResult.rows.map((r: any) => r.name);
+      }
+    }
+
+    // Query clubs from production
     let query = `
       SELECT DISTINCT c.pk as id, c.name
       FROM club c
@@ -1468,9 +1496,38 @@ router.get('/filters/clubs', async (req, res) => {
 
     const result = await queryProduction(query, params);
 
+    // Also fetch launches from local database that match the filters
+    let launches: any[] = [];
+    if (areaNames.length > 0 && activityNames.length > 0) {
+      const launchResult = await queryLocal(`
+        SELECT
+          id,
+          planned_club_name as name,
+          'launch' as type
+        FROM new_club_launches
+        WHERE launch_status IN ('planned', 'in_progress')
+          AND planned_area = ANY($1)
+          AND activity_name = ANY($2)
+        ORDER BY planned_club_name
+      `, [areaNames, activityNames]);
+      launches = launchResult.rows.map((l: any) => ({
+        id: `launch_${l.id}`,
+        name: `🚀 ${l.name}`,
+        is_launch: true,
+        launch_id: l.id
+      }));
+    }
+
+    // Combine clubs and launches
+    const clubs = result.rows.map((c: any) => ({
+      id: c.id,
+      name: c.name,
+      is_launch: false
+    }));
+
     res.json({
       success: true,
-      options: result.rows
+      options: [...clubs, ...launches]
     });
   } catch (error) {
     logger.error('Failed to fetch club filters:', error);
