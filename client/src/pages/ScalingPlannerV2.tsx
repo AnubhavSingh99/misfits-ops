@@ -2339,6 +2339,9 @@ export default function ScalingPlannerV2() {
   // Ref for table container to preserve scroll position
   const tableContainerRef = useRef<HTMLDivElement>(null)
 
+  // Track if initial scroll restore has been done (prevents race condition where scroll listener saves 0 before restore runs)
+  const hasRestoredScroll = useRef(false)
+
   // Stage editor modal state
   const [editingNode, setEditingNode] = useState<HierarchyNode | null>(null)
 
@@ -2557,28 +2560,40 @@ export default function ScalingPlannerV2() {
 
   // Restore scroll position after data loads
   useEffect(() => {
-    if (!loading && hierarchy.length > 0 && tableContainerRef.current) {
+    if (!loading && hierarchy.length > 0 && tableContainerRef.current && !hasRestoredScroll.current) {
       try {
         const savedScroll = sessionStorage.getItem(SCROLL_POSITION_KEY)
         if (savedScroll) {
           const scrollTop = parseInt(savedScroll, 10)
-          // Use requestAnimationFrame to ensure DOM is ready
+          // Use requestAnimationFrame to ensure DOM is ready, then a small delay for React to finish rendering
           requestAnimationFrame(() => {
-            if (tableContainerRef.current) {
-              window.scrollTo(0, scrollTop)
-            }
+            setTimeout(() => {
+              if (tableContainerRef.current) {
+                window.scrollTo(0, scrollTop)
+              }
+              // Mark as restored after scroll attempt
+              hasRestoredScroll.current = true
+            }, 50)
           })
+        } else {
+          // No saved scroll, mark as restored anyway to allow saving
+          hasRestoredScroll.current = true
         }
       } catch {
-        // Ignore errors
+        // On error, mark as restored to allow saving
+        hasRestoredScroll.current = true
       }
     }
   }, [loading, hierarchy.length])
 
   // Save scroll position on scroll (debounced via passive listener)
+  // Only saves after initial restore to prevent race condition where 0 overwrites saved position
   useEffect(() => {
     let timeout: ReturnType<typeof setTimeout>
     const handleScroll = () => {
+      // Don't save until initial restore has completed
+      if (!hasRestoredScroll.current) return
+
       clearTimeout(timeout)
       timeout = setTimeout(() => {
         try {
