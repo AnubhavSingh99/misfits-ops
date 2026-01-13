@@ -27,8 +27,10 @@ export interface CreateLeaderRequirementContext {
 
 // Filter option type
 interface FilterOption {
-  id: number;
+  id: number | string;
   name: string;
+  is_launch?: boolean;
+  launch_id?: number;
 }
 
 // Generate default name from context
@@ -83,6 +85,8 @@ export function CreateLeaderRequirementModal({
   const [selectedAreaName, setSelectedAreaName] = useState<string | undefined>(context.area_name);
   const [selectedClubId, setSelectedClubId] = useState<number | undefined>(context.club_id);
   const [selectedClubName, setSelectedClubName] = useState<string | undefined>(context.club_name);
+  const [selectedLaunchId, setSelectedLaunchId] = useState<number | undefined>(undefined);
+  const [isLaunchSelected, setIsLaunchSelected] = useState(false);
 
   // Filter options
   const [activities, setActivities] = useState<FilterOption[]>([]);
@@ -126,6 +130,8 @@ export function CreateLeaderRequirementModal({
       setSelectedAreaName(context.area_name);
       setSelectedClubId(context.club_id);
       setSelectedClubName(context.club_name);
+      setSelectedLaunchId(undefined);
+      setIsLaunchSelected(false);
       setName(generateDefaultName(context));
       setDescription('');
       setGrowthEffort(false);
@@ -242,16 +248,36 @@ export function CreateLeaderRequirementModal({
     const area = areas.find(a => String(a.id) === e.target.value);
     setSelectedAreaId(id);
     setSelectedAreaName(area?.name);
-    // Reset club selection
+    // Reset club/launch selection
     setSelectedClubId(undefined);
     setSelectedClubName(undefined);
+    setSelectedLaunchId(undefined);
+    setIsLaunchSelected(false);
   };
 
   const handleClubChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const id = e.target.value ? parseInt(e.target.value) : undefined;
-    const club = clubs.find(c => String(c.id) === e.target.value);
-    setSelectedClubId(id);
-    setSelectedClubName(club?.name);
+    const value = e.target.value;
+    const club = clubs.find(c => String(c.id) === value);
+
+    if (club?.is_launch) {
+      // It's a launch
+      setSelectedClubId(undefined);
+      setSelectedLaunchId(club.launch_id);
+      setIsLaunchSelected(true);
+      setSelectedClubName(club.name.replace('🚀 ', '')); // Remove emoji for display
+    } else if (value) {
+      // It's a regular club
+      setSelectedClubId(parseInt(value));
+      setSelectedLaunchId(undefined);
+      setIsLaunchSelected(false);
+      setSelectedClubName(club?.name);
+    } else {
+      // Nothing selected
+      setSelectedClubId(undefined);
+      setSelectedLaunchId(undefined);
+      setIsLaunchSelected(false);
+      setSelectedClubName(undefined);
+    }
   };
 
   const isValid = name.trim() && selectedActivityId && selectedCityId && selectedAreaId;
@@ -273,8 +299,9 @@ export function CreateLeaderRequirementModal({
         city_name: selectedCityName,
         area_id: selectedAreaId,
         area_name: selectedAreaName,
-        club_id: selectedClubId,
+        club_id: isLaunchSelected ? undefined : selectedClubId,
         club_name: selectedClubName,
+        launch_id: isLaunchSelected ? selectedLaunchId : undefined,
         growth_team_effort: growthEffort,
         platform_team_effort: platformEffort,
         existing_leader_effort: existingLeaderEffort,
@@ -377,9 +404,9 @@ export function CreateLeaderRequirementModal({
                 </select>
               </div>
               <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">Club (Optional)</label>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Club / Launch (Optional)</label>
                 <select
-                  value={selectedClubId || ''}
+                  value={isLaunchSelected ? `launch_${selectedLaunchId}` : (selectedClubId || '')}
                   onChange={handleClubChange}
                   disabled={!selectedAreaId}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-sm bg-white disabled:bg-gray-100 disabled:cursor-not-allowed"
