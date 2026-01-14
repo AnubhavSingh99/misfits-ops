@@ -267,7 +267,7 @@ function StagePills({ progress }: { progress: StageProgress & { unattributed_mee
   }
 
   return (
-    <div className="flex flex-wrap gap-1 overflow-visible">
+    <div className="flex flex-wrap gap-1">
       {stages.map(s => (
         <StagePillWithTooltip key={s.key} stageKey={s.key} count={s.count} />
       ))}
@@ -374,12 +374,12 @@ export function HierarchyRollupHeader({
       </td>
 
       {/* Stage Distribution column */}
-      <td className="py-3 px-2 align-top">
+      <td className="py-3 px-4">
         <StagePills progress={totals.progress} />
       </td>
 
       {/* Revenue Status column */}
-      <td className="py-3 px-2 align-top">
+      <td className="py-3 px-4">
         <RevenueStatusPills revenueStatus={totals.revenueStatus} compact />
       </td>
 
