@@ -2634,17 +2634,23 @@ router.get('/v2/hierarchy', async (req, res) => {
         const areaUnattributedMeetups = areaUnattributed?.meetup_count || 0;
 
         let aggregatedProgress: any;
-        if (areaFilteredTargets.length > 0) {
+        // Only use auto-match results if there are actual targets configured for this area
+        // This prevents legacy targets (without area_id) from showing in all areas
+        if (hasTargets && areaFilteredTargets.length > 0) {
           aggregatedProgress = areaFilteredTargets.reduce((acc: any, t: any) => {
             return sumProgress([acc, t.new_progress]);
           }, { ...defaultProgress });
           aggregatedProgress.unattributed_meetups = (aggregatedProgress.unattributed_meetups || 0) + areaUnattributedMeetups;
-        } else {
+        } else if (hasTargets) {
+          // Has targets but no auto-match results - use stored progress
           aggregatedProgress = targets.reduce((acc: any, t: any) => {
             const tMeetups = parseInt(t.target_meetups) || 0;
             const p = syncProgress(t.progress, tMeetups);
             return sumProgress([acc, p]);
           }, { ...defaultProgress });
+        } else {
+          // No targets for this area - use empty progress
+          aggregatedProgress = { ...defaultProgress };
         }
 
         const currentMeetups = parseInt(club.current_meetups) || 0;
@@ -2671,7 +2677,8 @@ router.get('/v2/hierarchy', async (req, res) => {
         const clubHealthStatus = getHealthStatus(clubHealthScore, hasMeetups);
 
         let clubRevenueStatus: RevenueStatus;
-        if (areaFilteredTargets.length > 0) {
+        // Only use auto-match revenue status if there are actual targets configured for this area
+        if (hasTargets && areaFilteredTargets.length > 0) {
           // Use area-filtered targets for revenue status
           const targetStatuses = areaFilteredTargets.map((t: any) => t.revenue_status);
           clubRevenueStatus = rollupRevenueStatuses(targetStatuses);
@@ -3211,22 +3218,26 @@ router.get('/v2/hierarchy', async (req, res) => {
       const areaUnattributedMeetups = areaUnattributed?.meetup_count || 0;
 
       // Aggregate progress across all targets
-      // When auto-matching is enabled, use matched progress from auto-matching results
+      // Only use auto-match results if there are actual targets configured for this area
+      // This prevents legacy targets (without area_id) from showing in all areas
       let aggregatedProgress: any;
-      if (areaFilteredTargets.length > 0) {
+      if (hasTargets && areaFilteredTargets.length > 0) {
         // Use auto-matched progress (filtered by area)
         aggregatedProgress = areaFilteredTargets.reduce((acc: any, t: any) => {
           return sumProgress([acc, t.new_progress]);
         }, { ...defaultProgress });
         // Add area-level unattributed meetups (meetups that didn't match any target in THIS area)
         aggregatedProgress.unattributed_meetups = (aggregatedProgress.unattributed_meetups || 0) + areaUnattributedMeetups;
-      } else {
-        // Use stored progress (synced with target)
+      } else if (hasTargets) {
+        // Has targets but no auto-match results - use stored progress
         aggregatedProgress = targets.reduce((acc, t) => {
           const tMeetups = parseInt(t.target_meetups) || 0;
           const p = syncProgress(t.progress, tMeetups);
           return sumProgress([acc, p]);
         }, { ...defaultProgress });
+      } else {
+        // No targets for this area - use empty progress
+        aggregatedProgress = { ...defaultProgress };
       }
 
       const currentMeetups = parseInt(club.current_meetups) || 0;
@@ -3256,9 +3267,9 @@ router.get('/v2/hierarchy', async (req, res) => {
       const clubHealthStatus = getHealthStatus(clubHealthScore, hasMeetups);
 
       // Calculate revenue status for this club
-      // When auto-matching is enabled, rollup the matched revenue statuses
+      // Only use auto-match revenue status if there are actual targets configured for this area
       let clubRevenueStatus: RevenueStatus;
-      if (areaFilteredTargets.length > 0) {
+      if (hasTargets && areaFilteredTargets.length > 0) {
         // Rollup from auto-matched revenue statuses (filtered by area)
         const targetStatuses = areaFilteredTargets.map((t: any) => t.revenue_status);
         clubRevenueStatus = rollupRevenueStatuses(targetStatuses);
