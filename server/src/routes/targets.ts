@@ -2127,10 +2127,10 @@ router.get('/v2/hierarchy', async (req, res) => {
         FROM booking b
         WHERE b.booking_status NOT IN ('DEREGISTERED', 'INITIATED')
       ),
-      -- One row per (club, city) with the most recent area in that city
+      -- One row per (club, area) - clubs appear under EVERY area where they have events
       -- Only consider CREATED events (not cancelled)
       club_locations AS (
-        SELECT DISTINCT ON (e.club_id, ci.id)
+        SELECT DISTINCT ON (e.club_id, ar.id)
           e.club_id,
           ci.id as city_id,
           ci.name as city_name,
@@ -2141,16 +2141,16 @@ router.get('/v2/hierarchy', async (req, res) => {
         JOIN area ar ON l.area_id = ar.id
         JOIN city ci ON ar.city_id = ci.id
         WHERE e.state = 'CREATED'
-        ORDER BY e.club_id, ci.id, e.start_time DESC
+        ORDER BY e.club_id, ar.id, e.start_time DESC
       ),
-      -- Metrics per (club, city) - only count events with bookings in that city
+      -- Metrics per (club, area) - count events with bookings in that area
       club_metrics AS (
         SELECT
           c.pk as club_id,
           c.name as club_name,
           a.id as activity_id,
           a.name as activity_name,
-          ci.id as city_id,
+          ar.id as area_id,
           COUNT(DISTINCT CASE
             WHEN e.start_time >= ${weekStartSQL}
             AND e.start_time < ${weekEndSQL}
@@ -2181,7 +2181,7 @@ router.get('/v2/hierarchy', async (req, res) => {
           AND c.is_private = false
           AND a.name != 'Test'
           ${activity_id ? `AND a.id = ${parseInt(activity_id as string)}` : ''}
-        GROUP BY c.pk, c.name, a.id, a.name, ci.id
+        GROUP BY c.pk, c.name, a.id, a.name, ar.id
       )
       SELECT
         cm.club_id,
@@ -2195,8 +2195,8 @@ router.get('/v2/hierarchy', async (req, res) => {
         cm.current_meetups,
         cm.current_revenue
       FROM club_metrics cm
-      -- Join on both club_id AND city_id to get per-city rows
-      INNER JOIN club_locations cl ON cm.club_id = cl.club_id AND cm.city_id = cl.city_id
+      -- Join on both club_id AND area_id to get per-area rows
+      INNER JOIN club_locations cl ON cm.club_id = cl.club_id AND cm.area_id = cl.area_id
       ORDER BY cm.activity_name, cl.city_name, cl.area_name, cm.club_name
     `;
 
