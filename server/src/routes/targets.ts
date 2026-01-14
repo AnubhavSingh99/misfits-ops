@@ -5252,19 +5252,31 @@ router.get('/v2/launches/:launchId/matching-clubs', async (req, res) => {
     }
 
     // Use provided city_id or fall back to launch's city
-    const filterCityId = city_id ? parseInt(city_id as string) : launchCityId;
+    // Note: city_id from frontend is production city ID, need to map to dim_cities
+    const productionCityId = city_id ? parseInt(city_id as string) : null;
 
-    if (!filterCityId) {
+    if (!productionCityId && !launchCityId) {
       return res.status(400).json({
         success: false,
         error: 'city_id is required'
       });
     }
 
+    // Map production city ID to dim_cities ID
+    let dimCityId: number | null = launchCityId;
+    if (productionCityId) {
+      const dimCityResult = await queryLocal(`
+        SELECT id FROM dim_cities WHERE production_city_id = $1
+      `, [productionCityId]);
+      if (dimCityResult.rows.length > 0) {
+        dimCityId = dimCityResult.rows[0].id;
+      }
+    }
+
     // Get areas in the selected city for mapping
     const cityAreas = await queryLocal(`
       SELECT id, production_area_id, area_name as name FROM dim_areas WHERE city_id = $1
-    `, [filterCityId]);
+    `, [dimCityId]);
 
     const cityAreaProductionIds = cityAreas.rows.map((a: any) => a.production_area_id).filter(Boolean);
 
@@ -5353,6 +5365,17 @@ router.get('/v2/launches/:launchId/matching-clubs', async (req, res) => {
 
     const clubsResult = await queryProduction(clubQuery, params);
 
+    // Get the launch's original city name for comparison
+    let launchCityName = launch.planned_city;
+    if (launchCityId) {
+      const launchCityResult = await queryLocal(`
+        SELECT city_name FROM dim_cities WHERE id = $1
+      `, [launchCityId]);
+      if (launchCityResult.rows.length > 0) {
+        launchCityName = launchCityResult.rows[0].city_name;
+      }
+    }
+
     // Enrich with same_area and same_city flags
     const clubs = clubsResult.rows.map((club: any) => {
       // Check if club has events in the launch's specific area
@@ -5363,6 +5386,9 @@ router.get('/v2/launches/:launchId/matching-clubs', async (req, res) => {
           )
         : false;
 
+      // Check if club's city matches launch's original city
+      const isSameCity = club.city_name?.toLowerCase() === launchCityName?.toLowerCase();
+
       return {
         club_id: club.club_id,
         club_uuid: club.club_uuid,
@@ -5370,7 +5396,7 @@ router.get('/v2/launches/:launchId/matching-clubs', async (req, res) => {
         city_name: club.city_name || launch.planned_city,
         area_name: club.area_name || 'Unknown',
         is_same_area: isSameArea,
-        is_same_city: true, // All results are from the same city
+        is_same_city: isSameCity,
         event_count: parseInt(club.event_count) || 0,
         health_status: 'gray' as const // Could be enhanced to calculate actual health
       };
