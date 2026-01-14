@@ -3586,6 +3586,9 @@ router.get('/v2/hierarchy', async (req, res) => {
             id: `activity:${activityId}-city:${cityId}`,
             name: areaInfo.city_name,
             city_id: cityId,
+            city_name: areaInfo.city_name, // For modal context
+            activity_id: activityId, // For modal context
+            activity_name: club.activity_name, // For modal context
             target_meetups: 0,
             target_revenue: 0,
             current_meetups: 0,
@@ -3611,7 +3614,11 @@ router.get('/v2/hierarchy', async (req, res) => {
             id: `activity:${activityId}-city:${cityId}-area:${areaId}`,
             name: areaInfo.area_name,
             area_id: areaId,
+            area_name: areaInfo.area_name, // For modal context
             city_id: cityId,
+            city_name: areaInfo.city_name, // For modal context
+            activity_id: activityId, // For modal context
+            activity_name: club.activity_name, // For modal context
             target_meetups: 0,
             target_revenue: 0,
             current_meetups: 0,
@@ -3802,6 +3809,9 @@ router.get('/v2/hierarchy', async (req, res) => {
             id: `activity:${activityId}-city:${cityId}`,
             name: areaInfo.city_name || 'Unknown',
             city_id: cityId,
+            city_name: areaInfo.city_name || 'Unknown', // For modal context
+            activity_id: activityId, // For modal context
+            activity_name: launch.activity_name, // For modal context
             target_meetups: 0,
             target_revenue: 0,
             current_meetups: 0,
@@ -3829,7 +3839,11 @@ router.get('/v2/hierarchy', async (req, res) => {
             id: `activity:${activityId}-city:${cityId}-area:${areaId}`,
             name: areaInfo.name || 'Unknown',
             area_id: areaId,
+            area_name: areaInfo.name || 'Unknown', // For modal context
             city_id: cityId,
+            city_name: areaInfo.city_name || 'Unknown', // For modal context
+            activity_id: activityId, // For modal context
+            activity_name: launch.activity_name, // For modal context
             target_meetups: 0,
             target_revenue: 0,
             current_meetups: 0,
