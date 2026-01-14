@@ -376,7 +376,7 @@ function StageDistribution({ progress, compact = false }: StageDistributionProps
   }
 
   return (
-    <div className={`flex flex-wrap gap-1 ${compact ? 'min-w-[140px]' : ''}`}>
+    <div className={`flex flex-wrap gap-1 ${compact ? 'max-w-[400px]' : ''}`}>
       {stages.map(s => (
         <StagePill key={s.key} stage={s.key} count={s.count} />
       ))}
@@ -3564,9 +3564,9 @@ export default function ScalingPlannerV2() {
         />
 
         {/* Hierarchy Table */}
-        <div className="bg-white rounded-lg shadow border border-gray-200">
+        <div className="bg-white rounded-lg shadow border border-gray-200 overflow-x-auto">
           <div ref={tableContainerRef}>
-            <table className="w-full">
+            <table className="w-full min-w-[1400px]">
               <thead className="bg-gray-50 sticky top-14 z-20 shadow-sm">
                 <tr className="bg-gray-50 border-b border-gray-200">
                   <SortableHeader
@@ -3610,13 +3610,13 @@ export default function ScalingPlannerV2() {
                     onSort={handleSort}
                     align="right"
                   />
-                  <th className="text-left py-3 px-4 text-xs font-semibold text-gray-600 uppercase tracking-wider min-w-[160px]">
+                  <th className="text-left py-3 px-4 text-xs font-semibold text-gray-600 uppercase tracking-wider">
                     <div className="flex items-center gap-1">
                       Meetup Stage
                       <InfoIconButton onClick={() => setStageInfoModalType('meetup_stage')} />
                     </div>
                   </th>
-                  <th className="text-left py-3 px-4 text-xs font-semibold text-gray-600 uppercase tracking-wider min-w-[180px]">
+                  <th className="text-left py-3 px-4 text-xs font-semibold text-gray-600 uppercase tracking-wider">
                     <div className="flex items-center gap-1">
                       Revenue Status (₹K)
                       <InfoIconButton onClick={() => setStageInfoModalType('revenue_status')} />
