@@ -2181,7 +2181,8 @@ router.get('/v2/hierarchy', async (req, res) => {
         cm.current_meetups,
         cm.current_revenue
       FROM club_metrics cm
-      LEFT JOIN club_locations cl ON cm.club_id = cl.club_id
+      -- INNER JOIN excludes clubs with no events (they have no location data)
+      INNER JOIN club_locations cl ON cm.club_id = cl.club_id
       ORDER BY cm.activity_name, cl.city_name, cl.area_name, cm.club_name
     `;
 
