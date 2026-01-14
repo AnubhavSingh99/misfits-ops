@@ -895,9 +895,8 @@ export function MeetupDetailsTooltip({
     if (!isVisible) setShowWeekDropdown(false);
   }, [isVisible]);
 
-  if (currentMeetups === 0) {
-    return <>{children}</>;
-  }
+  // Removed: if (currentMeetups === 0) return children
+  // Tooltip should always show for clubs - health data is valuable even with 0 meetups
 
   return (
     <>
