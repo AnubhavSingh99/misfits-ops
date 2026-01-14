@@ -646,7 +646,7 @@ export function LeaderRequirementsTooltip({
       {isOpen && triggerRect && createPortal(
         <div
           ref={tooltipRef}
-          className="fixed z-[9999] overflow-hidden"
+          className="fixed z-[9999] flex flex-col"
           style={{
             left: tooltipStyle.left,
             top: tooltipStyle.top,
@@ -657,7 +657,7 @@ export function LeaderRequirementsTooltip({
           onMouseEnter={handleTooltipEnter}
           onMouseLeave={handleTooltipLeave}
         >
-          <div className="bg-white rounded-xl shadow-2xl border border-gray-200 animate-in fade-in zoom-in-95 duration-150 flex flex-col h-full">
+          <div className="bg-white rounded-xl shadow-2xl border border-gray-200 animate-in fade-in zoom-in-95 duration-150 flex flex-col overflow-hidden" style={{ maxHeight: 'inherit' }}>
             {/* Header */}
             <div className="px-3 py-2 bg-gradient-to-r from-indigo-50 to-violet-50 border-b border-indigo-100 flex-shrink-0">
               <div className="flex items-center justify-between">
