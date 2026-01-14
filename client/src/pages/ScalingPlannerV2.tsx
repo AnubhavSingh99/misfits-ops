@@ -2648,18 +2648,18 @@ export default function ScalingPlannerV2() {
         const savedScroll = sessionStorage.getItem(SCROLL_POSITION_KEY)
         if (savedScroll) {
           const scrollTop = parseInt(savedScroll, 10)
-          // Use multiple animation frames + timeout to ensure DOM is fully rendered
-          // This is needed because React batches state updates and the DOM may not be ready
-          const restoreScroll = () => {
-            requestAnimationFrame(() => {
-              requestAnimationFrame(() => {
-                window.scrollTo({ top: scrollTop, behavior: 'instant' })
-              })
+          if (scrollTop > 0) {
+            // Try multiple times with increasing delays to handle async rendering
+            const attempts = [0, 50, 150, 300, 500]
+            attempts.forEach(delay => {
+              setTimeout(() => {
+                // Only scroll if we haven't already scrolled close to target
+                if (Math.abs(window.scrollY - scrollTop) > 50) {
+                  window.scrollTo({ top: scrollTop, behavior: 'instant' })
+                }
+              }, delay)
             })
           }
-          // Also try after a short delay as backup for slower renders
-          restoreScroll()
-          setTimeout(restoreScroll, 100)
         }
       } catch {
         // Ignore errors
@@ -2667,22 +2667,34 @@ export default function ScalingPlannerV2() {
     }
   }, [loading, hierarchy.length])
 
-  // Save scroll position on scroll (debounced via passive listener)
+  // Save scroll position on scroll (debounced) and before page unload
   useEffect(() => {
     let timeout: ReturnType<typeof setTimeout>
+
+    const saveScrollPosition = () => {
+      try {
+        sessionStorage.setItem(SCROLL_POSITION_KEY, String(window.scrollY))
+      } catch {
+        // Ignore errors
+      }
+    }
+
     const handleScroll = () => {
       clearTimeout(timeout)
-      timeout = setTimeout(() => {
-        try {
-          sessionStorage.setItem(SCROLL_POSITION_KEY, String(window.scrollY))
-        } catch {
-          // Ignore errors
-        }
-      }, 100)
+      timeout = setTimeout(saveScrollPosition, 100)
     }
+
+    // Save immediately before page unload (refresh/navigate)
+    const handleBeforeUnload = () => {
+      saveScrollPosition()
+    }
+
     window.addEventListener('scroll', handleScroll, { passive: true })
+    window.addEventListener('beforeunload', handleBeforeUnload)
+
     return () => {
       window.removeEventListener('scroll', handleScroll)
+      window.removeEventListener('beforeunload', handleBeforeUnload)
       clearTimeout(timeout)
     }
   }, [])
