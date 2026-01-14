@@ -2118,8 +2118,15 @@ router.get('/v2/hierarchy', async (req, res) => {
     // Get ALL clubs from production with area derived from event locations
     // MULTI-CITY: Clubs appear once per city where they have events
     // Meetups/revenue are split by city
+    // 0-BOOKING FILTER: Only count events with at least 1 valid booking
     const clubsQuery = `
       WITH
+      -- Pre-filter events that have at least one valid booking (not cancelled/rejected)
+      events_with_bookings AS (
+        SELECT DISTINCT b.event_id
+        FROM booking b
+        WHERE b.status NOT IN ('CANCELLED', 'REJECTED')
+      ),
       -- One row per (club, city) with the most recent area in that city
       club_locations AS (
         SELECT DISTINCT ON (e.club_id, ci.id)
@@ -2134,7 +2141,7 @@ router.get('/v2/hierarchy', async (req, res) => {
         JOIN city ci ON ar.city_id = ci.id
         ORDER BY e.club_id, ci.id, e.start_time DESC
       ),
-      -- Metrics per (club, city) - only count events in that city
+      -- Metrics per (club, city) - only count events with bookings in that city
       club_metrics AS (
         SELECT
           c.pk as club_id,
@@ -2146,6 +2153,7 @@ router.get('/v2/hierarchy', async (req, res) => {
             WHEN e.start_time >= ${weekStartSQL}
             AND e.start_time < ${weekEndSQL}
             AND e.state = 'CREATED'
+            AND e.pk IN (SELECT event_id FROM events_with_bookings)
             THEN e.pk
           END) as current_meetups,
           COALESCE(SUM(
@@ -5083,9 +5091,11 @@ router.get('/clubs/:clubId/meetup-details', async (req, res) => {
     const result = await queryProduction(meetupsQuery, [clubId]);
 
     // Build response with matched targets from the matching service
+    // 0-BOOKING FILTER: Events with 0 bookings are shown but marked as not counted
     const meetups = result.rows.map((row: any) => {
       const eventId = parseInt(row.event_id);
       const matchedTarget = eventToTarget.get(eventId) || null;
+      const totalBookings = parseInt(row.total_bookings) || 0;
 
       return {
         event_id: row.event_id,
@@ -5096,13 +5106,15 @@ router.get('/clubs/:clubId/meetup-details', async (req, res) => {
         price: parseInt(row.price) || 0,
         payment_type: row.payment_type || null,
         pricing_type: row.pricing_type || null,
-        total_bookings: parseInt(row.total_bookings) || 0,
+        total_bookings: totalBookings,
         waitlist_count: parseInt(row.waitlist_count) || 0,
         open_for_replacement_count: parseInt(row.open_for_replacement_count) || 0,
         no_show_count: parseInt(row.no_show_count) || 0,
         revenue: parseFloat(row.revenue) || 0,
         pending_payment: parseFloat(row.pending_payment) || 0,
-        matched_target: matchedTarget
+        matched_target: matchedTarget,
+        // Flag to indicate if this meetup is counted in current column (has valid bookings)
+        counted_in_current: totalBookings > 0
       };
     });
 

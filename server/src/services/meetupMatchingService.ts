@@ -121,6 +121,7 @@ export async function getClubMeetups(
 ): Promise<ActualMeetup[]> {
   try {
     // Default to last completed week if not specified
+    // 0-BOOKING FILTER: Only include events with at least 1 valid booking
     const query = `
       WITH week_bounds AS (
         SELECT
@@ -137,7 +138,8 @@ export async function getClubMeetups(
         e.start_time AT TIME ZONE 'Asia/Kolkata' as start_time,
         COALESCE(SUM(
           CASE WHEN p.state = 'COMPLETED' THEN p.amount / 100.0 ELSE 0 END
-        ), 0) as revenue
+        ), 0) as revenue,
+        COUNT(DISTINCT CASE WHEN b.status NOT IN ('CANCELLED', 'REJECTED') THEN b.id END) as booking_count
       FROM event e
       JOIN location l ON e.location_id = l.id
       LEFT JOIN area a ON l.area_id = a.id
@@ -150,6 +152,7 @@ export async function getClubMeetups(
         AND e.start_time AT TIME ZONE 'Asia/Kolkata' >= wb.week_start
         AND e.start_time AT TIME ZONE 'Asia/Kolkata' < wb.week_end
       GROUP BY e.pk, e.name, e.club_id, l.area_id, a.name, e.start_time
+      HAVING COUNT(DISTINCT CASE WHEN b.status NOT IN ('CANCELLED', 'REJECTED') THEN b.id END) > 0
       ORDER BY e.start_time
     `;
 
@@ -363,14 +366,18 @@ export function calculateNewProgress(
   matchedMeetups: number,
   targetMeetups: number
 ): { progress: StageProgressWithUA; extraMeetups: number } {
+  // Reset realised to 0 - we calculate it fresh from matched meetups
+  // This ensures auto-matching shows absolute values, not incremental
+  // The stored progress stages (not_picked through stage_4) are the "pipeline"
+  // Matched meetups move from pipeline to realised
   const progress: StageProgressWithUA = {
     ...currentProgress,
+    realised: 0,  // Reset to calculate from scratch
     unattributed_meetups: 0
   };
 
-  // Cap realised at target
-  const maxCanRealise = targetMeetups - progress.realised;
-  const toRealise = Math.min(matchedMeetups, maxCanRealise);
+  // Cap realised at target - all matched meetups go to realised (up to target)
+  const toRealise = Math.min(matchedMeetups, targetMeetups);
   const extraMeetups = matchedMeetups - toRealise;
 
   let remaining = toRealise;

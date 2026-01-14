@@ -19,6 +19,7 @@ interface MeetupDetail {
   revenue: number;
   pending_payment: number;
   matched_target: { id: number; name: string | null } | null;
+  counted_in_current?: boolean; // Flag: false if 0 bookings (not counted in current column)
 }
 
 type HealthStatus = 'green' | 'yellow' | 'red' | 'gray';
@@ -1008,19 +1009,26 @@ export function MeetupDetailsTooltip({
 
                       {/* Meetup Rows */}
                       <div>
-                        {data?.meetups.map((meetup) => (
+                        {data?.meetups.map((meetup) => {
+                          const isNotCounted = meetup.counted_in_current === false;
+                          return (
                           <div
                             key={meetup.event_id}
-                            className="grid grid-cols-[1.5fr_70px_50px_60px_60px_80px] gap-2 px-4 py-2 border-b border-gray-50 hover:bg-gray-50/50 transition-colors"
+                            className={`grid grid-cols-[1.5fr_70px_50px_60px_60px_80px] gap-2 px-4 py-2 border-b border-gray-50 transition-colors ${
+                              isNotCounted ? 'bg-gray-50/50 opacity-60' : 'hover:bg-gray-50/50'
+                            }`}
                           >
                             {/* Meetup name - wider, with description tooltip on hover */}
-                            <div className="min-w-0">
+                            <div className="min-w-0 flex items-center gap-1">
                               <EventNameWithTooltip
                                 name={meetup.event_name}
                                 description={meetup.event_description}
                                 paymentType={meetup.payment_type}
                                 pricingType={meetup.pricing_type}
                               />
+                              {isNotCounted && (
+                                <span className="text-[8px] text-gray-400 whitespace-nowrap">(not counted)</span>
+                              )}
                             </div>
 
                             {/* Date */}
@@ -1071,7 +1079,8 @@ export function MeetupDetailsTooltip({
                               </span>
                             </div>
                           </div>
-                        ))}
+                        );
+                        })}
                       </div>
                     </>
                   )}
