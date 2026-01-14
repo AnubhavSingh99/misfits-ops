@@ -374,12 +374,12 @@ export function HierarchyRollupHeader({
       </td>
 
       {/* Stage Distribution column */}
-      <td className="py-2 px-2 align-middle">
+      <td className="pt-4 pb-2 px-2 align-top">
         <StagePills progress={totals.progress} />
       </td>
 
       {/* Revenue Status column */}
-      <td className="py-2 px-2 align-middle">
+      <td className="pt-4 pb-2 px-2 align-top">
         <RevenueStatusPills revenueStatus={totals.revenueStatus} compact />
       </td>
 
