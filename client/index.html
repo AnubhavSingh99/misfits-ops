@@ -7,6 +7,13 @@
     <title>Misfits Operations Platform</title>
   </head>
   <body>
+    <script>
+      // Disable browser's native scroll restoration immediately
+      // This must run before React hydrates to prevent scroll conflicts
+      if ('scrollRestoration' in history) {
+        history.scrollRestoration = 'manual';
+      }
+    </script>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
