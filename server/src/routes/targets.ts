@@ -2991,7 +2991,7 @@ router.get('/v2/hierarchy', async (req, res) => {
 
               return {
                 type: 'target',
-                id: `target:${targetId}`,
+                id: `target:${targetId}-expansion-${areaId}`,
                 name: t.target_name || `Target ${targetId}`,
                 target_id: targetId,
                 club_id: clubId,
@@ -3699,7 +3699,7 @@ router.get('/v2/hierarchy', async (req, res) => {
 
           return {
             type: 'target',
-            id: `activity:${activityId}-city:${cityId}-area:${areaId}-club:${clubId}-target:${targetId}`,
+            id: `activity:${activityId}-city:${cityId}-area:${areaId}-club:${clubId}-expansion-target:${targetId}`,
             name: targetName,
             club_id: clubId,
             activity_id: activityId,
