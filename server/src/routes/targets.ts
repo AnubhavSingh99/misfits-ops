@@ -2128,6 +2128,7 @@ router.get('/v2/hierarchy', async (req, res) => {
         WHERE b.booking_status NOT IN ('DEREGISTERED', 'INITIATED')
       ),
       -- One row per (club, city) with the most recent area in that city
+      -- Only consider CREATED events (not cancelled)
       club_locations AS (
         SELECT DISTINCT ON (e.club_id, ci.id)
           e.club_id,
@@ -2139,6 +2140,7 @@ router.get('/v2/hierarchy', async (req, res) => {
         JOIN location l ON e.location_id = l.id
         JOIN area ar ON l.area_id = ar.id
         JOIN city ci ON ar.city_id = ci.id
+        WHERE e.state = 'CREATED'
         ORDER BY e.club_id, ci.id, e.start_time DESC
       ),
       -- Metrics per (club, city) - only count events with bookings in that city
