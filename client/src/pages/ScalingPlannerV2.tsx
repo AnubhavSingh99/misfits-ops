@@ -2578,8 +2578,8 @@ export default function ScalingPlannerV2() {
 
   // Fetch data with optional scroll position preservation
   const fetchData = useCallback(async (preserveScroll = false) => {
-    // Save scroll position if preserving
-    const scrollTop = preserveScroll ? tableContainerRef.current?.scrollTop : undefined
+    // Save window scroll position if preserving
+    const windowScrollY = preserveScroll ? window.scrollY : undefined
 
     // Only show loading spinner on initial load (when no data yet)
     // This prevents flicker when changing hierarchy order
@@ -2621,13 +2621,17 @@ export default function ScalingPlannerV2() {
         setTrends(trendsData)
       }
 
-      // Restore scroll position after state updates
-      if (preserveScroll && scrollTop !== undefined) {
-        requestAnimationFrame(() => {
-          if (tableContainerRef.current) {
-            tableContainerRef.current.scrollTop = scrollTop
+      // Restore window scroll position after state updates and DOM render
+      if (preserveScroll && windowScrollY !== undefined) {
+        // Use multiple attempts to handle async rendering
+        const restoreScroll = () => {
+          if (Math.abs(window.scrollY - windowScrollY) > 50) {
+            window.scrollTo({ top: windowScrollY, behavior: 'instant' })
           }
-        })
+        }
+        requestAnimationFrame(restoreScroll)
+        setTimeout(restoreScroll, 100)
+        setTimeout(restoreScroll, 300)
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load data')
