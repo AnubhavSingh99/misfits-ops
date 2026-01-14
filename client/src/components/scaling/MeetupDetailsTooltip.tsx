@@ -8,6 +8,7 @@ interface MeetupDetail {
   event_name: string;
   event_description: string | null;
   event_date: string;
+  area_name: string | null;
   capacity: number;
   price: number;
   payment_type: string | null;
@@ -998,12 +999,13 @@ export function MeetupDetailsTooltip({
                       </div>
 
                       {/* Column Headers - wider first column */}
-                      <div className="grid grid-cols-[1.5fr_70px_50px_60px_60px_80px] gap-2 px-4 py-1.5 bg-gray-50 border-b border-gray-100 sticky top-[33px] z-[5]">
+                      <div className="grid grid-cols-[1.2fr_70px_70px_50px_55px_55px_70px] gap-1.5 px-4 py-1.5 bg-gray-50 border-b border-gray-100 sticky top-[33px] z-[5]">
                         <span className="text-[9px] font-semibold text-gray-400 uppercase tracking-wider">Meetup</span>
                         <span className="text-[9px] font-semibold text-gray-400 uppercase tracking-wider text-center">Date</span>
+                        <span className="text-[9px] font-semibold text-gray-400 uppercase tracking-wider text-center">Area</span>
                         <span className="text-[9px] font-semibold text-gray-400 uppercase tracking-wider text-center">Price</span>
                         <span className="text-[9px] font-semibold text-gray-400 uppercase tracking-wider text-center">Booked</span>
-                        <span className="text-[9px] font-semibold text-gray-400 uppercase tracking-wider text-right">Revenue</span>
+                        <span className="text-[9px] font-semibold text-gray-400 uppercase tracking-wider text-right">Rev</span>
                         <span className="text-[9px] font-semibold text-gray-400 uppercase tracking-wider text-right">Target</span>
                       </div>
 
@@ -1014,7 +1016,7 @@ export function MeetupDetailsTooltip({
                           return (
                           <div
                             key={meetup.event_id}
-                            className={`grid grid-cols-[1.5fr_70px_50px_60px_60px_80px] gap-2 px-4 py-2 border-b border-gray-50 transition-colors ${
+                            className={`grid grid-cols-[1.2fr_70px_70px_50px_55px_55px_70px] gap-1.5 px-4 py-2 border-b border-gray-50 transition-colors ${
                               isNotCounted ? 'bg-gray-50/50 opacity-60' : 'hover:bg-gray-50/50'
                             }`}
                           >
@@ -1027,27 +1029,34 @@ export function MeetupDetailsTooltip({
                                 pricingType={meetup.pricing_type}
                               />
                               {isNotCounted && (
-                                <span className="text-[8px] text-gray-400 whitespace-nowrap">(not counted)</span>
+                                <span className="text-[8px] text-gray-400 whitespace-nowrap">(nc)</span>
                               )}
                             </div>
 
                             {/* Date */}
                             <div className="flex items-center justify-center">
-                              <span className="text-[11px] text-gray-500">
+                              <span className="text-[10px] text-gray-500">
                                 {formatDate(meetup.event_date).replace(/, /g, ' ')}
+                              </span>
+                            </div>
+
+                            {/* Area */}
+                            <div className="flex items-center justify-center">
+                              <span className="text-[10px] text-gray-500 truncate" title={meetup.area_name || ''}>
+                                {meetup.area_name || '—'}
                               </span>
                             </div>
 
                             {/* Price */}
                             <div className="flex items-center justify-center">
-                              <span className="text-[11px] text-gray-500 font-mono">
+                              <span className="text-[10px] text-gray-500 font-mono">
                                 ₹{Math.round(meetup.price / 100)}
                               </span>
                             </div>
 
                             {/* Bookings / Capacity */}
                             <div className="flex items-center justify-center">
-                              <span className="text-[11px] font-mono">
+                              <span className="text-[10px] font-mono">
                                 <span className={
                                   meetup.total_bookings >= meetup.capacity * 0.8
                                     ? 'text-emerald-600 font-medium'
@@ -1063,7 +1072,7 @@ export function MeetupDetailsTooltip({
 
                             {/* Revenue */}
                             <div className="flex items-center justify-end">
-                              <span className={`text-[11px] font-mono ${
+                              <span className={`text-[10px] font-mono ${
                                 meetup.revenue > 0 ? 'text-gray-700' : 'text-gray-400'
                               }`}>
                                 {formatCurrency(meetup.revenue)}
