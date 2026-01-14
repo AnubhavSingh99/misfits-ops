@@ -122,9 +122,7 @@ export function Layout({ children }: LayoutProps) {
         {/* Sidebar Header */}
         <div className="flex items-center justify-between h-16 px-5 border-b border-slate-100">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 rounded-xl flex items-center justify-center shadow-lg shadow-indigo-500/25">
-              <span className="text-white text-sm font-black tracking-tight">M</span>
-            </div>
+            <img src="/favicon.png" alt="Misfits" className="w-9 h-9 rounded-xl shadow-lg" />
             <div>
               <span className="text-base font-bold text-slate-800 tracking-tight">Misfits</span>
               <span className="text-[10px] font-medium text-slate-400 block -mt-0.5 uppercase tracking-widest">Operations</span>
@@ -196,9 +194,7 @@ export function Layout({ children }: LayoutProps) {
 
           {/* Logo & Title */}
           <div className="flex items-center gap-3 ml-3">
-            <div className="w-7 h-7 bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 rounded-lg flex items-center justify-center shadow-md shadow-indigo-500/20">
-              <span className="text-white text-xs font-black">M</span>
-            </div>
+            <img src="/favicon.png" alt="Misfits" className="w-7 h-7 rounded-lg shadow-md" />
             <div className="hidden sm:block">
               <h1 className="text-sm font-bold text-slate-800">{pageTitle}</h1>
             </div>
