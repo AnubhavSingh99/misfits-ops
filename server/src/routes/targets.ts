@@ -5730,7 +5730,7 @@ router.get('/clubs/:clubId/meetup-details', async (req, res) => {
 
     // Remaining unassigned meetups stay unattributed (eventToTarget won't have them)
 
-    // Fetch additional meetup details (capacity, price, bookings, waitlist, no-shows, pending payments, area)
+    // Fetch additional meetup details (capacity, price, bookings, waitlist, no-shows, pending payments, area, venue)
     const meetupsQuery = `
       SELECT
         e.pk as event_id,
@@ -5742,6 +5742,7 @@ router.get('/clubs/:clubId/meetup-details', async (req, res) => {
         e.payment_type,
         e.pricing_type,
         ar.name as area_name,
+        l.name as venue_name,
         COUNT(DISTINCT CASE WHEN b.booking_status NOT IN ('DEREGISTERED', 'INITIATED') THEN b.id END) as total_bookings,
         COUNT(DISTINCT CASE WHEN b.booking_status = 'WAITLISTED' THEN b.id END) as waitlist_count,
         COUNT(DISTINCT CASE WHEN b.booking_status = 'OPEN_FOR_REPLACEMENT' THEN b.id END) as open_for_replacement_count,
@@ -5760,7 +5761,7 @@ router.get('/clubs/:clubId/meetup-details', async (req, res) => {
         AND e.start_time >= ${weekStartSQL}
         AND e.start_time < ${weekEndSQL}
         AND e.state = 'CREATED'
-      GROUP BY e.pk, e.name, e.description, e.start_time, e.max_people, e.ticket_price, e.payment_type, e.pricing_type, ar.name
+      GROUP BY e.pk, e.name, e.description, e.start_time, e.max_people, e.ticket_price, e.payment_type, e.pricing_type, ar.name, l.name
       ORDER BY e.start_time DESC
     `;
 
@@ -5779,6 +5780,7 @@ router.get('/clubs/:clubId/meetup-details', async (req, res) => {
         event_description: row.event_description || null,
         event_date: row.event_date,
         area_name: row.area_name || null,
+        venue_name: row.venue_name || null,
         capacity: parseInt(row.capacity) || 0,
         price: parseInt(row.price) || 0,
         payment_type: row.payment_type || null,

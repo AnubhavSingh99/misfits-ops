@@ -9,6 +9,7 @@ interface MeetupDetail {
   event_description: string | null;
   event_date: string;
   area_name: string | null;
+  venue_name: string | null;
   capacity: number;
   price: number;
   payment_type: string | null;
@@ -168,12 +169,14 @@ function EventNameWithTooltip({
   name,
   description,
   paymentType,
-  pricingType
+  pricingType,
+  venueName
 }: {
   name: string;
   description: string | null;
   paymentType?: string | null;
   pricingType?: string | null;
+  venueName?: string | null;
 }) {
   const [show, setShow] = useState(false);
   const [pos, setPos] = useState({ top: 0, left: 0 });
@@ -182,7 +185,7 @@ function EventNameWithTooltip({
 
   // Parse Quill Delta format to plain text
   const parsedDescription = parseQuillDelta(description);
-  const hasContent = parsedDescription || paymentType || pricingType;
+  const hasContent = parsedDescription || paymentType || pricingType || venueName;
 
   const handleMouseEnter = () => {
     if (hideTimeoutRef.current) {
@@ -229,11 +232,17 @@ function EventNameWithTooltip({
         >
           <div className="max-w-sm px-3 py-2.5 rounded-xl bg-white border border-gray-200 text-[11px] leading-relaxed shadow-lg">
             <div className="font-semibold mb-1.5 text-gray-900 text-xs">{name}</div>
+            {venueName && (
+              <div className="flex items-center gap-1 text-gray-500 mb-1.5">
+                <span className="text-[10px]">📍</span>
+                <span className="text-[10px]">{venueName}</span>
+              </div>
+            )}
             {parsedDescription && (
               <div className="text-gray-600 whitespace-pre-wrap max-h-48 overflow-y-auto">{parsedDescription}</div>
             )}
             {(paymentType || pricingType) && (
-              <div className={`flex items-center gap-2 ${parsedDescription ? 'mt-2 pt-2 border-t border-gray-100' : ''}`}>
+              <div className={`flex items-center gap-2 ${parsedDescription || venueName ? 'mt-2 pt-2 border-t border-gray-100' : ''}`}>
                 {paymentType && (
                   <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
                     paymentType === 'FREE' ? 'bg-green-100 text-green-700' :
@@ -1026,6 +1035,7 @@ export function MeetupDetailsTooltip({
                                 description={meetup.event_description}
                                 paymentType={meetup.payment_type}
                                 pricingType={meetup.pricing_type}
+                                venueName={meetup.venue_name}
                               />
                               {isNotCounted && (
                                 <span className="text-[8px] text-gray-400 whitespace-nowrap">(nc)</span>
