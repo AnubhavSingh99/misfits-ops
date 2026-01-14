@@ -727,6 +727,15 @@ export interface HierarchyNode {
     done: number;
     total_requirements: number;
   };
+  // Launch transition tracking (for clubs matched from launches)
+  matched_from_launch?: {
+    launch_id: number;
+    original_name: string;  // Original launch target name
+    match_type: 'auto' | 'manual' | 'legacy';
+    matched_at: string;
+  };
+  // Club UUID for matching operations
+  club_uuid?: string;
 }
 
 // Weekly trend data for charts

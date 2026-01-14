@@ -2167,6 +2167,7 @@ router.get('/v2/hierarchy', async (req, res) => {
       club_metrics AS (
         SELECT
           c.pk as club_id,
+          c.id as club_uuid,
           c.name as club_name,
           a.id as activity_id,
           a.name as activity_name,
@@ -2201,10 +2202,11 @@ router.get('/v2/hierarchy', async (req, res) => {
           AND c.is_private = false
           AND a.name != 'Test'
           ${activity_id ? `AND a.id = ${parseInt(activity_id as string)}` : ''}
-        GROUP BY c.pk, c.name, a.id, a.name, ar.id
+        GROUP BY c.pk, c.id, c.name, a.id, a.name, ar.id
       )
       SELECT
         cm.club_id,
+        cm.club_uuid,
         cm.club_name,
         cm.activity_id,
         cm.activity_name,
@@ -2511,8 +2513,12 @@ router.get('/v2/hierarchy', async (req, res) => {
     let launchesData: any[] = [];
     let launchTargetsMap = new Map<number, any>();
 
+    // Map to store matched launch info by club_id (UUID string)
+    const matchedLaunchesMap = new Map<string, any>();
+
     if (includeLaunches) {
-      // Fetch launches from new_club_launches
+      // Fetch UNMATCHED launches from new_club_launches (actual_club_id IS NULL)
+      // Matched launches are hidden from hierarchy - their targets move to the club
       const launchesQuery = `
         SELECT
           ncl.id as launch_id,
@@ -2524,13 +2530,41 @@ router.get('/v2/hierarchy', async (req, res) => {
           ncl.target_revenue_rupees,
           ncl.launch_status,
           ncl.milestones,
-          ncl.actual_club_id
+          ncl.actual_club_id,
+          ncl.match_type,
+          ncl.matched_at,
+          ncl.matched_club_name,
+          ncl.created_at
         FROM new_club_launches ncl
         WHERE ncl.launch_status IN ('planned', 'in_progress')
+          AND ncl.actual_club_id IS NULL
         ORDER BY ncl.activity_name, ncl.planned_city, ncl.planned_area
       `;
       const launchesResult = await queryLocal(launchesQuery);
       launchesData = launchesResult.rows;
+
+      // Also fetch MATCHED launches to show indicator on club rows
+      const matchedLaunchesQuery = `
+        SELECT
+          ncl.id as launch_id,
+          ncl.activity_name,
+          ncl.planned_club_name,
+          ncl.actual_club_id,
+          ncl.match_type,
+          ncl.matched_at,
+          ncl.matched_club_name
+        FROM new_club_launches ncl
+        WHERE ncl.actual_club_id IS NOT NULL
+      `;
+      const matchedLaunchesResult = await queryLocal(matchedLaunchesQuery);
+      for (const ml of matchedLaunchesResult.rows) {
+        matchedLaunchesMap.set(ml.actual_club_id, {
+          launch_id: ml.launch_id,
+          original_name: ml.planned_club_name,
+          matched_at: ml.matched_at,
+          match_type: ml.match_type
+        });
+      }
 
       // Fetch launch targets from launch_dimensional_targets (including area_id for proper hierarchy placement)
       if (launchesData.length > 0) {
@@ -2548,6 +2582,162 @@ router.get('/v2/hierarchy', async (req, res) => {
         `;
         const launchTargetsResult = await queryLocal(launchTargetsQuery, [launchIds]);
         launchTargetsMap = new Map(launchTargetsResult.rows.map((t: any) => [parseInt(t.launch_id), t]));
+      }
+
+      // AUTO-MATCH LAUNCHES TO CLUBS
+      // For each unmatched launch, check if there's a matching club and auto-transition
+      if (launchesData.length > 0) {
+        const autoMatchedLaunches: number[] = [];
+
+        for (const launch of launchesData) {
+          // Skip if already matched or no target area
+          const launchTarget = launchTargetsMap.get(launch.launch_id);
+          if (!launchTarget?.area_id) continue;
+
+          // Get the production area_id from dim_areas
+          const areaMapping = await queryLocal(`
+            SELECT production_area_id, city_id FROM dim_areas WHERE id = $1
+          `, [launchTarget.area_id]);
+
+          if (areaMapping.rows.length === 0) continue;
+          const productionAreaId = areaMapping.rows[0].production_area_id;
+
+          // Find matching clubs:
+          // 1. Same activity
+          // 2. Active status
+          // 3. Has events in the launch's area
+          // 4. First event in that area is AFTER launch was created
+          const matchingClubsQuery = `
+            WITH club_first_area_event AS (
+              SELECT
+                c.pk as club_id,
+                c.id as club_uuid,
+                c.name as club_name,
+                MIN(e.start_time) as first_area_event
+              FROM club c
+              JOIN activity a ON c.activity_id = a.id
+              JOIN event e ON e.club_id = c.pk
+              JOIN location l ON e.location_id = l.id
+              WHERE a.name = $1
+                AND c.status = 'ACTIVE'
+                AND l.area_id = $2
+                AND e.state = 'CREATED'
+              GROUP BY c.pk, c.id, c.name
+            )
+            SELECT
+              club_id,
+              club_uuid,
+              club_name,
+              first_area_event
+            FROM club_first_area_event
+            WHERE first_area_event > $3
+            ORDER BY first_area_event ASC
+          `;
+
+          const matchingClubsResult = await queryProduction(matchingClubsQuery, [
+            launch.activity_name,
+            productionAreaId,
+            launch.created_at
+          ]);
+
+          if (matchingClubsResult.rows.length === 0) continue;
+
+          // If multiple matches, use name matching to find best match
+          let matchedClub = matchingClubsResult.rows[0];
+          if (matchingClubsResult.rows.length > 1) {
+            // Simple name matching - find club with most word overlap
+            const launchWords = new Set(
+              launch.planned_club_name.toLowerCase()
+                .replace(/[^a-z0-9\s]/g, '')
+                .split(/\s+/)
+                .filter((w: string) => w.length > 2)
+            );
+
+            let bestScore = 0;
+            for (const club of matchingClubsResult.rows) {
+              const clubWords = new Set(
+                club.club_name.toLowerCase()
+                  .replace(/[^a-z0-9\s]/g, '')
+                  .split(/\s+/)
+                  .filter((w: string) => w.length > 2)
+              );
+              const intersection = [...launchWords].filter(w => clubWords.has(w)).length;
+              if (intersection > bestScore) {
+                bestScore = intersection;
+                matchedClub = club;
+              }
+            }
+          }
+
+          // Auto-transition the launch
+          try {
+            // Update launch record
+            await queryLocal(`
+              UPDATE new_club_launches
+              SET
+                launch_status = 'launched',
+                actual_club_id = $1,
+                match_type = 'auto',
+                previous_status = $2,
+                matched_at = CURRENT_TIMESTAMP,
+                matched_club_name = $3,
+                updated_at = CURRENT_TIMESTAMP
+              WHERE id = $4
+            `, [matchedClub.club_uuid, launch.launch_status, matchedClub.club_name, launch.launch_id]);
+
+            // Transfer targets if exists
+            if (launchTarget) {
+              const activityResult = await queryProduction(`
+                SELECT id FROM activity WHERE name = $1
+              `, [launch.activity_name]);
+              const activityId = activityResult.rows[0]?.id;
+
+              if (activityId) {
+                await queryLocal(`
+                  INSERT INTO club_dimensional_targets (
+                    club_id, activity_id, area_id, day_type_id, format_id,
+                    target_meetups, target_revenue, progress
+                  )
+                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                  ON CONFLICT (club_id, COALESCE(area_id, -1), COALESCE(day_type_id, -1), COALESCE(format_id, -1))
+                  DO UPDATE SET
+                    target_meetups = EXCLUDED.target_meetups,
+                    target_revenue = EXCLUDED.target_revenue,
+                    progress = EXCLUDED.progress,
+                    updated_at = CURRENT_TIMESTAMP
+                `, [
+                  matchedClub.club_id,
+                  activityId,
+                  launchTarget.area_id,
+                  launchTarget.day_type_id || null,
+                  launchTarget.format_id || null,
+                  launchTarget.target_meetups,
+                  launchTarget.target_revenue,
+                  launchTarget.progress
+                ]);
+              }
+            }
+
+            // Add to matched launches map for display
+            matchedLaunchesMap.set(matchedClub.club_uuid, {
+              launch_id: launch.launch_id,
+              original_name: launch.planned_club_name,
+              matched_at: new Date().toISOString(),
+              match_type: 'auto'
+            });
+
+            autoMatchedLaunches.push(launch.launch_id);
+            logger.info(`Auto-matched launch ${launch.launch_id} (${launch.planned_club_name}) to club ${matchedClub.club_id} (${matchedClub.club_name})`);
+          } catch (err) {
+            logger.error(`Failed to auto-match launch ${launch.launch_id}:`, err);
+          }
+        }
+
+        // Remove auto-matched launches from launchesData (they're now hidden)
+        if (autoMatchedLaunches.length > 0) {
+          launchesData = launchesData.filter(l => !autoMatchedLaunches.includes(l.launch_id));
+          logger.info(`Auto-matched ${autoMatchedLaunches.length} launches, ${launchesData.length} remaining`);
+        }
       }
     }
 
@@ -2755,11 +2945,16 @@ router.get('/v2/hierarchy', async (req, res) => {
         const dayTypeId = primaryTarget?.day_type_id ? parseInt(primaryTarget.day_type_id) : null;
         const dayTypeName = primaryTarget?.day_type_name || null;
 
+        // Check if this club was matched from a launch target
+        const clubUuid = club.club_uuid;
+        const matchedLaunchInfo = clubUuid ? matchedLaunchesMap.get(clubUuid) : null;
+
         const clubNode = {
           type: 'club',
           id: `club:${clubId}`, // Will be updated with full path
           name: club.club_name,
           club_id: clubId,
+          club_uuid: clubUuid,
           activity_id: activityId,
           area_id: areaId,
           city_id: cityId,
@@ -2801,7 +2996,9 @@ router.get('/v2/hierarchy', async (req, res) => {
           rating_health: getMetricHealth(healthMetrics.avg_rating, HEALTH_THRESHOLDS.avg_rating),
           // Leader requirements summary
           leaders_required_total: leaderRequirementsMap.get(clubId)?.leaders_required_total || 0,
-          leader_requirements_summary: leaderRequirementsMap.get(clubId) || null
+          leader_requirements_summary: leaderRequirementsMap.get(clubId) || null,
+          // Matched from launch indicator (if this club was transitioned from a launch target)
+          matched_from_launch: matchedLaunchInfo || null
         };
 
         const levelValues: Record<HierarchyLevel, { id: number; name: string }> = {
@@ -3488,11 +3685,16 @@ router.get('/v2/hierarchy', async (req, res) => {
       const dayTypeId = primaryTarget?.day_type_id ? parseInt(primaryTarget.day_type_id) : null;
       const dayTypeName = primaryTarget?.day_type_name || null;
 
+      // Check if this club was matched from a launch target
+      const clubUuid = club.club_uuid;
+      const matchedLaunchInfo = clubUuid ? matchedLaunchesMap.get(clubUuid) : null;
+
       const clubNode = {
         type: 'club',
         id: `activity:${activityId}-city:${cityId}-area:${areaId}-club:${clubId}`,
         name: club.club_name,
         club_id: clubId,
+        club_uuid: clubUuid,
         activity_id: activityId,
         area_id: areaId,
         city_id: cityId,
@@ -3531,7 +3733,9 @@ router.get('/v2/hierarchy', async (req, res) => {
         rating_health: getMetricHealth(healthMetrics.avg_rating, HEALTH_THRESHOLDS.avg_rating),
         // Leader requirements summary
         leaders_required_total: leaderRequirementsMap.get(clubId)?.leaders_required_total || 0,
-        leader_requirements_summary: leaderRequirementsMap.get(clubId) || null
+        leader_requirements_summary: leaderRequirementsMap.get(clubId) || null,
+        // Matched from launch indicator (if this club was transitioned from a launch target)
+        matched_from_launch: matchedLaunchInfo || null
       };
 
       areaNode.children.push(clubNode);
@@ -4800,12 +5004,20 @@ router.delete('/v2/launches/:launchId', async (req, res) => {
 router.post('/v2/launches/:launchId/transition', async (req, res) => {
   try {
     const launchId = parseInt(req.params.launchId);
-    const { club_id, club_uuid, transfer_targets } = req.body;
+    const { club_id, club_uuid, club_name, transfer_targets, match_type = 'manual' } = req.body;
 
     if (!club_id) {
       return res.status(400).json({
         success: false,
         error: 'club_id is required'
+      });
+    }
+
+    // Validate match_type
+    if (!['auto', 'manual'].includes(match_type)) {
+      return res.status(400).json({
+        success: false,
+        error: 'match_type must be "auto" or "manual"'
       });
     }
 
@@ -4823,17 +5035,35 @@ router.post('/v2/launches/:launchId/transition', async (req, res) => {
 
     const launch = launchResult.rows[0];
 
+    // Check if already transitioned
+    if (launch.actual_club_id) {
+      return res.status(400).json({
+        success: false,
+        error: 'Launch is already transitioned to a club'
+      });
+    }
+
     // Get launch dimensional targets
     const launchTargetResult = await queryLocal(`
       SELECT * FROM launch_dimensional_targets WHERE launch_id = $1
     `, [launchId]);
 
-    // Update launch status and link to club
+    // Store previous status for revert capability
+    const previousStatus = launch.launch_status;
+
+    // Update launch status and link to club with new tracking fields
     await queryLocal(`
       UPDATE new_club_launches
-      SET launch_status = 'launched', actual_club_id = $1, updated_at = CURRENT_TIMESTAMP
-      WHERE id = $2
-    `, [club_uuid || club_id, launchId]);
+      SET
+        launch_status = 'launched',
+        actual_club_id = $1,
+        match_type = $2,
+        previous_status = $3,
+        matched_at = CURRENT_TIMESTAMP,
+        matched_club_name = $4,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = $5
+    `, [club_uuid || club_id, match_type, previousStatus, club_name || null, launchId]);
 
     // Transfer targets if requested
     if (transfer_targets && launchTargetResult.rows.length > 0) {
@@ -4846,19 +5076,13 @@ router.post('/v2/launches/:launchId/transition', async (req, res) => {
 
       const activityId = activityResult.rows[0]?.id;
 
-      // Create club dimensional target
+      // Create club dimensional target (simple insert - launch targets are new)
       await queryLocal(`
         INSERT INTO club_dimensional_targets (
           club_id, activity_id, area_id, day_type_id, format_id,
           target_meetups, target_revenue, progress
         )
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-        ON CONFLICT (club_id, COALESCE(area_id, -1), COALESCE(day_type_id, -1), COALESCE(format_id, -1))
-        DO UPDATE SET
-          target_meetups = EXCLUDED.target_meetups,
-          target_revenue = EXCLUDED.target_revenue,
-          progress = EXCLUDED.progress,
-          updated_at = CURRENT_TIMESTAMP
       `, [
         club_id,
         activityId,
@@ -4871,19 +5095,303 @@ router.post('/v2/launches/:launchId/transition', async (req, res) => {
       ]);
     }
 
-    logger.info(`Transitioned launch ${launchId} to club ${club_id}`);
+    logger.info(`Transitioned launch ${launchId} to club ${club_id} (${match_type})`);
 
     res.json({
       success: true,
       message: 'Launch transitioned to club successfully',
       club_id,
-      launch_id: launchId
+      club_name,
+      launch_id: launchId,
+      match_type
     });
   } catch (error) {
     logger.error(`Failed to transition launch ${req.params.launchId}:`, error);
     res.status(500).json({
       success: false,
       error: 'Failed to transition launch',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+// POST /api/targets/v2/launches/:launchId/revert - Revert a launch transition
+router.post('/v2/launches/:launchId/revert', async (req, res) => {
+  try {
+    const launchId = parseInt(req.params.launchId);
+    const { delete_club_targets = false } = req.body;
+
+    // Get current launch info
+    const launchResult = await queryLocal(`
+      SELECT * FROM new_club_launches WHERE id = $1
+    `, [launchId]);
+
+    if (launchResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Launch not found'
+      });
+    }
+
+    const launch = launchResult.rows[0];
+
+    if (!launch.actual_club_id) {
+      return res.status(400).json({
+        success: false,
+        error: 'Launch is not transitioned to any club'
+      });
+    }
+
+    const { actual_club_id, previous_status, matched_at, matched_club_name } = launch;
+
+    // Optionally delete club targets that were copied from launch
+    if (delete_club_targets && matched_at) {
+      // Get launch dimensional targets to identify which club targets to delete
+      const launchTargetResult = await queryLocal(`
+        SELECT * FROM launch_dimensional_targets WHERE launch_id = $1
+      `, [launchId]);
+
+      if (launchTargetResult.rows.length > 0) {
+        const launchTarget = launchTargetResult.rows[0];
+
+        // Delete club targets that match the launch's area/day_type/format
+        // These were likely created during the transition
+        await queryLocal(`
+          DELETE FROM club_dimensional_targets
+          WHERE club_id = $1
+            AND COALESCE(area_id, -1) = COALESCE($2, -1)
+            AND COALESCE(day_type_id, -1) = COALESCE($3, -1)
+            AND COALESCE(format_id, -1) = COALESCE($4, -1)
+            AND created_at >= $5
+        `, [
+          // club_id is stored as UUID in actual_club_id, but club_dimensional_targets uses integer
+          // We need to look up the club pk from UUID
+          launchTarget.club_id || actual_club_id,
+          launchTarget.area_id,
+          launchTarget.day_type_id,
+          launchTarget.format_id,
+          matched_at
+        ]);
+
+        logger.info(`Deleted club targets for launch ${launchId} revert`);
+      }
+    }
+
+    // Revert launch status - makes launch visible again in hierarchy
+    await queryLocal(`
+      UPDATE new_club_launches
+      SET
+        launch_status = COALESCE($1, 'planned'),
+        actual_club_id = NULL,
+        match_type = NULL,
+        previous_status = NULL,
+        matched_at = NULL,
+        matched_club_name = NULL,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = $2
+    `, [previous_status, launchId]);
+
+    logger.info(`Reverted launch ${launchId} transition from club ${actual_club_id} (${matched_club_name})`);
+
+    res.json({
+      success: true,
+      message: 'Launch transition reverted successfully',
+      launch_id: launchId,
+      previous_club_id: actual_club_id,
+      previous_club_name: matched_club_name,
+      targets_deleted: delete_club_targets
+    });
+  } catch (error) {
+    logger.error(`Failed to revert launch ${req.params.launchId}:`, error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to revert launch transition',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+// GET /api/targets/v2/launches/:launchId/matching-clubs - Get clubs for manual match modal
+router.get('/v2/launches/:launchId/matching-clubs', async (req, res) => {
+  try {
+    const launchId = parseInt(req.params.launchId);
+    const { city_id, area_id, search } = req.query;
+
+    // Get launch info
+    const launchResult = await queryLocal(`
+      SELECT
+        ncl.*,
+        ldt.area_id as target_area_id
+      FROM new_club_launches ncl
+      LEFT JOIN launch_dimensional_targets ldt ON ncl.id = ldt.launch_id
+      WHERE ncl.id = $1
+    `, [launchId]);
+
+    if (launchResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Launch not found'
+      });
+    }
+
+    const launch = launchResult.rows[0];
+
+    // Get the dim_areas mapping for the launch's area
+    let launchAreaProductionId: number | null = null;
+    let launchCityId: number | null = null;
+
+    if (launch.target_area_id) {
+      const areaMapping = await queryLocal(`
+        SELECT production_area_id, city_id FROM dim_areas WHERE id = $1
+      `, [launch.target_area_id]);
+
+      if (areaMapping.rows.length > 0) {
+        launchAreaProductionId = areaMapping.rows[0].production_area_id;
+        launchCityId = areaMapping.rows[0].city_id;
+      }
+    }
+
+    // Use provided city_id or fall back to launch's city
+    const filterCityId = city_id ? parseInt(city_id as string) : launchCityId;
+
+    if (!filterCityId) {
+      return res.status(400).json({
+        success: false,
+        error: 'city_id is required'
+      });
+    }
+
+    // Get areas in the selected city for mapping
+    const cityAreas = await queryLocal(`
+      SELECT id, production_area_id, area_name as name FROM dim_areas WHERE city_id = $1
+    `, [filterCityId]);
+
+    const cityAreaProductionIds = cityAreas.rows.map((a: any) => a.production_area_id).filter(Boolean);
+
+    if (cityAreaProductionIds.length === 0) {
+      return res.json({
+        success: true,
+        clubs: [],
+        launch: {
+          id: launch.id,
+          activity_name: launch.activity_name,
+          planned_club_name: launch.planned_club_name,
+          planned_city: launch.planned_city,
+          planned_area: launch.planned_area
+        }
+      });
+    }
+
+    // Build query to find matching clubs
+    // Clubs must be: same activity, active, have events in the selected city
+    let clubQuery = `
+      SELECT DISTINCT
+        c.pk as club_id,
+        c.id as club_uuid,
+        c.name as club_name,
+        c.status,
+        a.name as activity_name,
+        (
+          SELECT ar2.name FROM event e2
+          JOIN location l2 ON e2.location_id = l2.id
+          JOIN area ar2 ON l2.area_id = ar2.id
+          WHERE e2.club_id = c.pk
+          ORDER BY e2.start_time DESC LIMIT 1
+        ) as area_name,
+        (
+          SELECT ci2.name FROM event e2
+          JOIN location l2 ON e2.location_id = l2.id
+          JOIN area ar2 ON l2.area_id = ar2.id
+          JOIN city ci2 ON ar2.city_id = ci2.id
+          WHERE e2.club_id = c.pk
+          ORDER BY e2.start_time DESC LIMIT 1
+        ) as city_name,
+        (
+          SELECT COUNT(DISTINCT e.pk)
+          FROM event e
+          WHERE e.club_id = c.pk
+            AND e.start_time > NOW() - INTERVAL '30 days'
+        ) as event_count
+      FROM club c
+      JOIN activity a ON c.activity_id = a.id
+      WHERE a.name = $1
+        AND c.status = 'ACTIVE'
+        AND EXISTS (
+          SELECT 1 FROM event e
+          JOIN location l ON e.location_id = l.id
+          WHERE e.club_id = c.pk
+            AND l.area_id = ANY($2)
+        )
+    `;
+
+    const params: any[] = [launch.activity_name, cityAreaProductionIds];
+
+    // Filter by specific area if provided
+    if (area_id) {
+      const areaResult = await queryLocal(`
+        SELECT production_area_id FROM dim_areas WHERE id = $1
+      `, [parseInt(area_id as string)]);
+
+      if (areaResult.rows.length > 0) {
+        clubQuery += ` AND EXISTS (
+          SELECT 1 FROM event e
+          JOIN location l ON e.location_id = l.id
+          WHERE e.club_id = c.pk
+            AND l.area_id = $${params.length + 1}
+        )`;
+        params.push(areaResult.rows[0].production_area_id);
+      }
+    }
+
+    // Search by name if provided
+    if (search) {
+      clubQuery += ` AND c.name ILIKE $${params.length + 1}`;
+      params.push(`%${search}%`);
+    }
+
+    clubQuery += ` ORDER BY c.name ASC LIMIT 50`;
+
+    const clubsResult = await queryProduction(clubQuery, params);
+
+    // Enrich with same_area and same_city flags
+    const clubs = clubsResult.rows.map((club: any) => {
+      // Check if club has events in the launch's specific area
+      const isSameArea = launchAreaProductionId
+        ? cityAreas.rows.some((a: any) =>
+            a.production_area_id === launchAreaProductionId &&
+            club.area_name === a.name
+          )
+        : false;
+
+      return {
+        club_id: club.club_id,
+        club_uuid: club.club_uuid,
+        club_name: club.club_name,
+        city_name: club.city_name || launch.planned_city,
+        area_name: club.area_name || 'Unknown',
+        is_same_area: isSameArea,
+        is_same_city: true, // All results are from the same city
+        event_count: parseInt(club.event_count) || 0,
+        health_status: 'gray' as const // Could be enhanced to calculate actual health
+      };
+    });
+
+    res.json({
+      success: true,
+      clubs,
+      launch: {
+        id: launch.id,
+        activity_name: launch.activity_name,
+        planned_club_name: launch.planned_club_name,
+        planned_city: launch.planned_city,
+        planned_area: launch.planned_area
+      }
+    });
+  } catch (error) {
+    logger.error(`Failed to get matching clubs for launch ${req.params.launchId}:`, error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get matching clubs',
       details: error instanceof Error ? error.message : 'Unknown error'
     });
   }

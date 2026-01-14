@@ -41,7 +41,10 @@ import type {
 } from '../../shared/types'
 import { SprintViewModal, TaskSummaryCell, ScalingTaskCreateModal, SummaryTiles, HierarchyFilterBar, HierarchyRollupHeader, RevenueStatusPills, DayTypeTags, StageInfoModal, InfoIconButton, buildRolledUpSummaryMap, buildSummaryKey, type HierarchyFilters, type HierarchyLevel, type HealthFilter, MeetupDetailsTooltip, ExpandClubModal, AddChoiceModal, type ExpandClubTargetData, WeekSelector, getWeekBounds, formatWeekLabel, type WeekOption, HealthDot, HealthDistributionBar, HealthInfoModal, type HealthStatus, TaskListTooltip, LeaderRequirementsTooltip } from '../components/scaling'
 import { CreateLeaderRequirementModal } from '../components/scaling/CreateLeaderRequirementModal'
-import { UserPlus } from 'lucide-react'
+import { MatchedLaunchIndicator } from '../components/scaling/MatchedLaunchIndicator'
+import { LinkToClubModal } from '../components/scaling/LinkToClubModal'
+import { UndoLinkModal } from '../components/scaling/UndoLinkModal'
+import { UserPlus, Link2 } from 'lucide-react'
 import { getTeamForClub, type TeamKey } from '../../shared/teamConfig'
 import { DimensionalTargetsService } from '../services/api'
 import FeedbackModal from '../components/FeedbackModal'
@@ -1967,13 +1970,15 @@ interface HierarchyRowProps {
   onCreateLeaderRequirement: (node: HierarchyNode) => void  // For creating leader requirement
   onEditStages: (node: HierarchyNode) => void
   onOpenSprint: (node: HierarchyNode) => void  // For opening sprint modal
+  onLinkToClub?: (node: HierarchyNode) => void // For launches: open link to club modal
+  onUndoLink?: (launchId: number, launchName: string, clubName: string, matchType: 'auto' | 'manual' | 'legacy') => void // For clubs: undo link
   taskSummary: ScalingTaskSummary | null       // Task summary for this node
   weekBounds: { start: Date; end: Date }       // Week bounds for tooltip
   tooltipRefreshKey?: number                   // Key to force tooltip data refresh
   hideTooltips?: boolean                       // When true, force hide all tooltips (e.g., when modal opens)
 }
 
-function HierarchyRow({ node, level, expanded, onToggle, onEditTarget, onDeleteTarget, onAddAtAreaLevel, onExpandClub, onDuplicateTarget, onCreateTask, onCreateTaskForRequirement, onCreateLeaderRequirement, onEditStages, onOpenSprint, taskSummary, weekBounds, tooltipRefreshKey, hideTooltips }: HierarchyRowProps) {
+function HierarchyRow({ node, level, expanded, onToggle, onEditTarget, onDeleteTarget, onAddAtAreaLevel, onExpandClub, onDuplicateTarget, onCreateTask, onCreateTaskForRequirement, onCreateLeaderRequirement, onEditStages, onOpenSprint, onLinkToClub, onUndoLink, taskSummary, weekBounds, tooltipRefreshKey, hideTooltips }: HierarchyRowProps) {
   const hasChildren = node.children && node.children.length > 0
   const isLaunch = node.is_launch || node.type === 'launch'
   const isTarget = node.type === 'target'
@@ -2038,10 +2043,29 @@ function HierarchyRow({ node, level, expanded, onToggle, onEditTarget, onDeleteT
           )}
           {typeIcons[node.type] || typeIcons.club}
           <div className="flex flex-col">
-            <span className={`font-semibold ${level === 0 ? 'text-lg' : ''}
-              ${isLaunch ? 'text-violet-700' : 'text-gray-800'}`}>
-              {node.name}
-            </span>
+            <div className="flex items-center gap-1.5">
+              <span className={`font-semibold ${level === 0 ? 'text-lg' : ''}
+                ${isLaunch ? 'text-violet-700' : 'text-gray-800'}`}>
+                {node.name}
+              </span>
+              {/* Show matched launch indicator for clubs that came from launches */}
+              {node.type === 'club' && node.matched_from_launch && onUndoLink && (
+                <MatchedLaunchIndicator
+                  matchedLaunch={{
+                    launch_id: node.matched_from_launch.launch_id,
+                    original_name: node.matched_from_launch.original_name,
+                    matched_at: node.matched_from_launch.matched_at,
+                    match_type: node.matched_from_launch.match_type
+                  }}
+                  onUndo={() => onUndoLink(
+                    node.matched_from_launch!.launch_id,
+                    node.matched_from_launch!.original_name,
+                    node.name,
+                    node.matched_from_launch!.match_type
+                  )}
+                />
+              )}
+            </div>
             {/* Day type tags for target nodes */}
             {isTarget && node.day_type_name && (
               <DayTypeTags dayTypeName={node.day_type_name} compact />
@@ -2288,6 +2312,21 @@ function HierarchyRow({ node, level, expanded, onToggle, onEditTarget, onDeleteT
               </button>
             </Tooltip>
           )}
+          {/* Link to Club button: For launches - manually link to existing club */}
+          {isLaunch && onLinkToClub && (
+            <Tooltip text="Link to Club" position="left">
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onLinkToClub(node)
+                }}
+                className="p-1.5 rounded-lg bg-sky-100 hover:bg-sky-200
+                  text-sky-600 transition-all hover:scale-110"
+              >
+                <Link2 size={14} />
+              </button>
+            </Tooltip>
+          )}
           {/* Plus button: All levels open Choice Modal (New Launch vs Expand Club) */}
           {/* Club level for existing clubs goes directly to Expand Club modal */}
           {(node.type === 'activity' || node.type === 'city' || node.type === 'area') && (
@@ -2410,6 +2449,26 @@ export default function ScalingPlannerV2() {
 
   // Feedback modal state
   const [feedbackModalOpen, setFeedbackModalOpen] = useState(false)
+
+  // Link to Club modal state (for manually linking launches to existing clubs)
+  const [linkToClubLaunch, setLinkToClubLaunch] = useState<{
+    id: number
+    planned_club_name: string
+    activity_name: string
+    activity_id: number
+    city_id: number
+    city_name: string
+    area_id: number
+    area_name: string
+  } | null>(null)
+
+  // Undo Link modal state (for reverting club-launch links)
+  const [undoLinkInfo, setUndoLinkInfo] = useState<{
+    launchId: number
+    launchName: string
+    clubName: string
+    matchType: 'auto' | 'manual' | 'legacy'
+  } | null>(null)
 
   // Tooltip refresh key - increment to force MeetupDetailsTooltip to refetch
   const [tooltipRefreshKey, setTooltipRefreshKey] = useState(0)
@@ -2960,6 +3019,83 @@ export default function ScalingPlannerV2() {
     } finally {
       setDeletingTarget(false)
     }
+  }
+
+  // Link to Club handler - opens modal for manual launch-to-club matching
+  const handleLinkToClub = (node: HierarchyNode) => {
+    if (node.type !== 'launch' || !node.launch_id) return
+
+    // Get parent context for activity/city/area info
+    const parentContext = findParentContext(node.id, hierarchy) || {}
+
+    setLinkToClubLaunch({
+      id: node.launch_id,
+      planned_club_name: node.name,
+      activity_name: parentContext.activity_name || '',
+      activity_id: parentContext.activity_id || node.activity_id || 0,
+      city_id: parentContext.city_id || node.city_id || 0,
+      city_name: parentContext.city_name || '',
+      area_id: parentContext.area_id || node.area_id || 0,
+      area_name: parentContext.area_name || ''
+    })
+  }
+
+  // Handle manual link to club - makes API call to transition launch
+  const handleConfirmLinkToClub = async (data: {
+    club_id: number
+    club_uuid: string
+    club_name: string
+    transfer_targets: boolean
+  }) => {
+    if (!linkToClubLaunch) return
+
+    const response = await fetch(`/api/targets/v2/launches/${linkToClubLaunch.id}/transition`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        club_id: data.club_id,
+        club_uuid: data.club_uuid,
+        club_name: data.club_name,
+        transfer_targets: data.transfer_targets,
+        match_type: 'manual'
+      })
+    })
+
+    if (!response.ok) {
+      const err = await response.json()
+      throw new Error(err.error || 'Failed to link to club')
+    }
+
+    // Refresh data after linking
+    await fetchData(true)
+    setLinkToClubLaunch(null)
+  }
+
+  // Undo Link click handler - opens confirmation modal
+  const handleUndoLinkClick = (launchId: number, launchName: string, clubName: string, matchType: 'auto' | 'manual' | 'legacy') => {
+    setUndoLinkInfo({ launchId, launchName, clubName, matchType })
+  }
+
+  // Confirm undo link - makes API call to revert transition
+  const handleConfirmUndoLink = async (deleteTargets: boolean) => {
+    if (!undoLinkInfo) return
+
+    const response = await fetch(`/api/targets/v2/launches/${undoLinkInfo.launchId}/revert`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        delete_club_targets: deleteTargets
+      })
+    })
+
+    if (!response.ok) {
+      const err = await response.json()
+      throw new Error(err.error || 'Failed to undo link')
+    }
+
+    // Refresh data after reverting
+    await fetchData(true)
+    setUndoLinkInfo(null)
   }
 
   // Create task handler - opens scaling task modal with context
@@ -3684,6 +3820,8 @@ export default function ScalingPlannerV2() {
                       onCreateLeaderRequirement={(n) => setLeaderRequirementNode(n)}
                       onEditStages={handleEditStages}
                       onOpenSprint={(n) => setSprintNode(n)}
+                      onLinkToClub={handleLinkToClub}
+                      onUndoLink={handleUndoLinkClick}
                       taskSummary={getTaskSummary(node)}
                       weekBounds={weekBounds}
                       tooltipRefreshKey={tooltipRefreshKey}
@@ -3897,6 +4035,28 @@ export default function ScalingPlannerV2() {
         isOpen={feedbackModalOpen}
         onClose={() => setFeedbackModalOpen(false)}
       />
+
+      {/* Link to Club Modal (for manual launch-to-club matching) */}
+      {linkToClubLaunch && (
+        <LinkToClubModal
+          isOpen={true}
+          onClose={() => setLinkToClubLaunch(null)}
+          launch={linkToClubLaunch}
+          onLink={handleConfirmLinkToClub}
+        />
+      )}
+
+      {/* Undo Link Modal (for reverting club-launch links) */}
+      {undoLinkInfo && (
+        <UndoLinkModal
+          isOpen={true}
+          onClose={() => setUndoLinkInfo(null)}
+          launchName={undoLinkInfo.launchName}
+          clubName={undoLinkInfo.clubName}
+          matchType={undoLinkInfo.matchType}
+          onConfirm={handleConfirmUndoLink}
+        />
+      )}
     </div>
   )
 }
