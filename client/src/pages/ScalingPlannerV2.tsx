@@ -2646,6 +2646,18 @@ export default function ScalingPlannerV2() {
   const isRestoringScroll = useRef(true)
   const targetScrollPosition = useRef<number | null>(null)
 
+  // Disable browser's native scroll restoration to prevent conflicts
+  useEffect(() => {
+    if ('scrollRestoration' in history) {
+      history.scrollRestoration = 'manual'
+    }
+    return () => {
+      if ('scrollRestoration' in history) {
+        history.scrollRestoration = 'auto'
+      }
+    }
+  }, [])
+
   // Restore scroll position after data loads
   useEffect(() => {
     if (!loading && hierarchy.length > 0) {
