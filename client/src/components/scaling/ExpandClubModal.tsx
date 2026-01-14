@@ -189,8 +189,9 @@ export function ExpandClubModal({ isOpen, onClose, onSave, context }: ExpandClub
     fetchAreas()
   }, [isOpen, selectedCityId])
 
-  // Fetch clubs (filtered by activity + city only) - NOT by area
-  // This is for "expand existing club to new area" - club list shouldn't change when area changes
+  // Fetch clubs (filtered by activity ONLY) - NOT by city or area
+  // This is for "expand existing club to new area/city" - an existing club can expand anywhere
+  // e.g., Dropshot Society (Noida) can have expansion target in Ghaziabad
   useEffect(() => {
     if (!isOpen) return
 
@@ -204,8 +205,7 @@ export function ExpandClubModal({ isOpen, onClose, onSave, context }: ExpandClub
       try {
         const params = new URLSearchParams()
         params.append('activity_ids', String(selectedActivityId))
-        if (selectedCityId) params.append('city_ids', String(selectedCityId))
-        // NOTE: Intentionally NOT filtering by area - clubs should be visible for expansion regardless of target area
+        // NOTE: NOT filtering by city or area - clubs should be visible for expansion to ANY location
 
         const res = await fetch(`${API_BASE}/scaling-tasks/filters/clubs?${params}`)
         const data = await res.json()
@@ -230,7 +230,7 @@ export function ExpandClubModal({ isOpen, onClose, onSave, context }: ExpandClub
     }
 
     fetchClubs()
-  }, [isOpen, selectedActivityId, selectedCityId]) // NOT dependent on selectedAreaId
+  }, [isOpen, selectedActivityId]) // Only depends on activity - clubs can expand to any city/area
 
   // Fetch meetup defaults when club changes
   useEffect(() => {
