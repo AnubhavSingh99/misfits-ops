@@ -2121,11 +2121,11 @@ router.get('/v2/hierarchy', async (req, res) => {
     // 0-BOOKING FILTER: Only count events with at least 1 valid booking
     const clubsQuery = `
       WITH
-      -- Pre-filter events that have at least one valid booking (not cancelled/rejected)
+      -- Pre-filter events that have at least one valid booking (not deregistered/initiated)
       events_with_bookings AS (
         SELECT DISTINCT b.event_id
         FROM booking b
-        WHERE b.status NOT IN ('CANCELLED', 'REJECTED')
+        WHERE b.booking_status NOT IN ('DEREGISTERED', 'INITIATED')
       ),
       -- One row per (club, city) with the most recent area in that city
       club_locations AS (

@@ -139,7 +139,7 @@ export async function getClubMeetups(
         COALESCE(SUM(
           CASE WHEN p.state = 'COMPLETED' THEN p.amount / 100.0 ELSE 0 END
         ), 0) as revenue,
-        COUNT(DISTINCT CASE WHEN b.status NOT IN ('CANCELLED', 'REJECTED') THEN b.id END) as booking_count
+        COUNT(DISTINCT CASE WHEN b.booking_status NOT IN ('DEREGISTERED', 'INITIATED') THEN b.id END) as booking_count
       FROM event e
       JOIN location l ON e.location_id = l.id
       LEFT JOIN area a ON l.area_id = a.id
@@ -152,7 +152,7 @@ export async function getClubMeetups(
         AND e.start_time AT TIME ZONE 'Asia/Kolkata' >= wb.week_start
         AND e.start_time AT TIME ZONE 'Asia/Kolkata' < wb.week_end
       GROUP BY e.pk, e.name, e.club_id, l.area_id, a.name, e.start_time
-      HAVING COUNT(DISTINCT CASE WHEN b.status NOT IN ('CANCELLED', 'REJECTED') THEN b.id END) > 0
+      HAVING COUNT(DISTINCT CASE WHEN b.booking_status NOT IN ('DEREGISTERED', 'INITIATED') THEN b.id END) > 0
       ORDER BY e.start_time
     `;
 
