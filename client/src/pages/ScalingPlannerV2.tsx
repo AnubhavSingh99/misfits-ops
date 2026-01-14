@@ -2641,6 +2641,11 @@ export default function ScalingPlannerV2() {
     fetchTaskSummaries()
   }, [includeLaunches, enabledHierarchyOrder, selectedWeek, customWeekStart])
 
+  // Track if we're currently restoring scroll (to prevent saving during restore)
+  // Start true to block saves during initial load - will be set false after restore completes
+  const isRestoringScroll = useRef(true)
+  const targetScrollPosition = useRef<number | null>(null)
+
   // Restore scroll position after data loads
   useEffect(() => {
     if (!loading && hierarchy.length > 0) {
@@ -2649,20 +2654,35 @@ export default function ScalingPlannerV2() {
         if (savedScroll) {
           const scrollTop = parseInt(savedScroll, 10)
           if (scrollTop > 0) {
+            targetScrollPosition.current = scrollTop
+
             // Try multiple times with increasing delays to handle async rendering
-            const attempts = [0, 50, 150, 300, 500]
+            const attempts = [0, 100, 300, 600, 1000, 1500]
             attempts.forEach(delay => {
               setTimeout(() => {
-                // Only scroll if we haven't already scrolled close to target
-                if (Math.abs(window.scrollY - scrollTop) > 50) {
-                  window.scrollTo({ top: scrollTop, behavior: 'instant' })
+                const target = targetScrollPosition.current
+                if (target && Math.abs(window.scrollY - target) > 50) {
+                  window.scrollTo({ top: target, behavior: 'instant' })
                 }
               }, delay)
             })
+
+            // Stop blocking saves after all restore attempts complete
+            setTimeout(() => {
+              isRestoringScroll.current = false
+              targetScrollPosition.current = null
+            }, 2000)
+          } else {
+            // No scroll to restore, enable saves
+            isRestoringScroll.current = false
           }
+        } else {
+          // No saved position, enable saves
+          isRestoringScroll.current = false
         }
       } catch {
-        // Ignore errors
+        // Error reading sessionStorage, enable saves
+        isRestoringScroll.current = false
       }
     }
   }, [loading, hierarchy.length])
@@ -2672,6 +2692,9 @@ export default function ScalingPlannerV2() {
     let timeout: ReturnType<typeof setTimeout>
 
     const saveScrollPosition = () => {
+      // Don't save during restore phase - we'd overwrite the target position
+      if (isRestoringScroll.current) return
+
       try {
         sessionStorage.setItem(SCROLL_POSITION_KEY, String(window.scrollY))
       } catch {
@@ -2686,7 +2709,12 @@ export default function ScalingPlannerV2() {
 
     // Save immediately before page unload (refresh/navigate)
     const handleBeforeUnload = () => {
-      saveScrollPosition()
+      // Always save on unload, even during restore
+      try {
+        sessionStorage.setItem(SCROLL_POSITION_KEY, String(window.scrollY))
+      } catch {
+        // Ignore errors
+      }
     }
 
     window.addEventListener('scroll', handleScroll, { passive: true })
