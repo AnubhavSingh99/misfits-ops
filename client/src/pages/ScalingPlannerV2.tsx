@@ -376,7 +376,7 @@ function StageDistribution({ progress, compact = false }: StageDistributionProps
   }
 
   return (
-    <div className={`flex flex-wrap gap-1 ${compact ? 'max-w-[340px]' : ''}`}>
+    <div className={`flex flex-wrap gap-1 ${compact ? 'min-w-[140px]' : ''}`}>
       {stages.map(s => (
         <StagePill key={s.key} stage={s.key} count={s.count} />
       ))}
@@ -3610,13 +3610,13 @@ export default function ScalingPlannerV2() {
                     onSort={handleSort}
                     align="right"
                   />
-                  <th className="text-left py-3 px-4 text-xs font-semibold text-gray-600 uppercase tracking-wider">
+                  <th className="text-left py-3 px-4 text-xs font-semibold text-gray-600 uppercase tracking-wider min-w-[160px]">
                     <div className="flex items-center gap-1">
                       Meetup Stage
                       <InfoIconButton onClick={() => setStageInfoModalType('meetup_stage')} />
                     </div>
                   </th>
-                  <th className="text-left py-3 px-4 text-xs font-semibold text-gray-600 uppercase tracking-wider">
+                  <th className="text-left py-3 px-4 text-xs font-semibold text-gray-600 uppercase tracking-wider min-w-[180px]">
                     <div className="flex items-center gap-1">
                       Revenue Status (₹K)
                       <InfoIconButton onClick={() => setStageInfoModalType('revenue_status')} />
