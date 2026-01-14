@@ -122,7 +122,7 @@ export function Layout({ children }: LayoutProps) {
         {/* Sidebar Header */}
         <div className="flex items-center justify-between h-16 px-5 border-b border-slate-100">
           <div className="flex items-center gap-3">
-            <img src="/favicon.png" alt="Misfits" className="w-9 h-9 rounded-xl shadow-lg" />
+            <img src="/favicon.png" alt="Misfits" className="w-9 h-9" />
             <div>
               <span className="text-base font-bold text-slate-800 tracking-tight">Misfits</span>
               <span className="text-[10px] font-medium text-slate-400 block -mt-0.5 uppercase tracking-widest">Operations</span>
@@ -194,7 +194,7 @@ export function Layout({ children }: LayoutProps) {
 
           {/* Logo & Title */}
           <div className="flex items-center gap-3 ml-3">
-            <img src="/favicon.png" alt="Misfits" className="w-7 h-7 rounded-lg shadow-md" />
+            <img src="/favicon.png" alt="Misfits" className="w-7 h-7" />
             <div className="hidden sm:block">
               <h1 className="text-sm font-bold text-slate-800">{pageTitle}</h1>
             </div>
