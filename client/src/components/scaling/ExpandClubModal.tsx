@@ -20,6 +20,14 @@ interface ExpandClubModalProps {
     club_id?: number
     club_name?: string
   }
+  // Optional: Pre-fill values when duplicating an existing target
+  existingTarget?: {
+    target_meetups: number
+    meetup_cost: number
+    meetup_capacity: number
+    name?: string
+    day_type_id?: number | null
+  } | null
 }
 
 export interface ExpandClubTargetData {
@@ -54,7 +62,7 @@ interface DayType {
   name: string
 }
 
-export function ExpandClubModal({ isOpen, onClose, onSave, context }: ExpandClubModalProps) {
+export function ExpandClubModal({ isOpen, onClose, onSave, context, existingTarget }: ExpandClubModalProps) {
   // Filter states
   const [activities, setActivities] = useState<FilterOption[]>([])
   const [cities, setCities] = useState<FilterOption[]>([])
@@ -269,15 +277,24 @@ export function ExpandClubModal({ isOpen, onClose, onSave, context }: ExpandClub
       setSelectedAreaId(context.area_id)
       setSelectedClubId(context.club_id)
 
-      // Reset form fields
-      setTargetMeetups(1)
-      setMeetupCost(200)
-      setMeetupCapacity(15)
-      setTargetName('')
-      setSelectedDayTypeId(null)
+      // If duplicating an existing target, pre-fill form values
+      if (existingTarget) {
+        setTargetMeetups(existingTarget.target_meetups)
+        setMeetupCost(existingTarget.meetup_cost)
+        setMeetupCapacity(existingTarget.meetup_capacity)
+        setTargetName(existingTarget.name || '')
+        setSelectedDayTypeId(existingTarget.day_type_id || null)
+      } else {
+        // Reset form fields to defaults
+        setTargetMeetups(1)
+        setMeetupCost(200)
+        setMeetupCapacity(15)
+        setTargetName('')
+        setSelectedDayTypeId(null)
+      }
       setError(null)
     }
-  }, [isOpen, context])
+  }, [isOpen, context, existingTarget])
 
   // Handlers for cascading changes
   const handleActivityChange = (id: number | undefined) => {
@@ -339,13 +356,15 @@ export function ExpandClubModal({ isOpen, onClose, onSave, context }: ExpandClub
       {/* Modal */}
       <div className="relative bg-white rounded-xl shadow-2xl w-full max-w-md mx-4 max-h-[90vh] overflow-hidden flex flex-col">
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 bg-emerald-50 flex-shrink-0">
+        <div className={`flex items-center justify-between px-6 py-4 border-b border-gray-200 ${existingTarget ? 'bg-violet-50' : 'bg-emerald-50'} flex-shrink-0`}>
           <div>
             <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
-              <MapPin size={20} className="text-emerald-600" />
-              Expand Club Target
+              <MapPin size={20} className={existingTarget ? 'text-violet-600' : 'text-emerald-600'} />
+              {existingTarget ? 'Duplicate Target' : 'Expand Club Target'}
             </h3>
-            <p className="text-sm text-gray-500">Add target for existing club in new area</p>
+            <p className="text-sm text-gray-500">
+              {existingTarget ? 'Create similar target with pre-filled values' : 'Add target for existing club in new area'}
+            </p>
           </div>
           <button
             onClick={onClose}

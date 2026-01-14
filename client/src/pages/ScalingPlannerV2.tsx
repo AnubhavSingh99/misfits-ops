@@ -27,7 +27,8 @@ import {
   ArrowUpDown,
   ArrowUp,
   ArrowDown,
-  MessageSquarePlus
+  MessageSquarePlus,
+  Copy
 } from 'lucide-react'
 import type {
   HierarchyNode,
@@ -1958,6 +1959,7 @@ interface HierarchyRowProps {
   onDeleteTarget: (node: HierarchyNode) => void // For deleting a target
   onAddAtAreaLevel: (node: HierarchyNode) => void  // For areas: open choice modal (new launch vs expand)
   onExpandClub: (node: HierarchyNode) => void  // For clubs: add target (opens ExpandClubModal)
+  onDuplicateTarget: (node: HierarchyNode) => void  // For targets: duplicate to create similar target
   onCreateTask: (node: HierarchyNode) => void
   onCreateTaskForRequirement: (requirement: LeaderRequirement, node: HierarchyNode) => void  // For creating task with pre-linked requirement
   onCreateLeaderRequirement: (node: HierarchyNode) => void  // For creating leader requirement
@@ -1969,7 +1971,7 @@ interface HierarchyRowProps {
   hideTooltips?: boolean                       // When true, force hide all tooltips (e.g., when modal opens)
 }
 
-function HierarchyRow({ node, level, expanded, onToggle, onEditTarget, onDeleteTarget, onAddAtAreaLevel, onExpandClub, onCreateTask, onCreateTaskForRequirement, onCreateLeaderRequirement, onEditStages, onOpenSprint, taskSummary, weekBounds, tooltipRefreshKey, hideTooltips }: HierarchyRowProps) {
+function HierarchyRow({ node, level, expanded, onToggle, onEditTarget, onDeleteTarget, onAddAtAreaLevel, onExpandClub, onDuplicateTarget, onCreateTask, onCreateTaskForRequirement, onCreateLeaderRequirement, onEditStages, onOpenSprint, taskSummary, weekBounds, tooltipRefreshKey, hideTooltips }: HierarchyRowProps) {
   const hasChildren = node.children && node.children.length > 0
   const isLaunch = node.is_launch || node.type === 'launch'
   const isTarget = node.type === 'target'
@@ -2254,6 +2256,21 @@ function HierarchyRow({ node, level, expanded, onToggle, onEditTarget, onDeleteT
               </button>
             </Tooltip>
           )}
+          {/* Duplicate button: For target rows - creates similar target with pre-filled values */}
+          {isTarget && (
+            <Tooltip text="Duplicate Target" position="left">
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onDuplicateTarget(node)
+                }}
+                className="p-1.5 rounded-lg bg-violet-100 hover:bg-violet-200
+                  text-violet-600 transition-all hover:scale-110"
+              >
+                <Copy size={14} />
+              </button>
+            </Tooltip>
+          )}
           {/* Delete button: For target rows, clubs with single target (target_id set), or launches */}
           {(isTarget || (node.type === 'club' && node.has_target && node.target_id) || isLaunch) && (
             <Tooltip text={isLaunch ? "Delete Launch" : "Delete Target"} position="left">
@@ -2353,6 +2370,14 @@ export default function ScalingPlannerV2() {
 
   // Expand Club modal state
   const [expandClubContext, setExpandClubContext] = useState<QuickAddContext | null>(null)
+  // Pre-fill data when duplicating a target
+  const [duplicateTargetData, setDuplicateTargetData] = useState<{
+    target_meetups: number
+    meetup_cost: number
+    meetup_capacity: number
+    name?: string
+    day_type_id?: number | null
+  } | null>(null)
 
   // Task modal state
   const [taskContext, setTaskContext] = useState<TaskContext | null>(null)
@@ -2744,6 +2769,36 @@ export default function ScalingPlannerV2() {
       club_id: node.club_id,
       club_name: node.name
     }
+    setExpandClubContext(context)
+  }
+
+  // Duplicate target handler - opens ExpandClubModal with pre-filled values from existing target
+  const handleDuplicateTarget = (node: HierarchyNode) => {
+    // Target nodes are children of clubs, find the parent context
+    const parentContext = findParentContext(node.id, hierarchy) || {}
+
+    // Set the context for the club (the target's parent)
+    const context: QuickAddContext = {
+      node_type: 'target',
+      activity_id: parentContext.activity_id || node.activity_id,
+      activity_name: parentContext.activity_name,
+      city_id: parentContext.city_id || node.city_id,
+      city_name: parentContext.city_name,
+      area_id: parentContext.area_id || node.area_id,
+      area_name: parentContext.area_name,
+      club_id: parentContext.club_id || node.club_id,
+      club_name: parentContext.club_name || node.name
+    }
+
+    // Set the target data to pre-fill
+    setDuplicateTargetData({
+      target_meetups: node.target_meetups || 1,
+      meetup_cost: node.meetup_cost || 200,
+      meetup_capacity: node.meetup_capacity || 15,
+      name: node.name || undefined,
+      day_type_id: node.day_type_id || null
+    })
+
     setExpandClubContext(context)
   }
 
@@ -3618,6 +3673,7 @@ export default function ScalingPlannerV2() {
                       onDeleteTarget={handleDeleteTarget}
                       onAddAtAreaLevel={handleAddAtAreaLevel}
                       onExpandClub={handleExpandClub}
+                      onDuplicateTarget={handleDuplicateTarget}
                       onCreateTask={handleCreateTask}
                       onCreateTaskForRequirement={(req, n) => {
                         setPrelinkedRequirement(req)
@@ -3756,9 +3812,13 @@ export default function ScalingPlannerV2() {
       {expandClubContext && (
         <ExpandClubModal
           isOpen={true}
-          onClose={() => setExpandClubContext(null)}
+          onClose={() => {
+            setExpandClubContext(null)
+            setDuplicateTargetData(null)
+          }}
           onSave={handleSaveExpandedTarget}
           context={expandClubContext}
+          existingTarget={duplicateTargetData}
         />
       )}
 
