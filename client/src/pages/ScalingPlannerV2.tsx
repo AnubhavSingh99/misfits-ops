@@ -2643,17 +2643,23 @@ export default function ScalingPlannerV2() {
 
   // Restore scroll position after data loads
   useEffect(() => {
-    if (!loading && hierarchy.length > 0 && tableContainerRef.current) {
+    if (!loading && hierarchy.length > 0) {
       try {
         const savedScroll = sessionStorage.getItem(SCROLL_POSITION_KEY)
         if (savedScroll) {
           const scrollTop = parseInt(savedScroll, 10)
-          // Use requestAnimationFrame to ensure DOM is ready
-          requestAnimationFrame(() => {
-            if (tableContainerRef.current) {
-              window.scrollTo(0, scrollTop)
-            }
-          })
+          // Use multiple animation frames + timeout to ensure DOM is fully rendered
+          // This is needed because React batches state updates and the DOM may not be ready
+          const restoreScroll = () => {
+            requestAnimationFrame(() => {
+              requestAnimationFrame(() => {
+                window.scrollTo({ top: scrollTop, behavior: 'instant' })
+              })
+            })
+          }
+          // Also try after a short delay as backup for slower renders
+          restoreScroll()
+          setTimeout(restoreScroll, 100)
         }
       } catch {
         // Ignore errors
