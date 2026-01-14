@@ -302,9 +302,9 @@ export function HierarchyRollupHeader({
     : 'bg-slate-50 border-l-4 border-l-slate-400';
 
   return (
-    <tr className={`${rowClasses} shadow-[0_1px_3px_rgba(0,0,0,0.05)] h-auto`}>
+    <tr className={`${rowClasses} shadow-[0_1px_3px_rgba(0,0,0,0.05)]`}>
       {/* Name column */}
-      <td className="py-3 pl-4 pr-4 align-middle">
+      <td className="py-3 pl-4 pr-4">
         <div className="flex items-center gap-3">
           <span className="w-7" /> {/* Spacer to match expand button */}
           <div className={`w-7 h-7 rounded-lg flex items-center justify-center ${
@@ -374,12 +374,12 @@ export function HierarchyRollupHeader({
       </td>
 
       {/* Stage Distribution column */}
-      <td className="pt-4 pb-2 px-2 align-top">
+      <td className="py-3 px-2">
         <StagePills progress={totals.progress} />
       </td>
 
       {/* Revenue Status column */}
-      <td className="pt-4 pb-2 px-2 align-top">
+      <td className="py-3 px-2">
         <RevenueStatusPills revenueStatus={totals.revenueStatus} compact />
       </td>
 
