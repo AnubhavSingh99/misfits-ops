@@ -1329,9 +1329,25 @@ router.get('/filters/activities', async (req, res) => {
 
 // GET /api/scaling-tasks/filters/cities - Get cities for selected activities (cascading)
 // Uses event -> location -> area -> city path since clubs don't have direct area_id
+// Use include_all=true to get ALL cities (for new club launches/expansion targets)
 router.get('/filters/cities', async (req, res) => {
   try {
-    const { activity_ids } = req.query;
+    const { activity_ids, include_all } = req.query;
+
+    // If include_all=true, return all cities without requiring existing clubs
+    // This is used for new club launches where we want to show all possible cities
+    if (include_all === 'true') {
+      const allCitiesQuery = `
+        SELECT DISTINCT ci.id, ci.name
+        FROM city ci
+        ORDER BY ci.name
+      `;
+      const allCitiesResult = await queryProduction(allCitiesQuery, []);
+      return res.json({
+        success: true,
+        options: allCitiesResult.rows
+      });
+    }
 
     let query = `
       SELECT DISTINCT ci.id, ci.name

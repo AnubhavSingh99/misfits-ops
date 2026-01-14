@@ -143,7 +143,9 @@ export function ExpandClubModal({ isOpen, onClose, onSave, context }: ExpandClub
     const fetchCities = async () => {
       setLoadingCities(true)
       try {
-        const params = selectedActivityId ? `?activity_ids=${selectedActivityId}` : ''
+        // include_all=true to show ALL cities, not just those with active clubs for this activity
+        // This is needed because we're expanding to new areas where the club doesn't exist yet
+        const params = selectedActivityId ? `?activity_ids=${selectedActivityId}&include_all=true` : '?include_all=true'
         const res = await fetch(`${API_BASE}/scaling-tasks/filters/cities${params}`)
         const data = await res.json()
         if (data.success && data.options) {
