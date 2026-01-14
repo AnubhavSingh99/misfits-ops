@@ -230,15 +230,38 @@ export async function getClubTargets(clubId: number): Promise<TargetWithMapping[
         target_revenue: parseFloat(row.target_revenue) || 0,
         meetup_cost: parseFloat(row.meetup_cost) || 0,
         meetup_capacity: parseInt(row.meetup_capacity) || 0,
-        progress: row.progress || {
-          not_picked: parseInt(row.target_meetups) || 0,
-          started: 0,
-          stage_1: 0,
-          stage_2: 0,
-          stage_3: 0,
-          stage_4: 0,
-          realised: 0
-        },
+        progress: (() => {
+          const targetMeetups = parseInt(row.target_meetups) || 0;
+          const defaultProgress = {
+            not_picked: targetMeetups,
+            started: 0,
+            stage_1: 0,
+            stage_2: 0,
+            stage_3: 0,
+            stage_4: 0,
+            realised: 0
+          };
+
+          if (!row.progress) return defaultProgress;
+
+          const p = row.progress;
+          // Calculate sum of all stages
+          const sum = (p.not_picked || 0) + (p.started || 0) +
+            (p.stage_1 || 0) + (p.stage_2 || 0) + (p.stage_3 || 0) +
+            (p.stage_4 || 0) + (p.realised || 0);
+
+          // If sum doesn't match target, adjust not_picked to compensate
+          if (sum !== targetMeetups) {
+            const diff = targetMeetups - sum;
+            return {
+              ...defaultProgress,
+              ...p,
+              not_picked: Math.max(0, (p.not_picked || 0) + diff)
+            };
+          }
+
+          return p;
+        })(),
         specificity_score: parseInt(row.specificity_score) || 0
       };
     });

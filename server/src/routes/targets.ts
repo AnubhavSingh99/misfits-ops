@@ -1662,6 +1662,26 @@ function sumProgress(progresses: any[]): any {
   }), { ...defaultProgress, unattributed_meetups: 0 });
 }
 
+// Helper: Sync progress with target_meetups
+// If sum of all stages doesn't match target, adjust not_picked to compensate
+function syncProgress(progress: any, targetMeetups: number): any {
+  const p = progress || defaultProgress;
+  const sum = (p.not_picked || 0) + (p.started || 0) +
+    (p.stage_1 || 0) + (p.stage_2 || 0) + (p.stage_3 || 0) +
+    (p.stage_4 || 0) + (p.realised || 0);
+
+  if (sum !== targetMeetups) {
+    const diff = targetMeetups - sum;
+    return {
+      ...defaultProgress,
+      ...p,
+      not_picked: Math.max(0, (p.not_picked || 0) + diff)
+    };
+  }
+
+  return p;
+}
+
 // Helper: Validate progress against current metrics
 function validateProgress(targetMeetups: number, currentMeetups: number, progress: any): { status: string; message?: string } {
   const gap = targetMeetups - currentMeetups;
@@ -2600,15 +2620,29 @@ router.get('/v2/hierarchy', async (req, res) => {
 
         const autoMatchResult = autoMatchResults.get(clubId);
 
+        // MULTI-AREA FIX: Filter auto-match results by current area to avoid double-counting
+        // Each area instance of a multi-area club should only include targets/revenue for that area
+        const areaFilteredTargets = autoMatchResult?.targets.filter((t: any) => {
+          const targetProdAreaId = t.production_area_id;
+          // Include target if it matches this area, or if it has no area (legacy/default)
+          return !targetProdAreaId || targetProdAreaId === areaId;
+        }) || [];
+        const areaUnattributed = autoMatchResult?.area_unattributed.find(
+          (au: any) => au.area_id === areaId
+        );
+        const areaUnattributedRevenue = areaUnattributed?.total_revenue || 0;
+        const areaUnattributedMeetups = areaUnattributed?.meetup_count || 0;
+
         let aggregatedProgress: any;
-        if (autoMatchResult && autoMatchResult.targets.length > 0) {
-          aggregatedProgress = autoMatchResult.targets.reduce((acc: any, t: any) => {
+        if (areaFilteredTargets.length > 0) {
+          aggregatedProgress = areaFilteredTargets.reduce((acc: any, t: any) => {
             return sumProgress([acc, t.new_progress]);
           }, { ...defaultProgress });
-          aggregatedProgress.unattributed_meetups = (aggregatedProgress.unattributed_meetups || 0) + autoMatchResult.total_unattributed_meetups;
+          aggregatedProgress.unattributed_meetups = (aggregatedProgress.unattributed_meetups || 0) + areaUnattributedMeetups;
         } else {
           aggregatedProgress = targets.reduce((acc: any, t: any) => {
-            const p = t.progress || defaultProgress;
+            const tMeetups = parseInt(t.target_meetups) || 0;
+            const p = syncProgress(t.progress, tMeetups);
             return sumProgress([acc, p]);
           }, { ...defaultProgress });
         }
@@ -2637,15 +2671,16 @@ router.get('/v2/hierarchy', async (req, res) => {
         const clubHealthStatus = getHealthStatus(clubHealthScore, hasMeetups);
 
         let clubRevenueStatus: RevenueStatus;
-        if (autoMatchResult && autoMatchResult.targets.length > 0) {
-          const targetStatuses = autoMatchResult.targets.map((t: any) => t.revenue_status);
+        if (areaFilteredTargets.length > 0) {
+          // Use area-filtered targets for revenue status
+          const targetStatuses = areaFilteredTargets.map((t: any) => t.revenue_status);
           clubRevenueStatus = rollupRevenueStatuses(targetStatuses);
-          clubRevenueStatus.unattributed += autoMatchResult.total_unattributed_revenue;
+          clubRevenueStatus.unattributed += areaUnattributedRevenue;
         } else {
           clubRevenueStatus = calculateClubRevenueStatus(
             targets.map((t: any) => ({
               target_revenue: parseFloat(t.target_revenue) || 0,
-              progress: t.progress || defaultProgress
+              progress: syncProgress(t.progress, parseInt(t.target_meetups) || 0)
             })),
             currentRevenue
           );
@@ -2661,7 +2696,8 @@ router.get('/v2/hierarchy', async (req, res) => {
           const tRevenue = parseFloat(t.target_revenue) || 0;
           const targetId = parseInt(t.target_id);
           const autoMatchedTarget = autoMatchResult?.targets.find((mt: any) => mt.target_id === targetId);
-          const tProgress = autoMatchedTarget?.new_progress || t.progress || defaultProgress;
+          // Use auto-matched progress if available, otherwise sync stored progress with target
+          const tProgress = autoMatchedTarget?.new_progress || syncProgress(t.progress, tMeetups);
           const matchedMeetups = autoMatchedTarget?.matched_count || 0;
           const matchedRevenue = autoMatchedTarget?.matched_revenue || 0;
           const tRevenueStatus = autoMatchedTarget?.revenue_status || null;
@@ -3008,7 +3044,8 @@ router.get('/v2/hierarchy', async (req, res) => {
 
             // Aggregate progress
             const aggregatedProgress = targets.reduce((acc: any, t: any) => {
-              return sumProgress([acc, t.progress || defaultProgress]);
+              const tMeetups = parseInt(t.target_meetups) || 0;
+              return sumProgress([acc, syncProgress(t.progress, tMeetups)]);
             }, { ...defaultProgress });
 
             const validation = validateProgress(targetMeetups, currentMeetups, aggregatedProgress);
@@ -3019,7 +3056,7 @@ router.get('/v2/hierarchy', async (req, res) => {
               const tMeetups = parseInt(t.target_meetups) || 0;
               const tRevenue = parseFloat(t.target_revenue) || 0;
               const targetId = parseInt(t.target_id);
-              const tProgress = t.progress || defaultProgress;
+              const tProgress = syncProgress(t.progress, tMeetups);
               const tValidation = validateProgress(tMeetups, 0, tProgress);
 
               return {
@@ -3160,20 +3197,34 @@ router.get('/v2/hierarchy', async (req, res) => {
       // Check for auto-matching results
       const autoMatchResult = autoMatchResults.get(clubId);
 
+      // MULTI-AREA FIX: Filter auto-match results by current area to avoid double-counting
+      // Each area instance of a multi-area club should only include targets/revenue for that area
+      const areaFilteredTargets = autoMatchResult?.targets.filter((t: any) => {
+        const targetProdAreaId = t.production_area_id;
+        // Include target if it matches this area, or if it has no area (legacy/default)
+        return !targetProdAreaId || targetProdAreaId === areaId;
+      }) || [];
+      const areaUnattributed = autoMatchResult?.area_unattributed.find(
+        (au: any) => au.area_id === areaId
+      );
+      const areaUnattributedRevenue = areaUnattributed?.total_revenue || 0;
+      const areaUnattributedMeetups = areaUnattributed?.meetup_count || 0;
+
       // Aggregate progress across all targets
       // When auto-matching is enabled, use matched progress from auto-matching results
       let aggregatedProgress: any;
-      if (autoMatchResult && autoMatchResult.targets.length > 0) {
-        // Use auto-matched progress
-        aggregatedProgress = autoMatchResult.targets.reduce((acc, t) => {
+      if (areaFilteredTargets.length > 0) {
+        // Use auto-matched progress (filtered by area)
+        aggregatedProgress = areaFilteredTargets.reduce((acc: any, t: any) => {
           return sumProgress([acc, t.new_progress]);
         }, { ...defaultProgress });
-        // Add area-level unattributed meetups (meetups that didn't match any target)
-        aggregatedProgress.unattributed_meetups = (aggregatedProgress.unattributed_meetups || 0) + autoMatchResult.total_unattributed_meetups;
+        // Add area-level unattributed meetups (meetups that didn't match any target in THIS area)
+        aggregatedProgress.unattributed_meetups = (aggregatedProgress.unattributed_meetups || 0) + areaUnattributedMeetups;
       } else {
-        // Use stored progress
+        // Use stored progress (synced with target)
         aggregatedProgress = targets.reduce((acc, t) => {
-          const p = t.progress || defaultProgress;
+          const tMeetups = parseInt(t.target_meetups) || 0;
+          const p = syncProgress(t.progress, tMeetups);
           return sumProgress([acc, p]);
         }, { ...defaultProgress });
       }
@@ -3207,18 +3258,18 @@ router.get('/v2/hierarchy', async (req, res) => {
       // Calculate revenue status for this club
       // When auto-matching is enabled, rollup the matched revenue statuses
       let clubRevenueStatus: RevenueStatus;
-      if (autoMatchResult && autoMatchResult.targets.length > 0) {
-        // Rollup from auto-matched revenue statuses + add area unattributed
-        const targetStatuses = autoMatchResult.targets.map(t => t.revenue_status);
+      if (areaFilteredTargets.length > 0) {
+        // Rollup from auto-matched revenue statuses (filtered by area)
+        const targetStatuses = areaFilteredTargets.map((t: any) => t.revenue_status);
         clubRevenueStatus = rollupRevenueStatuses(targetStatuses);
-        // Add area unattributed revenue (meetups that didn't match any target)
-        clubRevenueStatus.unattributed += autoMatchResult.total_unattributed_revenue;
+        // Add area-specific unattributed revenue
+        clubRevenueStatus.unattributed += areaUnattributedRevenue;
       } else {
         // Use stored progress for revenue calculation
         clubRevenueStatus = calculateClubRevenueStatus(
           targets.map(t => ({
             target_revenue: parseFloat(t.target_revenue) || 0,
-            progress: t.progress || defaultProgress
+            progress: syncProgress(t.progress, parseInt(t.target_meetups) || 0)
           })),
           currentRevenue
         );
@@ -3365,9 +3416,9 @@ router.get('/v2/hierarchy', async (req, res) => {
         const tRevenue = parseFloat(t.target_revenue) || 0;
         const targetId = parseInt(t.target_id);
 
-        // Get auto-matched progress if available, otherwise use stored
+        // Get auto-matched progress if available, otherwise sync stored progress with target
         const autoMatchedTarget = autoMatchResult?.targets.find(mt => mt.target_id === targetId);
-        const tProgress = autoMatchedTarget?.new_progress || t.progress || defaultProgress;
+        const tProgress = autoMatchedTarget?.new_progress || syncProgress(t.progress, tMeetups);
         const tValidation = validateProgress(tMeetups, 0, tProgress); // No current at target level
 
         // Get auto-matched current values if available
@@ -3643,7 +3694,8 @@ router.get('/v2/hierarchy', async (req, res) => {
 
         // Aggregate progress
         const aggregatedProgress = targets.reduce((acc: any, t: any) => {
-          const p = t.progress || defaultProgress;
+          const tMeetups = parseInt(t.target_meetups) || 0;
+          const p = syncProgress(t.progress, tMeetups);
           return sumProgress([acc, p]);
         }, { ...defaultProgress });
 
@@ -3747,7 +3799,7 @@ router.get('/v2/hierarchy', async (req, res) => {
           const tMeetups = parseInt(t.target_meetups) || 0;
           const tRevenue = parseFloat(t.target_revenue) || 0;
           const targetId = parseInt(t.target_id);
-          const tProgress = t.progress || defaultProgress;
+          const tProgress = syncProgress(t.progress, tMeetups);
 
           let targetName = t.target_name;
           if (!targetName) {
