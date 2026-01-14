@@ -5333,6 +5333,7 @@ router.get('/v2/launches/:launchId/matching-clubs', async (req, res) => {
           JOIN location l ON e.location_id = l.id
           WHERE e.club_id = c.pk
             AND l.area_id = ANY($2)
+            AND e.state = 'CREATED'
         )
     `;
 
