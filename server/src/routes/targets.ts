@@ -5154,26 +5154,37 @@ router.post('/v2/launches/:launchId/revert', async (req, res) => {
       if (launchTargetResult.rows.length > 0) {
         const launchTarget = launchTargetResult.rows[0];
 
-        // Delete club targets that match the launch's area/day_type/format
-        // These were likely created during the transition
-        await queryLocal(`
-          DELETE FROM club_dimensional_targets
-          WHERE club_id = $1
-            AND COALESCE(area_id, -1) = COALESCE($2, -1)
-            AND COALESCE(day_type_id, -1) = COALESCE($3, -1)
-            AND COALESCE(format_id, -1) = COALESCE($4, -1)
-            AND created_at >= $5
-        `, [
-          // club_id is stored as UUID in actual_club_id, but club_dimensional_targets uses integer
-          // We need to look up the club pk from UUID
-          launchTarget.club_id || actual_club_id,
-          launchTarget.area_id,
-          launchTarget.day_type_id,
-          launchTarget.format_id,
-          matched_at
-        ]);
+        // Look up club pk from UUID (actual_club_id stores UUID, but club_dimensional_targets uses integer pk)
+        let clubPk = launchTarget.club_id;
+        if (!clubPk && actual_club_id) {
+          const clubPkResult = await queryProduction(`
+            SELECT pk FROM club WHERE id = $1
+          `, [actual_club_id]);
+          if (clubPkResult.rows.length > 0) {
+            clubPk = clubPkResult.rows[0].pk;
+          }
+        }
 
-        logger.info(`Deleted club targets for launch ${launchId} revert`);
+        if (clubPk) {
+          // Delete club targets that match the launch's area/day_type/format
+          // These were likely created during the transition
+          await queryLocal(`
+            DELETE FROM club_dimensional_targets
+            WHERE club_id = $1
+              AND COALESCE(area_id, -1) = COALESCE($2, -1)
+              AND COALESCE(day_type_id, -1) = COALESCE($3, -1)
+              AND COALESCE(format_id, -1) = COALESCE($4, -1)
+              AND created_at >= $5
+          `, [
+            clubPk,
+            launchTarget.area_id,
+            launchTarget.day_type_id,
+            launchTarget.format_id,
+            matched_at
+          ]);
+
+          logger.info(`Deleted club targets for launch ${launchId} revert (club_pk: ${clubPk})`);
+        }
       }
     }
 
