@@ -2395,11 +2395,13 @@ router.get('/v2/hierarchy', async (req, res) => {
     // Get dimensional targets from local DB (these overlay on clubs)
     // Now fetching ALL targets per club to support multiple targets
     // Include area_id to support expansion targets (targets in different areas than club's home area)
+    // Include production_area_id to filter targets by the club's current area in multi-city scenarios
     const targetsQuery = `
       SELECT
         cdt.id as target_id,
         cdt.club_id,
         cdt.area_id as target_area_id,
+        da.production_area_id as target_production_area_id,
         cdt.name as target_name,
         cdt.target_meetups,
         cdt.target_revenue,
@@ -2411,6 +2413,7 @@ router.get('/v2/hierarchy', async (req, res) => {
         df.format_name,
         COALESCE(cdt.progress, '${JSON.stringify(defaultProgress)}'::jsonb) as progress
       FROM club_dimensional_targets cdt
+      LEFT JOIN dim_areas da ON cdt.area_id = da.id
       LEFT JOIN dim_day_types dt ON cdt.day_type_id = dt.id
       LEFT JOIN dim_formats df ON cdt.format_id = df.id
       ${activity_id ? `WHERE cdt.activity_id = ${parseInt(activity_id as string)}` : ''}
@@ -2580,7 +2583,16 @@ router.get('/v2/hierarchy', async (req, res) => {
         const areaId = parseInt(club.area_id) || 0;
         const clubId = parseInt(club.club_id);
 
-        const targets = targetsMap.get(clubId) || [];
+        // Filter targets to only include those matching this club node's area
+        // Multi-city clubs appear under each city, but targets should only show
+        // under the city/area where they're actually configured
+        const allTargets = targetsMap.get(clubId) || [];
+        const targets = allTargets.filter((t: any) => {
+          const targetProdAreaId = parseInt(t.target_production_area_id);
+          // Show target only if it matches this club node's area
+          // (targets without area_id default to showing everywhere for backward compatibility)
+          return !targetProdAreaId || targetProdAreaId === areaId;
+        });
         const hasTargets = targets.length > 0;
 
         const targetMeetups = targets.reduce((sum: number, t: any) => sum + (parseInt(t.target_meetups) || 0), 0);
@@ -2900,25 +2912,46 @@ router.get('/v2/hierarchy', async (req, res) => {
           dimAreasMapResult.rows.map((a: any) => [parseInt(a.dim_area_id), parseInt(a.production_area_id)])
         );
 
-        // Collect expansion targets
-        const expansionTargets: { club: any, target: any, expansionDimAreaId: number, expansionProdAreaId: number }[] = [];
+        // Build map of club_id → all areas where club has events (regular nodes)
+        // This prevents creating expansion nodes for areas where the club already appears
+        const clubExistingAreas = new Map<number, Set<number>>();
         for (const club of clubsToProcess) {
           const clubId = parseInt(club.club_id);
-          const homeAreaId = parseInt(club.area_id) || 0; // Production area.id
+          const areaId = parseInt(club.area_id) || 0;
+          if (!clubExistingAreas.has(clubId)) {
+            clubExistingAreas.set(clubId, new Set());
+          }
+          clubExistingAreas.get(clubId)!.add(areaId);
+        }
+
+        // Collect expansion targets - only for areas where club doesn't already have a regular node
+        const expansionTargets: { club: any, target: any, expansionDimAreaId: number, expansionProdAreaId: number }[] = [];
+        const processedExpansions = new Set<string>(); // Prevent duplicates from multi-city clubs
+
+        for (const club of clubsToProcess) {
+          const clubId = parseInt(club.club_id);
           const targets = targetsMap.get(clubId) || [];
+          const existingAreas = clubExistingAreas.get(clubId) || new Set();
 
           for (const target of targets) {
             const targetDimAreaId = parseInt(target.target_area_id);
             if (!targetDimAreaId) continue;
 
             const targetProdAreaId = dimToProductionMap.get(targetDimAreaId);
-            if (targetProdAreaId && targetProdAreaId !== homeAreaId) {
-              expansionTargets.push({
-                club,
-                target,
-                expansionDimAreaId: targetDimAreaId,
-                expansionProdAreaId: targetProdAreaId
-              });
+            // Only create expansion if:
+            // 1. Target has a valid production area
+            // 2. Club doesn't already have a regular node in that area (prevents duplicates)
+            if (targetProdAreaId && !existingAreas.has(targetProdAreaId)) {
+              const expansionKey = `${clubId}-${targetDimAreaId}`;
+              if (!processedExpansions.has(expansionKey)) {
+                processedExpansions.add(expansionKey);
+                expansionTargets.push({
+                  club,
+                  target,
+                  expansionDimAreaId: targetDimAreaId,
+                  expansionProdAreaId: targetProdAreaId
+                });
+              }
             }
           }
         }
@@ -3108,8 +3141,16 @@ router.get('/v2/hierarchy', async (req, res) => {
       const areaId = parseInt(club.area_id) || 0;
       const clubId = parseInt(club.club_id);
 
-      // Get ALL targets for this club (may be multiple)
-      const targets = targetsMap.get(clubId) || [];
+      // Filter targets to only include those matching this club node's area
+      // Multi-city clubs appear under each city, but targets should only show
+      // under the city/area where they're actually configured
+      const allTargets = targetsMap.get(clubId) || [];
+      const targets = allTargets.filter((t: any) => {
+        const targetProdAreaId = parseInt(t.target_production_area_id);
+        // Show target only if it matches this club node's area
+        // (targets without area_id default to showing everywhere for backward compatibility)
+        return !targetProdAreaId || targetProdAreaId === areaId;
+      });
       const hasTargets = targets.length > 0;
 
       // Aggregate target totals across all targets for the club row
@@ -3498,12 +3539,27 @@ router.get('/v2/hierarchy', async (req, res) => {
       dimToProductionMap = new Map(dimAreasResult.rows.map((a: any) => [parseInt(a.dim_area_id), parseInt(a.production_area_id)]));
     }
 
-    // Now collect expansion targets by comparing PRODUCTION area IDs
-    const expansionTargets: { club: any, target: any, expansionDimAreaId: number, expansionProdAreaId: number }[] = [];
+    // Build map of club_id → all areas where club has events (regular nodes)
+    // This prevents creating expansion nodes for areas where the club already appears
+    const clubExistingAreasDefault = new Map<number, Set<number>>();
     for (const club of clubsToProcess) {
       const clubId = parseInt(club.club_id);
-      const homeAreaId = parseInt(club.area_id) || 0; // This is production area.id
+      const areaId = parseInt(club.area_id) || 0;
+      if (!clubExistingAreasDefault.has(clubId)) {
+        clubExistingAreasDefault.set(clubId, new Set());
+      }
+      clubExistingAreasDefault.get(clubId)!.add(areaId);
+    }
+
+    // Now collect expansion targets by comparing PRODUCTION area IDs
+    // Only create expansion for areas where club doesn't already have a regular node
+    const expansionTargets: { club: any, target: any, expansionDimAreaId: number, expansionProdAreaId: number }[] = [];
+    const processedExpansionsDefault = new Set<string>(); // Prevent duplicates from multi-city clubs
+
+    for (const club of clubsToProcess) {
+      const clubId = parseInt(club.club_id);
       const targets = targetsMap.get(clubId) || [];
+      const existingAreas = clubExistingAreasDefault.get(clubId) || new Set();
 
       for (const target of targets) {
         const targetDimAreaId = target.target_area_id ? parseInt(target.target_area_id) : null;
@@ -3512,14 +3568,20 @@ router.get('/v2/hierarchy', async (req, res) => {
         // Resolve dim_areas.id to production_area_id for proper comparison
         const targetProdAreaId = dimToProductionMap.get(targetDimAreaId);
 
-        // If target's production area is different from club's home area, it's an expansion
-        if (targetProdAreaId && targetProdAreaId !== homeAreaId) {
-          expansionTargets.push({
-            club,
-            target,
-            expansionDimAreaId: targetDimAreaId,
-            expansionProdAreaId: targetProdAreaId
-          });
+        // Only create expansion if:
+        // 1. Target has a valid production area
+        // 2. Club doesn't already have a regular node in that area (prevents duplicates)
+        if (targetProdAreaId && !existingAreas.has(targetProdAreaId)) {
+          const expansionKey = `${clubId}-${targetDimAreaId}`;
+          if (!processedExpansionsDefault.has(expansionKey)) {
+            processedExpansionsDefault.add(expansionKey);
+            expansionTargets.push({
+              club,
+              target,
+              expansionDimAreaId: targetDimAreaId,
+              expansionProdAreaId: targetProdAreaId
+            });
+          }
         }
       }
     }
