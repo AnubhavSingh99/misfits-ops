@@ -73,19 +73,21 @@ interface SortableHeaderProps {
   currentSort: SortState
   onSort: (column: SortColumn) => void
   align?: 'left' | 'right' | 'center'
+  className?: string
 }
 
-function SortableHeader({ label, column, currentSort, onSort, align = 'left' }: SortableHeaderProps) {
+function SortableHeader({ label, column, currentSort, onSort, align = 'left', className = '' }: SortableHeaderProps) {
   const isActive = currentSort.column === column
   const direction = isActive ? currentSort.direction : null
 
   return (
     <th
-      className={`py-3 px-4 text-xs font-semibold uppercase tracking-wider
+      className={`py-3 px-2 text-xs font-semibold uppercase tracking-wider
         cursor-pointer select-none group
         transition-all duration-200
         ${align === 'right' ? 'text-right' : align === 'center' ? 'text-center' : 'text-left'}
-        ${isActive ? 'text-indigo-700 bg-indigo-50/50' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100/50'}`}
+        ${isActive ? 'text-indigo-700 bg-indigo-50/50' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100/50'}
+        ${className}`}
       onClick={() => onSort(column)}
     >
       <div className={`flex items-center gap-1.5 ${align === 'right' ? 'justify-end' : align === 'center' ? 'justify-center' : ''}`}>
@@ -3498,7 +3500,7 @@ export default function ScalingPlannerV2() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <div className="max-w-[1600px] mx-auto px-6 py-6">
+      <div className="max-w-[1900px] mx-auto px-4 py-6">
         {/* Header */}
         <div className="flex items-center justify-between mb-6">
           <div>
@@ -3576,8 +3578,8 @@ export default function ScalingPlannerV2() {
                     onSort={handleSort}
                     align="left"
                   />
-                  <th className="py-3 px-3 text-xs font-semibold text-gray-600 uppercase tracking-wider text-center">
-                    <div className="flex items-center gap-1.5 justify-center">
+                  <th className="py-3 px-2 text-xs font-semibold text-gray-600 uppercase tracking-wider text-center">
+                    <div className="flex items-center gap-1 justify-center">
                       <span>Health</span>
                       <InfoIconButton onClick={() => setHealthInfoModalOpen(true)} />
                     </div>
@@ -3610,13 +3612,13 @@ export default function ScalingPlannerV2() {
                     onSort={handleSort}
                     align="right"
                   />
-                  <th className="text-left py-3 px-4 text-xs font-semibold text-gray-600 uppercase tracking-wider w-[220px]">
+                  <th className="text-left py-3 px-2 text-xs font-semibold text-gray-600 uppercase tracking-wider w-[200px]">
                     <div className="flex items-center gap-1">
                       Meetup Stage
                       <InfoIconButton onClick={() => setStageInfoModalType('meetup_stage')} />
                     </div>
                   </th>
-                  <th className="text-left py-3 px-4 text-xs font-semibold text-gray-600 uppercase tracking-wider w-[240px]">
+                  <th className="text-left py-3 px-2 text-xs font-semibold text-gray-600 uppercase tracking-wider w-[220px]">
                     <div className="flex items-center gap-1">
                       Revenue Status (₹K)
                       <InfoIconButton onClick={() => setStageInfoModalType('revenue_status')} />
