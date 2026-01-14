@@ -2115,13 +2115,14 @@ router.get('/v2/hierarchy', async (req, res) => {
     // Store for auto-matching results (club_id -> ClubMatchResult)
     const autoMatchResults = new Map<number, ClubMatchResult>();
 
-    // Get ALL clubs from production with area derived from event locations (like original Scaling Planner)
-    // This is the same approach as /api/scaling/clubs
+    // Get ALL clubs from production with area derived from event locations
+    // MULTI-CITY: Clubs appear once per city where they have events
+    // Meetups/revenue are split by city
     const clubsQuery = `
       WITH
-      -- Pre-compute most recent location for each club (area derived from events)
+      -- One row per (club, city) with the most recent area in that city
       club_locations AS (
-        SELECT DISTINCT ON (e.club_id)
+        SELECT DISTINCT ON (e.club_id, ci.id)
           e.club_id,
           ci.id as city_id,
           ci.name as city_name,
@@ -2131,16 +2132,16 @@ router.get('/v2/hierarchy', async (req, res) => {
         JOIN location l ON e.location_id = l.id
         JOIN area ar ON l.area_id = ar.id
         JOIN city ci ON ar.city_id = ci.id
-        ORDER BY e.club_id, e.start_time DESC
+        ORDER BY e.club_id, ci.id, e.start_time DESC
       ),
-      -- Main club metrics with meetups and revenue for selected week
-      -- Week bounds are parameterized (defaults to last completed week)
+      -- Metrics per (club, city) - only count events in that city
       club_metrics AS (
         SELECT
           c.pk as club_id,
           c.name as club_name,
           a.id as activity_id,
           a.name as activity_name,
+          ci.id as city_id,
           COUNT(DISTINCT CASE
             WHEN e.start_time >= ${weekStartSQL}
             AND e.start_time < ${weekEndSQL}
@@ -2160,6 +2161,9 @@ router.get('/v2/hierarchy', async (req, res) => {
         FROM club c
         JOIN activity a ON c.activity_id = a.id
         LEFT JOIN event e ON c.pk = e.club_id
+        LEFT JOIN location l ON e.location_id = l.id
+        LEFT JOIN area ar ON l.area_id = ar.id
+        LEFT JOIN city ci ON ar.city_id = ci.id
         LEFT JOIN booking b ON b.event_id = e.pk
         LEFT JOIN transaction t ON t.entity_id = b.id AND t.entity_type = 'BOOKING'
         LEFT JOIN payment p ON p.pk = t.payment_id
@@ -2167,7 +2171,7 @@ router.get('/v2/hierarchy', async (req, res) => {
           AND c.is_private = false
           AND a.name != 'Test'
           ${activity_id ? `AND a.id = ${parseInt(activity_id as string)}` : ''}
-        GROUP BY c.pk, c.name, a.id, a.name
+        GROUP BY c.pk, c.name, a.id, a.name, ci.id
       )
       SELECT
         cm.club_id,
@@ -2181,8 +2185,8 @@ router.get('/v2/hierarchy', async (req, res) => {
         cm.current_meetups,
         cm.current_revenue
       FROM club_metrics cm
-      -- INNER JOIN excludes clubs with no events (they have no location data)
-      INNER JOIN club_locations cl ON cm.club_id = cl.club_id
+      -- Join on both club_id AND city_id to get per-city rows
+      INNER JOIN club_locations cl ON cm.club_id = cl.club_id AND cm.city_id = cl.city_id
       ORDER BY cm.activity_name, cl.city_name, cl.area_name, cm.club_name
     `;
 
@@ -3190,7 +3194,10 @@ router.get('/v2/hierarchy', async (req, res) => {
           revenue_status_list: [] as RevenueStatus[], // Collect for rollup
           leaders_required_total: 0,
           leader_requirements_summary: { total_requirements: 0, not_picked: 0, deprioritised: 0, in_progress: 0, done: 0 },
-          children: new Map<number, any>()
+          children: new Map<number, any>(),
+          // MULTI-CITY: Track unique club IDs to avoid double-counting in rollups
+          unique_club_ids: new Set<number>(),
+          rolled_up_leader_club_ids: new Set<number>()
         });
       }
 
@@ -3199,7 +3206,11 @@ router.get('/v2/hierarchy', async (req, res) => {
       activityNode.target_revenue += targetRevenue;
       activityNode.current_meetups += currentMeetups;
       activityNode.current_revenue += currentRevenue;
-      activityNode.club_count++;
+      // MULTI-CITY: Only count unique clubs at activity level
+      if (!activityNode.unique_club_ids.has(clubId)) {
+        activityNode.unique_club_ids.add(clubId);
+        activityNode.club_count++;
+      }
       activityNode.last_4w_revenue_total += last4wTotal;
       if (hasRevenueData) {
         activityNode.revenue_status_list.push(clubRevenueStatus);
@@ -3228,7 +3239,10 @@ router.get('/v2/hierarchy', async (req, res) => {
           revenue_status_list: [] as RevenueStatus[], // Collect for rollup
           leaders_required_total: 0,
           leader_requirements_summary: { total_requirements: 0, not_picked: 0, deprioritised: 0, in_progress: 0, done: 0 },
-          children: new Map<number, any>()
+          children: new Map<number, any>(),
+          // MULTI-CITY: Track unique clubs for rollups (each club appears once per city)
+          unique_club_ids: new Set<number>(),
+          rolled_up_leader_club_ids: new Set<number>()
         });
       }
 
@@ -3268,7 +3282,10 @@ router.get('/v2/hierarchy', async (req, res) => {
           revenue_status_list: [] as RevenueStatus[], // Collect for rollup
           leaders_required_total: 0,
           leader_requirements_summary: { total_requirements: 0, not_picked: 0, deprioritised: 0, in_progress: 0, done: 0 },
-          children: []
+          children: [],
+          // MULTI-CITY: Track unique clubs for rollups
+          unique_club_ids: new Set<number>(),
+          rolled_up_leader_club_ids: new Set<number>()
         });
       }
 
@@ -3412,9 +3429,12 @@ router.get('/v2/hierarchy', async (req, res) => {
       }
 
       // Roll up leader requirements to area, city, activity
+      // MULTI-CITY: Leader requirements are tied to club, not city. When a club appears in
+      // multiple cities, we should show its requirements under each city instance, but only
+      // count them once at the activity level to avoid double-counting in totals.
       const clubLeaderReq = leaderRequirementsMap.get(clubId);
       if (clubLeaderReq) {
-        // Area rollup
+        // Area rollup - each club appears once per area (determined by most recent event in city)
         areaNode.leaders_required_total += clubLeaderReq.leaders_required_total || 0;
         areaNode.leader_requirements_summary.total_requirements += clubLeaderReq.total_requirements || 0;
         areaNode.leader_requirements_summary.not_picked += clubLeaderReq.not_picked || 0;
@@ -3422,7 +3442,7 @@ router.get('/v2/hierarchy', async (req, res) => {
         areaNode.leader_requirements_summary.in_progress += clubLeaderReq.in_progress || 0;
         areaNode.leader_requirements_summary.done += clubLeaderReq.done || 0;
 
-        // City rollup
+        // City rollup - each club appears once per city
         cityNode.leaders_required_total += clubLeaderReq.leaders_required_total || 0;
         cityNode.leader_requirements_summary.total_requirements += clubLeaderReq.total_requirements || 0;
         cityNode.leader_requirements_summary.not_picked += clubLeaderReq.not_picked || 0;
@@ -3430,13 +3450,16 @@ router.get('/v2/hierarchy', async (req, res) => {
         cityNode.leader_requirements_summary.in_progress += clubLeaderReq.in_progress || 0;
         cityNode.leader_requirements_summary.done += clubLeaderReq.done || 0;
 
-        // Activity rollup
-        activityNode.leaders_required_total += clubLeaderReq.leaders_required_total || 0;
-        activityNode.leader_requirements_summary.total_requirements += clubLeaderReq.total_requirements || 0;
-        activityNode.leader_requirements_summary.not_picked += clubLeaderReq.not_picked || 0;
-        activityNode.leader_requirements_summary.deprioritised += clubLeaderReq.deprioritised || 0;
-        activityNode.leader_requirements_summary.in_progress += clubLeaderReq.in_progress || 0;
-        activityNode.leader_requirements_summary.done += clubLeaderReq.done || 0;
+        // Activity rollup - MULTI-CITY: Only count unique clubs to avoid double-counting
+        if (!activityNode.rolled_up_leader_club_ids.has(clubId)) {
+          activityNode.rolled_up_leader_club_ids.add(clubId);
+          activityNode.leaders_required_total += clubLeaderReq.leaders_required_total || 0;
+          activityNode.leader_requirements_summary.total_requirements += clubLeaderReq.total_requirements || 0;
+          activityNode.leader_requirements_summary.not_picked += clubLeaderReq.not_picked || 0;
+          activityNode.leader_requirements_summary.deprioritised += clubLeaderReq.deprioritised || 0;
+          activityNode.leader_requirements_summary.in_progress += clubLeaderReq.in_progress || 0;
+          activityNode.leader_requirements_summary.done += clubLeaderReq.done || 0;
+        }
       }
     }
 
@@ -3572,7 +3595,10 @@ router.get('/v2/hierarchy', async (req, res) => {
             club_count: 0,
             last_4w_revenue_total: 0,
             revenue_status_list: [],
-            children: new Map<number, any>()
+            children: new Map<number, any>(),
+            // MULTI-CITY: Track unique club IDs to avoid double-counting in rollups
+            unique_club_ids: new Set<number>(),
+            rolled_up_leader_club_ids: new Set<number>()
           });
         }
 
@@ -3600,7 +3626,10 @@ router.get('/v2/hierarchy', async (req, res) => {
             club_count: 0,
             last_4w_revenue_total: 0,
             revenue_status_list: [],
-            children: new Map<number, any>()
+            children: new Map<number, any>(),
+            // MULTI-CITY: Track unique clubs for rollups
+            unique_club_ids: new Set<number>(),
+            rolled_up_leader_club_ids: new Set<number>()
           });
         }
 
@@ -3630,7 +3659,10 @@ router.get('/v2/hierarchy', async (req, res) => {
             club_count: 0,
             last_4w_revenue_total: 0,
             revenue_status_list: [],
-            children: []
+            children: [],
+            // MULTI-CITY: Track unique clubs for rollups
+            unique_club_ids: new Set<number>(),
+            rolled_up_leader_club_ids: new Set<number>()
           });
         }
 
@@ -3792,7 +3824,10 @@ router.get('/v2/hierarchy', async (req, res) => {
             progress_summary: { ...defaultProgress },
             club_count: 0,
             launch_count: 0,
-            children: new Map<number, any>()
+            children: new Map<number, any>(),
+            // MULTI-CITY: Track unique club IDs to avoid double-counting in rollups
+            unique_club_ids: new Set<number>(),
+            rolled_up_leader_club_ids: new Set<number>()
           });
         }
 
@@ -3822,7 +3857,10 @@ router.get('/v2/hierarchy', async (req, res) => {
             progress_summary: { ...defaultProgress },
             club_count: 0,
             launch_count: 0,
-            children: new Map<number, any>()
+            children: new Map<number, any>(),
+            // MULTI-CITY: Track unique clubs for rollups
+            unique_club_ids: new Set<number>(),
+            rolled_up_leader_club_ids: new Set<number>()
           });
         }
 
@@ -3854,7 +3892,10 @@ router.get('/v2/hierarchy', async (req, res) => {
             progress_summary: { ...defaultProgress },
             club_count: 0,
             launch_count: 0,
-            children: []
+            children: [],
+            // MULTI-CITY: Track unique clubs for rollups
+            unique_club_ids: new Set<number>(),
+            rolled_up_leader_club_ids: new Set<number>()
           });
         }
 
@@ -4024,6 +4065,9 @@ router.get('/v2/hierarchy', async (req, res) => {
             ? getRevenueStatusDisplay(areaNode.revenue_status)
             : null;
           delete areaNode.revenue_status_list; // Clean up temporary list
+          // MULTI-CITY: Clean up tracking Sets (not needed in response)
+          delete areaNode.unique_club_ids;
+          delete areaNode.rolled_up_leader_club_ids;
 
           // Roll up health for area (excludes launches)
           const areaHealthRollup = rollupHealth(areaNode.children || []);
@@ -4054,6 +4098,9 @@ router.get('/v2/hierarchy', async (req, res) => {
           ? getRevenueStatusDisplay(cityNode.revenue_status)
           : null;
         delete cityNode.revenue_status_list; // Clean up temporary list
+        // MULTI-CITY: Clean up tracking Sets (not needed in response)
+        delete cityNode.unique_club_ids;
+        delete cityNode.rolled_up_leader_club_ids;
 
         // Roll up health for city (from areas)
         const cityHealthRollup = rollupHealth(areaNodes);
@@ -4084,6 +4131,9 @@ router.get('/v2/hierarchy', async (req, res) => {
         ? getRevenueStatusDisplay(activityNode.revenue_status)
         : null;
       delete activityNode.revenue_status_list; // Clean up temporary list
+      // MULTI-CITY: Clean up tracking Sets (not needed in response)
+      delete activityNode.unique_club_ids;
+      delete activityNode.rolled_up_leader_club_ids;
 
       // Roll up health for activity (from cities)
       const activityHealthRollup = rollupHealth(cityNodes);
