@@ -759,6 +759,8 @@ export function MeetupDetailsTooltip({
   const tooltipRef = useRef<HTMLDivElement>(null);
   const hoverTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const leaveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const isOverTriggerRef = useRef(false);
+  const isOverTooltipRef = useRef(false);
 
   const prevParentWeekRef = useRef<string | undefined>(weekStart);
   useEffect(() => {
@@ -871,7 +873,15 @@ export function MeetupDetailsTooltip({
     setPosition({ top, left, arrowLeft, showAbove } as any);
   }, []);
 
+  const checkAndHide = useCallback(() => {
+    // Only hide if mouse is not over either trigger or tooltip
+    if (!isOverTriggerRef.current && !isOverTooltipRef.current) {
+      setIsVisible(false);
+    }
+  }, []);
+
   const handleMouseEnter = () => {
+    isOverTriggerRef.current = true;
     if (leaveTimeoutRef.current) {
       clearTimeout(leaveTimeoutRef.current);
       leaveTimeoutRef.current = null;
@@ -884,13 +894,31 @@ export function MeetupDetailsTooltip({
   };
 
   const handleMouseLeave = () => {
+    isOverTriggerRef.current = false;
     if (hoverTimeoutRef.current) {
       clearTimeout(hoverTimeoutRef.current);
       hoverTimeoutRef.current = null;
     }
-    leaveTimeoutRef.current = setTimeout(() => {
-      setIsVisible(false);
-    }, 100);
+    if (leaveTimeoutRef.current) {
+      clearTimeout(leaveTimeoutRef.current);
+    }
+    leaveTimeoutRef.current = setTimeout(checkAndHide, 150);
+  };
+
+  const handleTooltipMouseEnter = () => {
+    isOverTooltipRef.current = true;
+    if (leaveTimeoutRef.current) {
+      clearTimeout(leaveTimeoutRef.current);
+      leaveTimeoutRef.current = null;
+    }
+  };
+
+  const handleTooltipMouseLeave = () => {
+    isOverTooltipRef.current = false;
+    if (leaveTimeoutRef.current) {
+      clearTimeout(leaveTimeoutRef.current);
+    }
+    leaveTimeoutRef.current = setTimeout(checkAndHide, 150);
   };
 
   useEffect(() => {
@@ -899,6 +927,49 @@ export function MeetupDetailsTooltip({
       if (leaveTimeoutRef.current) clearTimeout(leaveTimeoutRef.current);
     };
   }, []);
+
+  // Safety: hide tooltip if mouse is far from both trigger and tooltip
+  useEffect(() => {
+    if (!isVisible) {
+      isOverTriggerRef.current = false;
+      isOverTooltipRef.current = false;
+      return;
+    }
+
+    const handleDocumentMouseMove = (e: MouseEvent) => {
+      const trigger = triggerRef.current;
+      const tooltip = tooltipRef.current;
+      if (!trigger || !tooltip) return;
+
+      const triggerRect = trigger.getBoundingClientRect();
+      const tooltipRect = tooltip.getBoundingClientRect();
+      const buffer = 20; // pixels of tolerance
+
+      const isNearTrigger =
+        e.clientX >= triggerRect.left - buffer &&
+        e.clientX <= triggerRect.right + buffer &&
+        e.clientY >= triggerRect.top - buffer &&
+        e.clientY <= triggerRect.bottom + buffer;
+
+      const isNearTooltip =
+        e.clientX >= tooltipRect.left - buffer &&
+        e.clientX <= tooltipRect.right + buffer &&
+        e.clientY >= tooltipRect.top - buffer &&
+        e.clientY <= tooltipRect.bottom + buffer;
+
+      if (!isNearTrigger && !isNearTooltip) {
+        // Mouse is far from both - hide immediately
+        isOverTriggerRef.current = false;
+        isOverTooltipRef.current = false;
+        setIsVisible(false);
+      }
+    };
+
+    document.addEventListener('mousemove', handleDocumentMouseMove);
+    return () => {
+      document.removeEventListener('mousemove', handleDocumentMouseMove);
+    };
+  }, [isVisible]);
 
   useEffect(() => {
     if (!isVisible) setShowWeekDropdown(false);
@@ -921,13 +992,8 @@ export function MeetupDetailsTooltip({
       {isVisible && createPortal(
         <div
           ref={tooltipRef}
-          onMouseEnter={() => {
-            if (leaveTimeoutRef.current) {
-              clearTimeout(leaveTimeoutRef.current);
-              leaveTimeoutRef.current = null;
-            }
-          }}
-          onMouseLeave={handleMouseLeave}
+          onMouseEnter={handleTooltipMouseEnter}
+          onMouseLeave={handleTooltipMouseLeave}
           className="fixed z-[9999]"
           style={{
             top: position.top,
