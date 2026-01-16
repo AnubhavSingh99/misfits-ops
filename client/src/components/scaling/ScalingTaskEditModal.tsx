@@ -9,14 +9,14 @@ const API_BASE = import.meta.env.VITE_API_URL
   ? `${import.meta.env.VITE_API_URL}/api`
   : '/api';
 
-// Stage options
+// Stage options - labels match MEETUP_STAGE_CONFIG in ScalingPlannerV2.tsx
 const STAGES: { value: StageKey; label: string }[] = [
   { value: 'not_picked', label: 'Not Picked' },
   { value: 'started', label: 'Started' },
-  { value: 'stage_1', label: 'Stage 1' },
-  { value: 'stage_2', label: 'Stage 2' },
-  { value: 'stage_3', label: 'Stage 3' },
-  { value: 'stage_4', label: 'Stage 4' },
+  { value: 'stage_1', label: 'Stage 1 - Leaders Found' },
+  { value: 'stage_2', label: 'Stage 2 - Venue Found' },
+  { value: 'stage_3', label: 'Stage 3 - Launch Ready' },
+  { value: 'stage_4', label: 'Stage 4 - Regression' },
   { value: 'realised', label: 'Realised' }
 ];
 
