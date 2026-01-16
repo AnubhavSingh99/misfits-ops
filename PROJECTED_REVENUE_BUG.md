@@ -127,8 +127,8 @@ This principle is violated when clubs operate in multiple areas.
 - [x] Bug identified
 - [x] Root cause found
 - [x] Fix implemented
-- [ ] Fix tested
-- [ ] Deployed
+- [x] Fix tested
+- [x] Deployed (2026-01-16, version 260116-1448)
 
 ## Actual Root Cause (Updated)
 
