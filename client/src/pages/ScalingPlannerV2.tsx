@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
+import { createPortal } from 'react-dom'
 import {
   ChevronDown,
   ChevronRight,
@@ -331,6 +332,197 @@ function Tooltip({ children, text, position = 'top' }: TooltipProps) {
         <div className={`absolute ${arrowClasses[position]} border-4`} />
       </div>
     </div>
+  )
+}
+
+// =====================================================
+// TARGET BREAKDOWN TOOLTIP
+// =====================================================
+interface TargetBreakdownTooltipProps {
+  children: React.ReactNode
+  targets: Array<{
+    target_id: number
+    name: string
+    target_meetups: number
+    target_revenue: number
+    meetup_cost: number | null
+    meetup_capacity: number | null
+    day_type_name?: string | null
+  }>
+}
+
+function TargetBreakdownTooltip({ children, targets }: TargetBreakdownTooltipProps) {
+  const [isVisible, setIsVisible] = useState(false)
+  const [position, setPosition] = useState({ top: 0, left: 0 })
+  const triggerRef = useRef<HTMLDivElement>(null)
+  const hoverTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const leaveTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+
+  // Don't show tooltip if no targets
+  if (!targets || targets.length === 0) {
+    return <>{children}</>
+  }
+
+  const handleMouseEnter = () => {
+    if (leaveTimeoutRef.current) {
+      clearTimeout(leaveTimeoutRef.current)
+      leaveTimeoutRef.current = null
+    }
+    hoverTimeoutRef.current = setTimeout(() => {
+      if (triggerRef.current) {
+        const rect = triggerRef.current.getBoundingClientRect()
+        const tooltipWidth = 320
+        const viewportPadding = 16
+
+        let left = rect.right + 8
+        // If would overflow right, position to the left
+        if (left + tooltipWidth > window.innerWidth - viewportPadding) {
+          left = rect.left - tooltipWidth - 8
+        }
+
+        setPosition({
+          top: rect.top - 20,
+          left: Math.max(viewportPadding, left)
+        })
+        setIsVisible(true)
+      }
+    }, 150)
+  }
+
+  const handleMouseLeave = () => {
+    if (hoverTimeoutRef.current) {
+      clearTimeout(hoverTimeoutRef.current)
+      hoverTimeoutRef.current = null
+    }
+    leaveTimeoutRef.current = setTimeout(() => {
+      setIsVisible(false)
+    }, 100)
+  }
+
+  const formatCurrencyShort = (val: number) => {
+    if (val >= 100000) return `₹${(val / 100000).toFixed(1)}L`
+    if (val >= 1000) return `₹${(val / 1000).toFixed(1)}K`
+    return `₹${Math.round(val)}`
+  }
+
+  return (
+    <>
+      <div
+        ref={triggerRef}
+        onMouseEnter={handleMouseEnter}
+        onMouseLeave={handleMouseLeave}
+        className="cursor-default"
+      >
+        {children}
+      </div>
+
+      {isVisible && createPortal(
+        <div
+          onMouseEnter={() => {
+            if (leaveTimeoutRef.current) {
+              clearTimeout(leaveTimeoutRef.current)
+              leaveTimeoutRef.current = null
+            }
+          }}
+          onMouseLeave={handleMouseLeave}
+          className="fixed z-[9999]"
+          style={{
+            top: position.top,
+            left: position.left,
+            animation: 'tooltipFadeIn 0.15s ease-out'
+          }}
+        >
+          <div className="w-80 bg-white rounded-xl shadow-xl border border-gray-200/80 overflow-hidden">
+            {/* Header */}
+            <div className="px-3 py-2 bg-gradient-to-r from-indigo-50 to-white border-b border-gray-100">
+              <div className="flex items-center gap-2">
+                <Target size={14} className="text-indigo-500" />
+                <span className="text-xs font-semibold text-gray-700">Target Breakdown</span>
+                <span className="text-[10px] text-gray-400">({targets.length} target{targets.length > 1 ? 's' : ''})</span>
+              </div>
+            </div>
+
+            {/* Column Headers */}
+            <div className="grid grid-cols-[1fr_45px_55px_55px_55px] gap-1.5 px-3 py-1.5 bg-gray-50 border-b border-gray-100 text-[9px] font-semibold text-gray-400 uppercase tracking-wider">
+              <span>Target</span>
+              <span className="text-center">Mtups</span>
+              <span className="text-center">Revenue</span>
+              <span className="text-center">Cost</span>
+              <span className="text-center">Cap</span>
+            </div>
+
+            {/* Target Rows */}
+            <div className="max-h-48 overflow-y-auto">
+              {targets.map((target, idx) => (
+                <div
+                  key={target.target_id}
+                  className={`grid grid-cols-[1fr_45px_55px_55px_55px] gap-1.5 px-3 py-2 border-b border-gray-50 hover:bg-gray-50/50 transition-colors ${
+                    idx % 2 === 0 ? 'bg-white' : 'bg-gray-50/30'
+                  }`}
+                >
+                  {/* Target Name */}
+                  <div className="min-w-0">
+                    <div className="text-xs text-gray-700 font-medium truncate" title={target.name || `Target ${idx + 1}`}>
+                      {target.name || `Target ${idx + 1}`}
+                    </div>
+                    {target.day_type_name && (
+                      <div className="text-[10px] text-gray-400 truncate">
+                        {target.day_type_name}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Meetups */}
+                  <div className="flex items-center justify-center">
+                    <span className="text-xs font-mono text-gray-700">{target.target_meetups}</span>
+                  </div>
+
+                  {/* Revenue */}
+                  <div className="flex items-center justify-center">
+                    <span className="text-xs font-mono text-gray-600">
+                      {target.target_revenue >= 1000
+                        ? `₹${(target.target_revenue / 1000).toFixed(1)}K`
+                        : `₹${target.target_revenue}`}
+                    </span>
+                  </div>
+
+                  {/* Cost */}
+                  <div className="flex items-center justify-center">
+                    <span className="text-xs font-mono text-gray-600">
+                      {target.meetup_cost ? `₹${target.meetup_cost}` : '—'}
+                    </span>
+                  </div>
+
+                  {/* Capacity */}
+                  <div className="flex items-center justify-center">
+                    <span className="text-xs font-mono text-gray-600">
+                      {target.meetup_capacity || '—'}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Footer with totals */}
+            <div className="grid grid-cols-[1fr_45px_55px_55px_55px] gap-1.5 px-3 py-2 bg-gray-100 border-t border-gray-200 text-[10px] font-semibold">
+              <span className="text-gray-500">TOTAL</span>
+              <span className="text-center text-gray-700 font-mono">
+                {targets.reduce((sum, t) => sum + t.target_meetups, 0)}
+              </span>
+              <span className="text-center text-gray-700 font-mono">
+                {(() => {
+                  const total = targets.reduce((sum, t) => sum + t.target_revenue, 0)
+                  return total >= 1000 ? `₹${(total / 1000).toFixed(1)}K` : `₹${total}`
+                })()}
+              </span>
+              <span className="text-center text-gray-400">—</span>
+              <span className="text-center text-gray-400">—</span>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+    </>
   )
 }
 
@@ -2120,10 +2312,64 @@ function HierarchyRow({ node, level, expanded, onToggle, onEditTarget, onDeleteT
         )}
       </td>
 
-      {/* Target column */}
+      {/* Target column - show tooltip with target breakdown for clubs/launches with targets */}
       <td className="py-3 px-4 text-right">
-        <div className="text-gray-800 font-mono font-semibold">{node.target_meetups}</div>
-        <div className="text-xs text-gray-500">{formatCurrency(node.target_revenue)}</div>
+        {(() => {
+          // For clubs/launches, show target breakdown tooltip
+          if (node.type === 'club' || node.type === 'launch') {
+            // Case 1: Multiple targets (has target children)
+            if (hasChildren && node.children?.some(c => c.type === 'target')) {
+              return (
+                <TargetBreakdownTooltip
+                  targets={(node.children || [])
+                    .filter(c => c.type === 'target')
+                    .map(t => ({
+                      target_id: t.target_id || 0,
+                      name: t.name,
+                      target_meetups: t.target_meetups,
+                      target_revenue: t.target_revenue,
+                      meetup_cost: t.meetup_cost ?? null,
+                      meetup_capacity: t.meetup_capacity ?? null,
+                      day_type_name: t.day_type_name ?? null
+                    }))}
+                >
+                  <div className="hover:bg-indigo-50 rounded px-1 -mx-1 transition-colors cursor-default">
+                    <div className="text-gray-800 font-mono font-semibold">{node.target_meetups}</div>
+                    <div className="text-xs text-gray-500">{formatCurrency(node.target_revenue)}</div>
+                  </div>
+                </TargetBreakdownTooltip>
+              )
+            }
+            // Case 2: Single target (no children, but has_target is true)
+            if (node.has_target && node.target_id) {
+              return (
+                <TargetBreakdownTooltip
+                  targets={[{
+                    target_id: node.target_id,
+                    name: node.day_type_name || 'Target',
+                    target_meetups: node.target_meetups,
+                    target_revenue: node.target_revenue,
+                    meetup_cost: node.meetup_cost ?? null,
+                    meetup_capacity: node.meetup_capacity ?? null,
+                    day_type_name: node.day_type_name ?? null
+                  }]}
+                >
+                  <div className="hover:bg-indigo-50 rounded px-1 -mx-1 transition-colors cursor-default">
+                    <div className="text-gray-800 font-mono font-semibold">{node.target_meetups}</div>
+                    <div className="text-xs text-gray-500">{formatCurrency(node.target_revenue)}</div>
+                  </div>
+                </TargetBreakdownTooltip>
+              )
+            }
+          }
+          // Default: no tooltip
+          return (
+            <>
+              <div className="text-gray-800 font-mono font-semibold">{node.target_meetups}</div>
+              <div className="text-xs text-gray-500">{formatCurrency(node.target_revenue)}</div>
+            </>
+          )
+        })()}
       </td>
 
       {/* Current column - targets don't have current data, clubs get hover tooltip */}
