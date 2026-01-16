@@ -125,6 +125,52 @@ function rollupHealth(children: Array<{
   };
 }
 
+/**
+ * Calculate health distribution from unique clubs only
+ * This prevents multi-area clubs from being counted multiple times
+ */
+function getUniqueClubHealthDistribution(hierarchy: any[]): {
+  green: number;
+  yellow: number;
+  red: number;
+  gray: number;
+} {
+  // Recursively extract all club nodes from hierarchy
+  function extractClubNodes(nodes: any[]): any[] {
+    const clubs: any[] = [];
+    for (const node of nodes) {
+      if (node.type === 'club' && !node.is_launch) {
+        clubs.push(node);
+      }
+      if (node.children && Array.isArray(node.children)) {
+        clubs.push(...extractClubNodes(node.children));
+      }
+    }
+    return clubs;
+  }
+
+  const allClubNodes = extractClubNodes(hierarchy);
+
+  // Deduplicate by club_id, keeping first occurrence
+  const uniqueClubs = new Map<number, any>();
+  for (const club of allClubNodes) {
+    if (club.club_id && !uniqueClubs.has(club.club_id)) {
+      uniqueClubs.set(club.club_id, club);
+    }
+  }
+
+  // Calculate distribution from unique clubs
+  const distribution = { green: 0, yellow: 0, red: 0, gray: 0 };
+  for (const club of uniqueClubs.values()) {
+    const status = club.health_status || 'gray';
+    if (status in distribution) {
+      distribution[status as keyof typeof distribution]++;
+    }
+  }
+
+  return distribution;
+}
+
 // =====================================================
 // HELPER FUNCTIONS
 // =====================================================
@@ -4534,7 +4580,8 @@ router.get('/v2/hierarchy', async (req, res) => {
         // Health summary
         overall_health_score: overallHealthRollup.health_score,
         overall_health_status: overallHealthRollup.health_status,
-        health_distribution: overallHealthRollup.health_distribution
+        // Use unique club count to avoid double-counting multi-area clubs
+        health_distribution: getUniqueClubHealthDistribution(hierarchy)
       }
     });
   } catch (error) {
