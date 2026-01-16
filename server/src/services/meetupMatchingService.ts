@@ -82,6 +82,7 @@ export interface StageProgressWithUA extends StageProgress {
 export interface TargetMatchResult {
   target_id: number;
   target_name: string | null;
+  production_area_id: number | null;  // Required for area filtering in hierarchy
   matched_meetups: ActualMeetup[];
   matched_count: number;
   matched_revenue: number;
@@ -669,6 +670,7 @@ export async function matchClubMeetups(
     result.targets.push({
       target_id: target.target_id,
       target_name: target.target_name,
+      production_area_id: target.production_area_id,  // Required for area filtering in hierarchy
       matched_meetups: matchedMeetups,
       matched_count: matchedCount,
       matched_revenue: matchedRevenue,
