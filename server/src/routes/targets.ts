@@ -5134,22 +5134,61 @@ router.post('/v2/launches/:launchId/transition', async (req, res) => {
 
       const activityId = activityResult.rows[0]?.id;
 
-      // Create club dimensional target (simple insert - launch targets are new)
+      // Get correct area_id - prefer launch target's area, but validate it exists
+      // If invalid, look up from launch's planned_area
+      let targetAreaId = launchTarget.area_id;
+
+      // Validate area_id exists in production
+      const areaCheckResult = await queryProduction(`
+        SELECT id FROM area WHERE id = $1
+      `, [targetAreaId]);
+
+      if (areaCheckResult.rows.length === 0) {
+        // Area doesn't exist, look up from launch's planned_area
+        const areaLookupResult = await queryProduction(`
+          SELECT id FROM area WHERE name = $1
+        `, [launch.planned_area]);
+
+        if (areaLookupResult.rows.length > 0) {
+          targetAreaId = areaLookupResult.rows[0].id;
+          logger.info(`Fixed invalid area_id ${launchTarget.area_id} to ${targetAreaId} (${launch.planned_area})`);
+        } else {
+          // Still can't find area, try to get from club's events
+          const clubAreaResult = await queryProduction(`
+            SELECT ar.id
+            FROM event e
+            JOIN area ar ON e.area_id = ar.id
+            WHERE e.club_id = $1
+            GROUP BY ar.id
+            ORDER BY COUNT(*) DESC
+            LIMIT 1
+          `, [club_id]);
+
+          if (clubAreaResult.rows.length > 0) {
+            targetAreaId = clubAreaResult.rows[0].id;
+            logger.info(`Using club's primary area ${targetAreaId} for target`);
+          }
+        }
+      }
+
+      // Create club dimensional target with all fields including meetup_cost/capacity
       await queryLocal(`
         INSERT INTO club_dimensional_targets (
           club_id, activity_id, area_id, day_type_id, format_id,
-          target_meetups, target_revenue, progress
+          target_meetups, target_revenue, progress, meetup_cost, meetup_capacity
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
       `, [
         club_id,
         activityId,
-        launchTarget.area_id,
+        targetAreaId,
         launchTarget.day_type_id,
         launchTarget.format_id,
         launchTarget.target_meetups,
         launchTarget.target_revenue,
-        launchTarget.progress
+        launchTarget.progress,
+        launchTarget.meetup_cost,
+        launchTarget.meetup_capacity
       ]);
     }
 
