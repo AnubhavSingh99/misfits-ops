@@ -5134,62 +5134,68 @@ router.post('/v2/launches/:launchId/transition', async (req, res) => {
 
       const activityId = activityResult.rows[0]?.id;
 
-      // Get correct area_id - prefer launch target's area, but validate it exists
-      // If invalid, look up from launch's planned_area
-      let targetAreaId = launchTarget.area_id;
+      // Get area_id from the club's actual events (where the club operates)
+      // This ensures the target appears under the club, not as a separate expansion
+      let targetAreaId = null;
 
-      // Validate area_id exists in production
-      const areaCheckResult = await queryProduction(`
-        SELECT id FROM area WHERE id = $1
-      `, [targetAreaId]);
+      // Get area where the club has events
+      const clubAreaResult = await queryProduction(`
+        SELECT ar.id, ar.name
+        FROM event e
+        JOIN area ar ON e.area_id = ar.id
+        WHERE e.club_id = $1
+        GROUP BY ar.id, ar.name
+        ORDER BY COUNT(*) DESC
+        LIMIT 1
+      `, [club_id]);
 
-      if (areaCheckResult.rows.length === 0) {
-        // Area doesn't exist, look up from launch's planned_area
+      if (clubAreaResult.rows.length > 0) {
+        targetAreaId = clubAreaResult.rows[0].id;
+        logger.info(`Using club's primary area ${targetAreaId} (${clubAreaResult.rows[0].name}) for target`);
+      } else {
+        // New club with no events yet - use launch's planned area
         const areaLookupResult = await queryProduction(`
           SELECT id FROM area WHERE name = $1
         `, [launch.planned_area]);
 
         if (areaLookupResult.rows.length > 0) {
           targetAreaId = areaLookupResult.rows[0].id;
-          logger.info(`Fixed invalid area_id ${launchTarget.area_id} to ${targetAreaId} (${launch.planned_area})`);
+          logger.info(`New club - using launch's planned area ${targetAreaId} (${launch.planned_area})`);
         } else {
-          // Still can't find area, try to get from club's events
-          const clubAreaResult = await queryProduction(`
-            SELECT ar.id
-            FROM event e
-            JOIN area ar ON e.area_id = ar.id
-            WHERE e.club_id = $1
-            GROUP BY ar.id
-            ORDER BY COUNT(*) DESC
-            LIMIT 1
-          `, [club_id]);
+          // Fallback to launch target's area_id if valid
+          const areaCheckResult = await queryProduction(`
+            SELECT id FROM area WHERE id = $1
+          `, [launchTarget.area_id]);
 
-          if (clubAreaResult.rows.length > 0) {
-            targetAreaId = clubAreaResult.rows[0].id;
-            logger.info(`Using club's primary area ${targetAreaId} for target`);
+          if (areaCheckResult.rows.length > 0) {
+            targetAreaId = launchTarget.area_id;
           }
         }
       }
 
-      // Create club dimensional target with all fields including meetup_cost/capacity
-      await queryLocal(`
-        INSERT INTO club_dimensional_targets (
-          club_id, activity_id, area_id, day_type_id, format_id,
-          target_meetups, target_revenue, progress, meetup_cost, meetup_capacity
-        )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-      `, [
-        club_id,
-        activityId,
-        targetAreaId,
-        launchTarget.day_type_id,
-        launchTarget.format_id,
-        launchTarget.target_meetups,
-        launchTarget.target_revenue,
-        launchTarget.progress,
-        launchTarget.meetup_cost,
-        launchTarget.meetup_capacity
-      ]);
+      if (!targetAreaId) {
+        logger.warn(`Could not determine area_id for club ${club_id}, skipping target transfer`);
+      } else {
+        // Create club dimensional target with all fields including meetup_cost/capacity
+        await queryLocal(`
+          INSERT INTO club_dimensional_targets (
+            club_id, activity_id, area_id, day_type_id, format_id,
+            target_meetups, target_revenue, progress, meetup_cost, meetup_capacity
+          )
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        `, [
+          club_id,
+          activityId,
+          targetAreaId,
+          launchTarget.day_type_id,
+          launchTarget.format_id,
+          launchTarget.target_meetups,
+          launchTarget.target_revenue,
+          launchTarget.progress,
+          launchTarget.meetup_cost,
+          launchTarget.meetup_capacity
+        ]);
+      }
     }
 
     logger.info(`Transitioned launch ${launchId} to club ${club_id} (${match_type})`);
