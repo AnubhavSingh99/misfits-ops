@@ -2312,7 +2312,7 @@ function HierarchyRow({ node, level, expanded, onToggle, onEditTarget, onDeleteT
         )}
       </td>
 
-      {/* Target column - show tooltip with target breakdown for clubs/launches with targets */}
+      {/* Target column - show tooltip with target breakdown for clubs/launches/targets */}
       <td className="py-3 px-4 text-right">
         {(() => {
           // For clubs/launches, show target breakdown tooltip
@@ -2363,6 +2363,27 @@ function HierarchyRow({ node, level, expanded, onToggle, onEditTarget, onDeleteT
                 </TargetBreakdownTooltip>
               )
             }
+          }
+          // For target nodes, show tooltip with this target's info
+          if (node.type === 'target') {
+            return (
+              <TargetBreakdownTooltip
+                targets={[{
+                  target_id: node.target_id || 0,
+                  name: node.name,
+                  target_meetups: node.target_meetups,
+                  target_revenue: node.target_revenue,
+                  meetup_cost: node.meetup_cost ?? null,
+                  meetup_capacity: node.meetup_capacity ?? null,
+                  day_type_name: node.day_type_name ?? null
+                }]}
+              >
+                <div className="hover:bg-indigo-50 rounded px-1 -mx-1 transition-colors cursor-default">
+                  <div className="text-gray-800 font-mono font-semibold">{node.target_meetups}</div>
+                  <div className="text-xs text-gray-500">{formatCurrency(node.target_revenue)}</div>
+                </div>
+              </TargetBreakdownTooltip>
+            )
           }
           // Default: no tooltip
           return (
