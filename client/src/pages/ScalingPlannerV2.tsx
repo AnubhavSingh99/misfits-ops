@@ -3764,10 +3764,9 @@ export default function ScalingPlannerV2() {
         />
 
         {/* Hierarchy Table */}
-        <div className="bg-white rounded-lg shadow border border-gray-200 overflow-x-auto">
-          <div ref={tableContainerRef}>
-            <table className="w-full min-w-[1600px]">
-              <thead className="bg-gray-50 border-b border-gray-200">
+        <div className="bg-white rounded-lg shadow border border-gray-200" ref={tableContainerRef}>
+          <table className="w-full min-w-[1600px]">
+            <thead className="bg-gray-50 sticky top-14 z-30 shadow-sm border-b border-gray-200">
                 <tr className="bg-gray-50 border-b border-gray-200">
                   <SortableHeader
                     label="Hierarchy"
@@ -3892,8 +3891,7 @@ export default function ScalingPlannerV2() {
                   ))
                 )}
               </tbody>
-            </table>
-          </div>
+          </table>
         </div>
 
       </div>
