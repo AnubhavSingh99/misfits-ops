@@ -2575,6 +2575,8 @@ router.get('/v2/hierarchy', async (req, res) => {
             ldt.launch_id,
             ldt.target_meetups,
             ldt.target_revenue,
+            ldt.meetup_cost,
+            ldt.meetup_capacity,
             ldt.area_id,
             COALESCE(ldt.progress, '${JSON.stringify(defaultProgress)}'::jsonb) as progress
           FROM launch_dimensional_targets ldt
@@ -2944,6 +2946,9 @@ router.get('/v2/hierarchy', async (req, res) => {
         const primaryTarget = targets.length > 0 ? targets[0] : null;
         const dayTypeId = primaryTarget?.day_type_id ? parseInt(primaryTarget.day_type_id) : null;
         const dayTypeName = primaryTarget?.day_type_name || null;
+        // Copy cost/capacity from primary target for single-target clubs
+        const meetupCost = targets.length === 1 && primaryTarget?.meetup_cost ? parseFloat(primaryTarget.meetup_cost) : null;
+        const meetupCapacity = targets.length === 1 && primaryTarget?.meetup_capacity ? parseInt(primaryTarget.meetup_capacity) : null;
 
         // Check if this club was matched from a launch target
         const clubUuid = club.club_uuid;
@@ -2977,6 +2982,8 @@ router.get('/v2/hierarchy', async (req, res) => {
           target_count: targets.length,
           day_type_id: dayTypeId,
           day_type_name: dayTypeName,
+          meetup_cost: meetupCost,
+          meetup_capacity: meetupCapacity,
           revenue_status: hasRevenueData ? clubRevenueStatus : null,
           revenue_status_display: hasRevenueData ? getRevenueStatusDisplay(clubRevenueStatus) : null,
           children: targetChildren.length >= 1 ? targetChildren : undefined,
@@ -3090,6 +3097,8 @@ router.get('/v2/hierarchy', async (req, res) => {
             target_id: launchTarget?.target_id || null,
             target_meetups: targetMeetups,
             target_revenue: targetRevenue,
+            meetup_cost: launchTarget?.meetup_cost ? parseFloat(launchTarget.meetup_cost) : null,
+            meetup_capacity: launchTarget?.meetup_capacity ? parseInt(launchTarget.meetup_capacity) : null,
             current_meetups: 0,
             current_revenue: 0,
             gap_meetups: Math.max(0, targetMeetups),
@@ -4274,6 +4283,8 @@ router.get('/v2/hierarchy', async (req, res) => {
           target_id: launchTarget?.target_id || null,
           target_meetups: targetMeetups,
           target_revenue: targetRevenue,
+          meetup_cost: launchTarget?.meetup_cost ? parseFloat(launchTarget.meetup_cost) : null,
+          meetup_capacity: launchTarget?.meetup_capacity ? parseInt(launchTarget.meetup_capacity) : null,
           current_meetups: currentMeetups,
           current_revenue: currentRevenue,
           gap_meetups: gapMeetups,

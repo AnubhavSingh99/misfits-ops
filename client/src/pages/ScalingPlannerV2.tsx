@@ -2317,21 +2317,22 @@ function HierarchyRow({ node, level, expanded, onToggle, onEditTarget, onDeleteT
         {(() => {
           // For clubs/launches, show target breakdown tooltip
           if (node.type === 'club' || node.type === 'launch') {
-            // Case 1: Multiple targets (has target children)
-            if (hasChildren && node.children?.some(c => c.type === 'target')) {
+            // Get target children if available
+            const targetChildren = (node.children || []).filter(c => c.type === 'target')
+
+            // Case 1: Has target children - use their data (includes cost/capacity)
+            if (targetChildren.length > 0) {
               return (
                 <TargetBreakdownTooltip
-                  targets={(node.children || [])
-                    .filter(c => c.type === 'target')
-                    .map(t => ({
-                      target_id: t.target_id || 0,
-                      name: t.name,
-                      target_meetups: t.target_meetups,
-                      target_revenue: t.target_revenue,
-                      meetup_cost: t.meetup_cost ?? null,
-                      meetup_capacity: t.meetup_capacity ?? null,
-                      day_type_name: t.day_type_name ?? null
-                    }))}
+                  targets={targetChildren.map(t => ({
+                    target_id: t.target_id || 0,
+                    name: t.name,
+                    target_meetups: t.target_meetups,
+                    target_revenue: t.target_revenue,
+                    meetup_cost: t.meetup_cost ?? null,
+                    meetup_capacity: t.meetup_capacity ?? null,
+                    day_type_name: t.day_type_name ?? null
+                  }))}
                 >
                   <div className="hover:bg-indigo-50 rounded px-1 -mx-1 transition-colors cursor-default">
                     <div className="text-gray-800 font-mono font-semibold">{node.target_meetups}</div>
@@ -2340,7 +2341,8 @@ function HierarchyRow({ node, level, expanded, onToggle, onEditTarget, onDeleteT
                 </TargetBreakdownTooltip>
               )
             }
-            // Case 2: Single target (no children, but has_target is true)
+            // Case 2: No target children but has_target is true (children not loaded)
+            // Fall back to node's data (cost/capacity may be null)
             if (node.has_target && node.target_id) {
               return (
                 <TargetBreakdownTooltip
