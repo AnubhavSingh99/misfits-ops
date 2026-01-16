@@ -5136,45 +5136,57 @@ router.post('/v2/launches/:launchId/transition', async (req, res) => {
 
       // Get area_id from the club's actual events (where the club operates)
       // This ensures the target appears under the club, not as a separate expansion
-      let targetAreaId = null;
+      // IMPORTANT: club_dimensional_targets.area_id uses dim_areas.id, NOT production area ID
+      let targetDimAreaId = null;
 
-      // Get area where the club has events
+      // Get production area where the club has events
       const clubAreaResult = await queryProduction(`
-        SELECT ar.id, ar.name
+        SELECT ar.id as production_area_id, ar.name
         FROM event e
-        JOIN area ar ON e.area_id = ar.id
+        JOIN location l ON e.location_id = l.id
+        JOIN area ar ON l.area_id = ar.id
         WHERE e.club_id = $1
         GROUP BY ar.id, ar.name
         ORDER BY COUNT(*) DESC
         LIMIT 1
       `, [club_id]);
 
+      let productionAreaId = null;
+      let areaName = null;
+
       if (clubAreaResult.rows.length > 0) {
-        targetAreaId = clubAreaResult.rows[0].id;
-        logger.info(`Using club's primary area ${targetAreaId} (${clubAreaResult.rows[0].name}) for target`);
+        productionAreaId = clubAreaResult.rows[0].production_area_id;
+        areaName = clubAreaResult.rows[0].name;
+        logger.info(`Club has events in production area ${productionAreaId} (${areaName})`);
       } else {
         // New club with no events yet - use launch's planned area
         const areaLookupResult = await queryProduction(`
-          SELECT id FROM area WHERE name = $1
+          SELECT id, name FROM area WHERE name = $1
         `, [launch.planned_area]);
 
         if (areaLookupResult.rows.length > 0) {
-          targetAreaId = areaLookupResult.rows[0].id;
-          logger.info(`New club - using launch's planned area ${targetAreaId} (${launch.planned_area})`);
-        } else {
-          // Fallback to launch target's area_id if valid
-          const areaCheckResult = await queryProduction(`
-            SELECT id FROM area WHERE id = $1
-          `, [launchTarget.area_id]);
-
-          if (areaCheckResult.rows.length > 0) {
-            targetAreaId = launchTarget.area_id;
-          }
+          productionAreaId = areaLookupResult.rows[0].id;
+          areaName = areaLookupResult.rows[0].name;
+          logger.info(`New club - using launch's planned area ${productionAreaId} (${areaName})`);
         }
       }
 
-      if (!targetAreaId) {
-        logger.warn(`Could not determine area_id for club ${club_id}, skipping target transfer`);
+      // Look up the dim_areas.id for this production area
+      if (productionAreaId) {
+        const dimAreaResult = await queryLocal(`
+          SELECT id FROM dim_areas WHERE production_area_id = $1 LIMIT 1
+        `, [productionAreaId]);
+
+        if (dimAreaResult.rows.length > 0) {
+          targetDimAreaId = dimAreaResult.rows[0].id;
+          logger.info(`Mapped production_area_id ${productionAreaId} to dim_area_id ${targetDimAreaId}`);
+        } else {
+          logger.warn(`No dim_areas entry found for production_area_id ${productionAreaId}`);
+        }
+      }
+
+      if (!targetDimAreaId) {
+        logger.warn(`Could not determine dim_area_id for club ${club_id}, skipping target transfer`);
       } else {
         // Create club dimensional target with all fields including meetup_cost/capacity
         await queryLocal(`
@@ -5186,7 +5198,7 @@ router.post('/v2/launches/:launchId/transition', async (req, res) => {
         `, [
           club_id,
           activityId,
-          targetAreaId,
+          targetDimAreaId,
           launchTarget.day_type_id,
           launchTarget.format_id,
           launchTarget.target_meetups,
