@@ -63,8 +63,9 @@ function formatLocalDate(date: Date): string {
 // =====================================================
 // SORTABLE TABLE HEADER CONFIGURATION
 // =====================================================
-type SortColumn = 'name' | 'health_score' | 'target_meetups' | 'current_meetups' | 'gap_meetups' | 'l4w_revenue'
+type SortColumn = 'name' | 'health_score' | 'target_meetups' | 'target_revenue' | 'current_meetups' | 'current_revenue' | 'gap_meetups' | 'l4w_revenue'
 type SortDirection = 'asc' | 'desc' | null
+type SortMetric = 'meetups' | 'revenue'
 
 interface SortState {
   column: SortColumn | null
@@ -117,6 +118,92 @@ function SortableHeader({ label, column, currentSort, onSort, align = 'left', cl
   )
 }
 
+// Sortable header with metric toggle (for Target and Current columns)
+interface SortableHeaderWithToggleProps {
+  label: string
+  meetupsColumn: SortColumn
+  revenueColumn: SortColumn
+  currentSort: SortState
+  onSort: (column: SortColumn) => void
+  sortMetric: SortMetric
+  onToggleMetric: () => void
+  align?: 'left' | 'right' | 'center'
+  className?: string
+}
+
+function SortableHeaderWithToggle({
+  label,
+  meetupsColumn,
+  revenueColumn,
+  currentSort,
+  onSort,
+  sortMetric,
+  onToggleMetric,
+  align = 'left',
+  className = ''
+}: SortableHeaderWithToggleProps) {
+  const activeColumn = sortMetric === 'revenue' ? revenueColumn : meetupsColumn
+  const isActive = currentSort.column === activeColumn
+  const direction = isActive ? currentSort.direction : null
+
+  const handleSort = () => {
+    onSort(activeColumn)
+  }
+
+  const handleToggle = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    onToggleMetric()
+  }
+
+  return (
+    <th
+      className={`py-3 px-2 text-xs font-semibold uppercase tracking-wider
+        cursor-pointer select-none group
+        transition-all duration-200
+        ${align === 'right' ? 'text-right' : align === 'center' ? 'text-center' : 'text-left'}
+        ${isActive ? 'text-indigo-700 bg-indigo-50/50' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100/50'}
+        ${className}`}
+      onClick={handleSort}
+    >
+      <div className={`flex items-center gap-1 ${align === 'right' ? 'justify-end' : align === 'center' ? 'justify-center' : ''}`}>
+        <span className="transition-colors duration-200">{label}</span>
+        {/* Metric toggle button */}
+        <button
+          onClick={handleToggle}
+          className={`
+            flex items-center justify-center w-5 h-4 rounded text-[9px] font-bold
+            transition-all duration-200
+            ${sortMetric === 'revenue'
+              ? 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200'
+              : 'bg-blue-100 text-blue-700 hover:bg-blue-200'
+            }
+          `}
+          title={`Sorting by ${sortMetric === 'revenue' ? 'revenue' : 'meetups'}. Click to switch.`}
+        >
+          {sortMetric === 'revenue' ? '₹' : '#'}
+        </button>
+        {/* Sort direction indicator */}
+        <div className={`
+          flex items-center justify-center w-4 h-4 rounded
+          transition-all duration-200 ease-out
+          ${isActive
+            ? 'bg-indigo-100 text-indigo-600'
+            : 'text-gray-300 group-hover:text-gray-500 group-hover:bg-gray-100'
+          }
+        `}>
+          {direction === 'asc' ? (
+            <ArrowUp size={12} className="transition-transform duration-200" />
+          ) : direction === 'desc' ? (
+            <ArrowDown size={12} className="transition-transform duration-200" />
+          ) : (
+            <ArrowUpDown size={10} className="opacity-60 group-hover:opacity-100 transition-opacity duration-200" />
+          )}
+        </div>
+      </div>
+    </th>
+  )
+}
+
 // Sort hierarchy nodes within each level (preserves tree structure)
 function sortHierarchy(nodes: HierarchyNode[], sortState: SortState): HierarchyNode[] {
   if (!sortState.column || !sortState.direction) return nodes
@@ -143,9 +230,17 @@ function sortHierarchy(nodes: HierarchyNode[], sortState: SortState): HierarchyN
           aVal = a.target_meetups ?? 0
           bVal = b.target_meetups ?? 0
           break
+        case 'target_revenue':
+          aVal = a.target_revenue ?? 0
+          bVal = b.target_revenue ?? 0
+          break
         case 'current_meetups':
           aVal = a.current_meetups ?? 0
           bVal = b.current_meetups ?? 0
+          break
+        case 'current_revenue':
+          aVal = a.current_revenue ?? 0
+          bVal = b.current_revenue ?? 0
           break
         case 'gap_meetups':
           aVal = a.gap_meetups ?? 0
@@ -2660,6 +2755,10 @@ export default function ScalingPlannerV2() {
   // Sort state - persists across filter changes
   const [sortState, setSortState] = useState<SortState>({ column: null, direction: null })
 
+  // Sort metric preference for Target and Current columns (default: revenue)
+  const [targetSortMetric, setTargetSortMetric] = useState<SortMetric>('revenue')
+  const [currentSortMetric, setCurrentSortMetric] = useState<SortMetric>('revenue')
+
   // Always include launches in hierarchy
   const includeLaunches = true
 
@@ -4050,18 +4149,24 @@ export default function ScalingPlannerV2() {
                       <InfoIconButton onClick={() => setHealthInfoModalOpen(true)} />
                     </div>
                   </th>
-                  <SortableHeader
+                  <SortableHeaderWithToggle
                     label="Target"
-                    column="target_meetups"
+                    meetupsColumn="target_meetups"
+                    revenueColumn="target_revenue"
                     currentSort={sortState}
                     onSort={handleSort}
+                    sortMetric={targetSortMetric}
+                    onToggleMetric={() => setTargetSortMetric(m => m === 'revenue' ? 'meetups' : 'revenue')}
                     align="right"
                   />
-                  <SortableHeader
+                  <SortableHeaderWithToggle
                     label="Current"
-                    column="current_meetups"
+                    meetupsColumn="current_meetups"
+                    revenueColumn="current_revenue"
                     currentSort={sortState}
                     onSort={handleSort}
+                    sortMetric={currentSortMetric}
+                    onToggleMetric={() => setCurrentSortMetric(m => m === 'revenue' ? 'meetups' : 'revenue')}
                     align="right"
                   />
                   <SortableHeader
