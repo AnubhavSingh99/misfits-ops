@@ -63,7 +63,7 @@ function formatLocalDate(date: Date): string {
 // =====================================================
 // SORTABLE TABLE HEADER CONFIGURATION
 // =====================================================
-type SortColumn = 'name' | 'health_score' | 'target_meetups' | 'target_revenue' | 'current_meetups' | 'current_revenue' | 'gap_meetups' | 'l4w_revenue'
+type SortColumn = 'name' | 'health_score' | 'target_meetups' | 'target_revenue' | 'current_meetups' | 'current_revenue' | 'gap_meetups' | 'gap_revenue' | 'l4w_revenue'
 type SortDirection = 'asc' | 'desc' | null
 type SortMetric = 'meetups' | 'revenue'
 
@@ -245,6 +245,10 @@ function sortHierarchy(nodes: HierarchyNode[], sortState: SortState): HierarchyN
         case 'gap_meetups':
           aVal = a.gap_meetups ?? 0
           bVal = b.gap_meetups ?? 0
+          break
+        case 'gap_revenue':
+          aVal = a.gap_revenue ?? 0
+          bVal = b.gap_revenue ?? 0
           break
         case 'l4w_revenue':
           aVal = a.last_4w_revenue_total ?? 0
@@ -2755,9 +2759,10 @@ export default function ScalingPlannerV2() {
   // Sort state - persists across filter changes
   const [sortState, setSortState] = useState<SortState>({ column: null, direction: null })
 
-  // Sort metric preference for Target and Current columns (default: revenue)
+  // Sort metric preference for Target, Current, and Gap columns (default: revenue)
   const [targetSortMetric, setTargetSortMetric] = useState<SortMetric>('revenue')
   const [currentSortMetric, setCurrentSortMetric] = useState<SortMetric>('revenue')
+  const [gapSortMetric, setGapSortMetric] = useState<SortMetric>('revenue')
 
   // Always include launches in hierarchy
   const includeLaunches = true
@@ -4169,11 +4174,14 @@ export default function ScalingPlannerV2() {
                     onToggleMetric={() => setCurrentSortMetric(m => m === 'revenue' ? 'meetups' : 'revenue')}
                     align="right"
                   />
-                  <SortableHeader
+                  <SortableHeaderWithToggle
                     label="Gap"
-                    column="gap_meetups"
+                    meetupsColumn="gap_meetups"
+                    revenueColumn="gap_revenue"
                     currentSort={sortState}
                     onSort={handleSort}
+                    sortMetric={gapSortMetric}
+                    onToggleMetric={() => setGapSortMetric(m => m === 'revenue' ? 'meetups' : 'revenue')}
                     align="right"
                   />
                   <SortableHeader
