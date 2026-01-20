@@ -658,9 +658,9 @@ export default function LeaderRequirementsDashboard() {
     useEffect(() => {
       if (commentsExpanded && commentsButtonRef.current) {
         const rect = commentsButtonRef.current.getBoundingClientRect();
-        const tooltipWidth = 420;
+        const tooltipWidth = 320;
         const tooltipHeight = 280;
-        const padding = 12;
+        const padding = 8;
 
         // Position to the left of the button, or right if not enough space
         let left = rect.left - tooltipWidth - padding;
@@ -917,29 +917,24 @@ export default function LeaderRequirementsDashboard() {
         {commentsExpanded && createPortal(
           <div
             id={`comments-tooltip-${req.id}`}
-            className="fixed bg-white rounded-2xl shadow-2xl border border-gray-100 animate-in fade-in zoom-in-95 duration-150"
+            className="fixed bg-white rounded-xl shadow-2xl border border-gray-200/80 w-80 animate-in fade-in zoom-in-95 duration-150"
             style={{
               top: tooltipPosition.top,
               left: tooltipPosition.left,
-              zIndex: 9998,
-              width: '420px'
+              zIndex: 9998
             }}
             onClick={(e) => e.stopPropagation()}
             onMouseEnter={handleMouseEnter}
             onMouseLeave={handleMouseLeave}
           >
             {/* Header */}
-            <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100/80 bg-gradient-to-r from-indigo-50/50 via-white to-violet-50/30 rounded-t-2xl">
-              <div className="flex items-center gap-3">
-                <div className="p-1.5 bg-indigo-100 rounded-lg">
-                  <MessageSquare className="h-4 w-4 text-indigo-600" />
-                </div>
-                <div className="flex items-baseline gap-2">
-                  <span className="text-sm font-semibold text-gray-800">Comments</span>
-                  {comments.length > 0 && (
-                    <span className="text-xs text-gray-400 font-medium">{comments.length} {comments.length === 1 ? 'note' : 'notes'}</span>
-                  )}
-                </div>
+            <div className="flex items-center justify-between px-3 py-2 border-b border-gray-100 bg-gradient-to-r from-slate-50 to-white rounded-t-xl">
+              <div className="flex items-center gap-2">
+                <MessageSquare className="h-3.5 w-3.5 text-indigo-500" />
+                <span className="text-xs font-semibold text-gray-700">Comments</span>
+                {comments.length > 0 && (
+                  <span className="text-[10px] text-gray-400">({comments.length})</span>
+                )}
               </div>
               <button
                 onClick={(e) => {
@@ -947,15 +942,15 @@ export default function LeaderRequirementsDashboard() {
                   setCommentsExpanded(false);
                   setAuthorDropdownOpen(false);
                 }}
-                className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors"
+                className="p-1 rounded hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors"
               >
-                <X className="h-4 w-4" />
+                <X className="h-3.5 w-3.5" />
               </button>
             </div>
 
             {/* Add Comment Input */}
-            <div className="px-5 py-3 border-b border-gray-100/80 bg-gray-50/30">
-              <div className="flex items-center gap-3">
+            <div className="px-3 py-2 border-b border-gray-100 bg-slate-50/50">
+              <div className="flex items-center gap-2">
                 {/* Author Selector */}
                 <button
                   ref={authorButtonRef}
@@ -963,20 +958,20 @@ export default function LeaderRequirementsDashboard() {
                     e.stopPropagation();
                     setAuthorDropdownOpen(!authorDropdownOpen);
                   }}
-                  className="w-8 h-8 rounded-full bg-gradient-to-br from-indigo-400 to-violet-500 flex items-center justify-center text-[10px] font-bold text-white flex-shrink-0 hover:shadow-md hover:scale-105 transition-all ring-2 ring-white"
+                  className="w-6 h-6 rounded-full bg-indigo-100 flex items-center justify-center text-[9px] font-bold text-indigo-600 flex-shrink-0 hover:ring-2 hover:ring-indigo-200 transition-all"
                   title={`Posting as: ${commentAuthor}`}
                 >
                   {commentAuthor.split(' ').map(n => n?.[0] || '').join('').slice(0, 2).toUpperCase() || 'U'}
                 </button>
 
-                <div className="flex-1 flex items-center gap-2 bg-white rounded-xl border border-gray-200 px-4 py-2.5 focus-within:border-indigo-400 focus-within:ring-2 focus-within:ring-indigo-100 transition-all shadow-sm">
+                <div className="flex-1 flex items-center gap-1.5 bg-white rounded-lg border border-gray-200 px-2 py-1.5 focus-within:border-indigo-400 transition-all">
                   <input
                     type="text"
                     value={newComment}
                     onChange={(e) => setNewComment(e.target.value)}
                     onKeyDown={(e) => e.key === 'Enter' && handleAddComment()}
-                    placeholder={`Add a comment as ${commentAuthor.split(' ')[0]}...`}
-                    className="flex-1 text-sm bg-transparent outline-none placeholder-gray-400"
+                    placeholder={`Comment as ${commentAuthor.split(' ')[0]}...`}
+                    className="flex-1 text-xs bg-transparent outline-none placeholder-gray-400"
                     onClick={(e) => e.stopPropagation()}
                   />
                   <button
@@ -986,14 +981,14 @@ export default function LeaderRequirementsDashboard() {
                     }}
                     disabled={!newComment.trim() || submittingComment}
                     className={`
-                      p-2 rounded-lg transition-all
+                      p-1 rounded transition-all
                       ${newComment.trim()
-                        ? 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-sm'
+                        ? 'bg-indigo-600 text-white hover:bg-indigo-700'
                         : 'bg-gray-100 text-gray-300 cursor-not-allowed'
                       }
                     `}
                   >
-                    <Send className="h-4 w-4" />
+                    <Send className="h-3 w-3" />
                   </button>
                 </div>
               </div>
@@ -1047,31 +1042,30 @@ export default function LeaderRequirementsDashboard() {
             )}
 
             {/* Comments List */}
-            <div className="px-5 py-3 max-h-56 overflow-y-auto">
+            <div className="px-3 py-2 max-h-56 overflow-y-auto">
               {loadingComments ? (
-                <div className="flex items-center justify-center gap-3 text-sm text-gray-400 py-6">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  Loading comments...
+                <div className="flex items-center justify-center gap-2 text-xs text-gray-400 py-4">
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  Loading...
                 </div>
               ) : comments.length === 0 ? (
-                <div className="text-sm text-gray-400 text-center py-6">No comments yet. Be the first to add one!</div>
+                <div className="text-xs text-gray-400 text-center py-4">No comments yet</div>
               ) : (
-                <div className="space-y-3">
+                <div className="space-y-2">
                   {comments.map((comment, idx) => (
                     <div
                       key={comment.id}
-                      className={`flex gap-3 px-4 py-3 rounded-xl transition-colors ${idx === 0 ? 'bg-indigo-50/60 border border-indigo-100/50' : 'bg-gray-50/60 hover:bg-gray-100/60'}`}
+                      className={`flex gap-2 p-2 rounded-lg ${idx === 0 ? 'bg-indigo-50/50' : 'bg-slate-50/50'}`}
                     >
-                      <div className="w-7 h-7 rounded-full bg-gradient-to-br from-gray-200 to-gray-300 flex items-center justify-center text-[9px] font-bold text-gray-600 flex-shrink-0 ring-2 ring-white">
+                      <div className="w-5 h-5 rounded-full bg-gray-200 flex items-center justify-center text-[8px] font-bold text-gray-600 flex-shrink-0">
                         {(comment.author_name || 'U').split(' ').map(n => n?.[0] || '').join('').slice(0, 2).toUpperCase()}
                       </div>
                       <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs font-semibold text-gray-800">{comment.author_name || 'User'}</span>
-                          <span className="text-[10px] text-gray-400">·</span>
-                          <span className="text-[10px] text-gray-400">{formatCommentTime(comment.created_at)}</span>
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[11px] font-semibold text-gray-700">{comment.author_name || 'User'}</span>
+                          <span className="text-[9px] text-gray-400">{formatCommentTime(comment.created_at)}</span>
                         </div>
-                        <p className="text-sm text-gray-600 mt-1 leading-relaxed">{comment.comment_text}</p>
+                        <p className="text-[11px] text-gray-600 mt-0.5 leading-relaxed">{comment.comment_text}</p>
                       </div>
                     </div>
                   ))}
