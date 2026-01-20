@@ -41,7 +41,8 @@ const app = express();
 const PORT = process.env.PORT || (process.env.NODE_ENV === 'production' ? 80 : 5000);
 
 // Trust proxy - required for rate limiting behind Nginx
-app.set('trust proxy', true);
+// Use 1 instead of true to specify exactly one proxy (nginx)
+app.set('trust proxy', 1);
 
 // Security middleware
 app.use(helmet());
