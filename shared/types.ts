@@ -961,6 +961,7 @@ export interface BaseRequirement {
   // Timestamps
   created_at: string;
   updated_at: string;
+  completed_at?: string;  // Auto-set when status changes to 'done'
   created_by?: string;
 }
 

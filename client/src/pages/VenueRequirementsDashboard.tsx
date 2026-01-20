@@ -29,6 +29,30 @@ const API_BASE = import.meta.env.VITE_API_URL
   ? `${import.meta.env.VITE_API_URL}/api`
   : '/api';
 
+// Helper function to format date as "Jan 19" or "Jan 19, 2025" if different year
+function formatDate(dateString: string | undefined | null): string {
+  if (!dateString) return '-';
+  const date = new Date(dateString);
+  const now = new Date();
+  const options: Intl.DateTimeFormatOptions = { month: 'short', day: 'numeric' };
+  if (date.getFullYear() !== now.getFullYear()) {
+    options.year = 'numeric';
+  }
+  return date.toLocaleDateString('en-US', options);
+}
+
+// Helper function to calculate TAT (Turn Around Time) in days
+function calculateTAT(createdAt: string | undefined | null, completedAt: string | undefined | null): string {
+  if (!createdAt || !completedAt) return '-';
+  const created = new Date(createdAt);
+  const completed = new Date(completedAt);
+  const diffMs = completed.getTime() - created.getTime();
+  const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+  if (diffDays === 0) return '<1d';
+  if (diffDays === 1) return '1d';
+  return `${diffDays}d`;
+}
+
 // Hierarchy level types
 type HierarchyLevel = 'activity' | 'city' | 'area';
 
@@ -487,6 +511,18 @@ export default function VenueRequirementsDashboard() {
             {/* Team column only shown for requirement rows */}
           </td>
 
+          {/* Created (empty for hierarchy rows) */}
+          <td className="py-3 px-4 text-center">
+          </td>
+
+          {/* Completed (empty for hierarchy rows) */}
+          <td className="py-3 px-4 text-center">
+          </td>
+
+          {/* TAT (empty for hierarchy rows) */}
+          <td className="py-3 px-4 text-center">
+          </td>
+
           {/* Actions */}
           <td className="py-3 px-4 text-center">
             <button
@@ -591,6 +627,29 @@ export default function VenueRequirementsDashboard() {
             <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase ${TEAM_COLORS[req.team].light} ${TEAM_COLORS[req.team].text}`}>
               {req.team}
             </span>
+          )}
+        </td>
+
+        {/* Created */}
+        <td className="py-2.5 px-4 text-center">
+          <span className="text-xs text-gray-500">{formatDate(req.created_at)}</span>
+        </td>
+
+        {/* Completed */}
+        <td className="py-2.5 px-4 text-center">
+          <span className={`text-xs ${req.completed_at ? 'text-emerald-600 font-medium' : 'text-gray-400'}`}>
+            {formatDate(req.completed_at)}
+          </span>
+        </td>
+
+        {/* TAT */}
+        <td className="py-2.5 px-4 text-center">
+          {req.completed_at ? (
+            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+              {calculateTAT(req.created_at, req.completed_at)}
+            </span>
+          ) : (
+            <span className="text-xs text-gray-400">-</span>
           )}
         </td>
 
@@ -980,6 +1039,15 @@ export default function VenueRequirementsDashboard() {
                   </th>
                   <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">
                     Team
+                  </th>
+                  <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                    Created
+                  </th>
+                  <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                    Completed
+                  </th>
+                  <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                    TAT
                   </th>
                   <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">
                     Actions

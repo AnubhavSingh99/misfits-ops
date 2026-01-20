@@ -513,6 +513,12 @@ router.put('/leaders/:id', async (req: Request, res: Response) => {
     if (data.status !== undefined) {
       updates.push(`status = $${paramIndex++}`);
       params.push(data.status);
+      // Auto-set completed_at when status changes to 'done', clear it otherwise
+      if (data.status === 'done') {
+        updates.push(`completed_at = CURRENT_TIMESTAMP`);
+      } else {
+        updates.push(`completed_at = NULL`);
+      }
     }
     if (data.growth_team_effort !== undefined) {
       updates.push(`growth_team_effort = $${paramIndex++}`);
@@ -1018,6 +1024,12 @@ router.put('/venues/:id', async (req: Request, res: Response) => {
     if (data.status !== undefined) {
       updates.push(`status = $${paramIndex++}`);
       params.push(data.status);
+      // Auto-set completed_at when status changes to 'done', clear it otherwise
+      if (data.status === 'done') {
+        updates.push(`completed_at = CURRENT_TIMESTAMP`);
+      } else {
+        updates.push(`completed_at = NULL`);
+      }
     }
     if (data.growth_team_effort !== undefined) {
       updates.push(`growth_team_effort = $${paramIndex++}`);
@@ -1224,7 +1236,7 @@ router.post('/bulk-complete', async (req: Request, res: Response) => {
     if (leader_ids && leader_ids.length > 0) {
       const result = await queryLocal(
         `UPDATE leader_requirements
-         SET status = 'done', updated_at = CURRENT_TIMESTAMP
+         SET status = 'done', updated_at = CURRENT_TIMESTAMP, completed_at = CURRENT_TIMESTAMP
          WHERE id = ANY($1)`,
         [leader_ids]
       );
@@ -1234,7 +1246,7 @@ router.post('/bulk-complete', async (req: Request, res: Response) => {
     if (venue_ids && venue_ids.length > 0) {
       const result = await queryLocal(
         `UPDATE venue_requirements
-         SET status = 'done', updated_at = CURRENT_TIMESTAMP
+         SET status = 'done', updated_at = CURRENT_TIMESTAMP, completed_at = CURRENT_TIMESTAMP
          WHERE id = ANY($1)`,
         [venue_ids]
       );
