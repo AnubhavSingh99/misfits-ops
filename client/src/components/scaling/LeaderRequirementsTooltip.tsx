@@ -719,18 +719,18 @@ export function LeaderRequirementsTooltip({
     try {
       const params = new URLSearchParams();
 
-      // Add hierarchy filters based on node type
-      if (node.type === 'club') {
-        if (node.club_id) params.append('club_id', node.club_id.toString());
-      } else if (node.type === 'launch') {
-        // For launches, use launch_id filter
-        if (node.launch_id) params.append('launch_id', node.launch_id.toString());
-      } else if (node.type === 'area') {
-        if (node.area_id) params.append('area_id', node.area_id.toString());
-      } else if (node.type === 'city') {
-        if (node.city_id) params.append('city_id', node.city_id.toString());
-      } else if (node.type === 'activity') {
-        if (node.activity_id) params.append('activity_id', node.activity_id.toString());
+      // Add ALL available hierarchy filters to ensure proper filtering
+      // This fixes the bug where viewing "Quiz > Ghaziabad" would show requirements
+      // from other activities in Ghaziabad
+      if (node.activity_id) params.append('activity_id', node.activity_id.toString());
+      if (node.city_id) params.append('city_id', node.city_id.toString());
+      if (node.area_id) params.append('area_id', node.area_id.toString());
+
+      // For specific node types, add their specific IDs
+      if (node.type === 'club' && node.club_id) {
+        params.append('club_id', node.club_id.toString());
+      } else if (node.type === 'launch' && node.launch_id) {
+        params.append('launch_id', node.launch_id.toString());
       }
 
       const response = await fetch(`${API_BASE}/requirements/leaders?${params}`);
