@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import {
   ChevronDown,
   ChevronRight,
@@ -23,9 +24,11 @@ import {
   GripVertical,
   Layers,
   Edit3,
-  Trash2
+  Trash2,
+  MessageSquare,
+  Send
 } from 'lucide-react';
-import type { LeaderRequirement, RequirementStatus, CreateRequirementRequest } from '../../../shared/types';
+import type { LeaderRequirement, RequirementStatus, CreateRequirementRequest, RequirementComment } from '../../../shared/types';
 import { getTeamForClub, TEAMS, TEAM_KEYS, type TeamKey } from '../../../shared/teamConfig';
 import { MultiSelectDropdown } from '../components/ui/MultiSelectDropdown';
 
@@ -561,7 +564,7 @@ export default function LeaderRequirementsDashboard() {
     );
   };
 
-  // Requirement row component
+  // Requirement row component with inline comments
   const RequirementRow = ({
     requirement: req,
     depth,
@@ -578,125 +581,411 @@ export default function LeaderRequirementsDashboard() {
     const statusConfig = STATUS_CONFIG[req.status];
     const StatusIcon = statusConfig.icon;
 
+    // Comments state
+    const [commentsExpanded, setCommentsExpanded] = useState(false);
+    const [comments, setComments] = useState<RequirementComment[]>([]);
+    const [loadingComments, setLoadingComments] = useState(false);
+    const [commentsFetched, setCommentsFetched] = useState(false);
+    const [newComment, setNewComment] = useState('');
+    const [submittingComment, setSubmittingComment] = useState(false);
+    const [commentAuthor, setCommentAuthor] = useState('User');
+
+    // Author dropdown state
+    const [assignees, setAssignees] = useState<{ id: number; name: string }[]>([]);
+    const [assigneesFetched, setAssigneesFetched] = useState(false);
+    const [authorDropdownOpen, setAuthorDropdownOpen] = useState(false);
+    const authorButtonRef = useRef<HTMLButtonElement>(null);
+    const [authorDropdownPosition, setAuthorDropdownPosition] = useState({ top: 0, left: 0 });
+
+    // Fetch comments and assignees when expanded
+    useEffect(() => {
+      if (commentsExpanded && !commentsFetched) {
+        fetchComments();
+      }
+      if (commentsExpanded && !assigneesFetched) {
+        fetchAssignees();
+      }
+    }, [commentsExpanded, commentsFetched, assigneesFetched]);
+
+    // Update dropdown position when opened
+    useEffect(() => {
+      if (authorDropdownOpen && authorButtonRef.current) {
+        const rect = authorButtonRef.current.getBoundingClientRect();
+        setAuthorDropdownPosition({
+          top: rect.bottom + 4,
+          left: rect.left
+        });
+      }
+    }, [authorDropdownOpen]);
+
+    // Close dropdown on outside click
+    useEffect(() => {
+      if (!authorDropdownOpen) return;
+      const handleClick = (e: MouseEvent) => {
+        if (authorButtonRef.current && !authorButtonRef.current.contains(e.target as Node)) {
+          const dropdown = document.getElementById(`author-dropdown-req-${req.id}`);
+          if (dropdown && !dropdown.contains(e.target as Node)) {
+            setAuthorDropdownOpen(false);
+          }
+        }
+      };
+      document.addEventListener('mousedown', handleClick);
+      return () => document.removeEventListener('mousedown', handleClick);
+    }, [authorDropdownOpen, req.id]);
+
+    const fetchAssignees = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/scaling-tasks/assignees/list`);
+        const data = await res.json();
+        if (data.success && data.assignees) {
+          setAssignees(data.assignees);
+        }
+      } catch (err) {
+        console.error('Failed to fetch assignees:', err);
+      } finally {
+        setAssigneesFetched(true);
+      }
+    };
+
+    const fetchComments = async () => {
+      setLoadingComments(true);
+      try {
+        const response = await fetch(`${API_BASE}/requirements/leaders/${req.id}/comments`);
+        const data = await response.json();
+        if (data.success) {
+          setComments(data.comments);
+        }
+      } catch (error) {
+        console.error('Error fetching comments:', error);
+      } finally {
+        setLoadingComments(false);
+        setCommentsFetched(true);
+      }
+    };
+
+    const handleAddComment = async () => {
+      if (!newComment.trim() || submittingComment) return;
+      setSubmittingComment(true);
+      try {
+        const response = await fetch(`${API_BASE}/requirements/leaders/${req.id}/comments`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ comment_text: newComment.trim(), author_name: commentAuthor })
+        });
+        const data = await response.json();
+        if (data.success && data.comment) {
+          setComments(prev => [data.comment, ...prev]);
+          setNewComment('');
+          // Update local count
+          (req as any).comments_count = ((req as any).comments_count || 0) + 1;
+        }
+      } catch (error) {
+        console.error('Error adding comment:', error);
+      } finally {
+        setSubmittingComment(false);
+      }
+    };
+
+    const formatCommentTime = (dateString: string) => {
+      const date = new Date(dateString);
+      const now = new Date();
+      const diffMs = now.getTime() - date.getTime();
+      const diffMins = Math.floor(diffMs / 60000);
+      const diffHours = Math.floor(diffMins / 60);
+      const diffDays = Math.floor(diffHours / 24);
+
+      if (diffMins < 1) return 'just now';
+      if (diffMins < 60) return `${diffMins}m ago`;
+      if (diffHours < 24) return `${diffHours}h ago`;
+      if (diffDays < 7) return `${diffDays}d ago`;
+      return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    };
+
+    const commentsCount = commentsFetched ? comments.length : ((req as any).comments_count || 0);
+
     return (
-      <tr className="group border-b border-gray-100 hover:bg-indigo-50/30 transition-colors">
-        {/* Name */}
-        <td className="py-2.5 pr-4" style={{ paddingLeft: `${12 + depth * 24 + 20}px` }}>
-          <div className="flex items-center gap-2">
-            <div className={`p-1 rounded-full ${statusConfig.color.bg}`}>
-              <User className={`h-3 w-3 ${statusConfig.color.text}`} />
+      <>
+        <tr className="group border-b border-gray-100 hover:bg-indigo-50/30 transition-colors">
+          {/* Name */}
+          <td className="py-2.5 pr-4" style={{ paddingLeft: `${12 + depth * 24 + 20}px` }}>
+            <div className="flex items-center gap-2">
+              <div className={`p-1 rounded-full ${statusConfig.color.bg}`}>
+                <User className={`h-3 w-3 ${statusConfig.color.text}`} />
+              </div>
+              <div>
+                <span className="text-sm font-medium text-gray-800">{req.name}</span>
+                {req.description && (
+                  <p className="text-xs text-gray-400 truncate max-w-[300px]">{req.description}</p>
+                )}
+              </div>
             </div>
-            <div>
-              <span className="text-sm font-medium text-gray-800">{req.name}</span>
-              {req.description && (
-                <p className="text-xs text-gray-400 truncate max-w-[300px]">{req.description}</p>
+          </td>
+
+          {/* Status dropdown */}
+          <td className="py-2.5 px-4">
+            <select
+              value={req.status}
+              onChange={(e) => onStatusChange(req.id, e.target.value as RequirementStatus)}
+              onClick={(e) => e.stopPropagation()}
+              className={`px-2.5 py-1 text-xs font-medium rounded-md border cursor-pointer
+                ${statusConfig.color.badge} focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500`}
+            >
+              {Object.entries(STATUS_CONFIG).map(([key, config]) => (
+                <option key={key} value={key}>{config.label}</option>
+              ))}
+            </select>
+          </td>
+
+          {/* Leaders Required */}
+          <td className="py-2.5 px-4 text-center">
+            <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-indigo-100 text-indigo-700 text-xs font-semibold">
+              <Users className="h-3 w-3" />
+              {(req as any).leaders_required || 1}
+            </span>
+          </td>
+
+          {/* Effort flags */}
+          <td className="py-2.5 px-4">
+            <div className="flex items-center gap-1.5 flex-wrap">
+              {req.growth_team_effort && (
+                <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-violet-50 text-violet-600 border border-violet-200">
+                  Growth
+                </span>
+              )}
+              {req.platform_team_effort && (
+                <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-cyan-50 text-cyan-600 border border-cyan-200">
+                  Platform
+                </span>
+              )}
+              {(req as any).existing_leader_effort && (
+                <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-50 text-emerald-600 border border-emerald-200">
+                  Existing
+                </span>
               )}
             </div>
-          </div>
-        </td>
+          </td>
 
-        {/* Status dropdown */}
-        <td className="py-2.5 px-4">
-          <select
-            value={req.status}
-            onChange={(e) => onStatusChange(req.id, e.target.value as RequirementStatus)}
-            onClick={(e) => e.stopPropagation()}
-            className={`px-2.5 py-1 text-xs font-medium rounded-md border cursor-pointer
-              ${statusConfig.color.badge} focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500`}
-          >
-            {Object.entries(STATUS_CONFIG).map(([key, config]) => (
-              <option key={key} value={key}>{config.label}</option>
-            ))}
-          </select>
-        </td>
-
-        {/* Leaders Required */}
-        <td className="py-2.5 px-4 text-center">
-          <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-indigo-100 text-indigo-700 text-xs font-semibold">
-            <Users className="h-3 w-3" />
-            {(req as any).leaders_required || 1}
-          </span>
-        </td>
-
-        {/* Effort flags */}
-        <td className="py-2.5 px-4">
-          <div className="flex items-center gap-1.5 flex-wrap">
-            {req.growth_team_effort && (
-              <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-violet-50 text-violet-600 border border-violet-200">
-                Growth
+          {/* Team */}
+          <td className="py-2.5 px-4 text-center">
+            {req.team && (
+              <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase ${TEAM_COLORS[req.team].light} ${TEAM_COLORS[req.team].text}`}>
+                {req.team}
               </span>
             )}
-            {req.platform_team_effort && (
-              <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-cyan-50 text-cyan-600 border border-cyan-200">
-                Platform
-              </span>
-            )}
-            {(req as any).existing_leader_effort && (
-              <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-50 text-emerald-600 border border-emerald-200">
-                Existing
-              </span>
-            )}
-          </div>
-        </td>
+          </td>
 
-        {/* Team */}
-        <td className="py-2.5 px-4 text-center">
-          {req.team && (
-            <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase ${TEAM_COLORS[req.team].light} ${TEAM_COLORS[req.team].text}`}>
-              {req.team}
+          {/* Created */}
+          <td className="py-2.5 px-4 text-center">
+            <span className="text-xs text-gray-500">{formatDate(req.created_at)}</span>
+          </td>
+
+          {/* Completed */}
+          <td className="py-2.5 px-4 text-center">
+            <span className={`text-xs ${(req as any).completed_at ? 'text-emerald-600 font-medium' : 'text-gray-400'}`}>
+              {formatDate((req as any).completed_at)}
             </span>
-          )}
-        </td>
+          </td>
 
-        {/* Created */}
-        <td className="py-2.5 px-4 text-center">
-          <span className="text-xs text-gray-500">{formatDate(req.created_at)}</span>
-        </td>
+          {/* TAT */}
+          <td className="py-2.5 px-4 text-center">
+            {(req as any).completed_at ? (
+              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                {calculateTAT(req.created_at, (req as any).completed_at)}
+              </span>
+            ) : (
+              <span className="text-xs text-gray-400">-</span>
+            )}
+          </td>
 
-        {/* Completed */}
-        <td className="py-2.5 px-4 text-center">
-          <span className={`text-xs ${(req as any).completed_at ? 'text-emerald-600 font-medium' : 'text-gray-400'}`}>
-            {formatDate((req as any).completed_at)}
-          </span>
-        </td>
+          {/* Actions */}
+          <td className="py-2.5 px-4 text-center">
+            <div className="flex items-center justify-center gap-1">
+              {/* Comments button - always visible */}
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setCommentsExpanded(!commentsExpanded);
+                }}
+                className={`p-1.5 rounded-md flex items-center gap-0.5 transition-colors ${
+                  commentsExpanded
+                    ? 'bg-blue-100 text-blue-600'
+                    : 'bg-gray-50 text-gray-400 hover:bg-blue-50 hover:text-blue-600'
+                }`}
+                title="Comments"
+              >
+                <MessageSquare className="h-3.5 w-3.5" />
+                {commentsCount > 0 && (
+                  <span className="text-[9px] font-bold">{commentsCount}</span>
+                )}
+              </button>
+              {/* Edit/Delete - show on hover */}
+              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onEdit(req);
+                  }}
+                  className="p-1.5 rounded-md bg-indigo-50 text-indigo-600 hover:bg-indigo-100 transition-colors"
+                  title="Edit"
+                >
+                  <Edit3 className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onDelete(req);
+                  }}
+                  className="p-1.5 rounded-md bg-red-50 text-red-600 hover:bg-red-100 transition-colors"
+                  title="Delete"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            </div>
+          </td>
+        </tr>
 
-        {/* TAT */}
-        <td className="py-2.5 px-4 text-center">
-          {(req as any).completed_at ? (
-            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
-              {calculateTAT(req.created_at, (req as any).completed_at)}
-            </span>
-          ) : (
-            <span className="text-xs text-gray-400">-</span>
-          )}
-        </td>
+        {/* Expanded Comments Row */}
+        {commentsExpanded && (
+          <tr className="bg-slate-50/70 border-b border-gray-100">
+            <td colSpan={9} style={{ paddingLeft: `${12 + depth * 24 + 20}px` }} className="py-3 pr-4">
+              <div className="max-w-2xl">
+                {/* Add Comment Input */}
+                <div className="flex items-center gap-2 mb-3">
+                  {/* Author Selector */}
+                  <div className="relative">
+                    <button
+                      ref={authorButtonRef}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setAuthorDropdownOpen(!authorDropdownOpen);
+                      }}
+                      className="w-6 h-6 rounded-full bg-indigo-100 flex items-center justify-center text-[9px] font-bold text-indigo-600 flex-shrink-0 hover:ring-2 hover:ring-indigo-200 transition-all"
+                      title={`Posting as: ${commentAuthor}`}
+                    >
+                      {commentAuthor.split(' ').map(n => n?.[0] || '').join('').slice(0, 2).toUpperCase() || 'U'}
+                    </button>
+                  </div>
 
-        {/* Actions */}
-        <td className="py-2.5 px-4 text-center">
-          <div className="flex items-center justify-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                onEdit(req);
-              }}
-              className="p-1.5 rounded-md bg-indigo-50 text-indigo-600 hover:bg-indigo-100 transition-colors"
-              title="Edit"
-            >
-              <Edit3 className="h-3.5 w-3.5" />
-            </button>
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                onDelete(req);
-              }}
-              className="p-1.5 rounded-md bg-red-50 text-red-600 hover:bg-red-100 transition-colors"
-              title="Delete"
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-            </button>
-          </div>
-        </td>
-      </tr>
+                  {/* Author Dropdown Portal */}
+                  {authorDropdownOpen && createPortal(
+                    <div
+                      id={`author-dropdown-req-${req.id}`}
+                      className="fixed bg-white rounded-lg shadow-xl border border-gray-200 py-1 min-w-[160px] max-h-[200px] overflow-y-auto animate-in fade-in slide-in-from-top-2 duration-150"
+                      style={{
+                        top: authorDropdownPosition.top,
+                        left: authorDropdownPosition.left,
+                        zIndex: 9999
+                      }}
+                    >
+                      <div className="px-2 py-1 text-[9px] text-gray-400 uppercase tracking-wide border-b border-gray-100 mb-1">
+                        Post as
+                      </div>
+                      {!assigneesFetched ? (
+                        <div className="px-3 py-2 text-xs text-gray-400">Loading...</div>
+                      ) : assignees.length === 0 ? (
+                        <div className="px-3 py-2 text-xs text-gray-400">No members found</div>
+                      ) : (
+                        assignees.map((assignee) => (
+                          <button
+                            key={assignee.id}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setCommentAuthor(assignee.name);
+                              setAuthorDropdownOpen(false);
+                            }}
+                            className={`
+                              w-full flex items-center gap-2 px-3 py-1.5 text-xs text-left
+                              hover:bg-gray-50 transition-colors
+                              ${commentAuthor === assignee.name ? 'bg-indigo-50 text-indigo-700' : 'text-gray-700'}
+                            `}
+                          >
+                            <div className="w-5 h-5 rounded-full bg-gray-200 flex items-center justify-center text-[8px] font-bold text-gray-600">
+                              {assignee.name.split(' ').map(n => n?.[0] || '').join('').slice(0, 2).toUpperCase()}
+                            </div>
+                            <span className="flex-1 truncate">{assignee.name}</span>
+                            {commentAuthor === assignee.name && (
+                              <Check className="h-3 w-3 text-indigo-600" />
+                            )}
+                          </button>
+                        ))
+                      )}
+                    </div>,
+                    document.body
+                  )}
+
+                  <div className="flex-1 flex items-center gap-1.5 bg-white rounded-lg border border-gray-200 px-2 py-1.5 focus-within:border-indigo-400 transition-all">
+                    <input
+                      type="text"
+                      value={newComment}
+                      onChange={(e) => setNewComment(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && handleAddComment()}
+                      placeholder={`Comment as ${commentAuthor.split(' ')[0]}...`}
+                      className="flex-1 text-xs bg-transparent outline-none placeholder-gray-400"
+                      onClick={(e) => e.stopPropagation()}
+                    />
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleAddComment();
+                      }}
+                      disabled={!newComment.trim() || submittingComment}
+                      className={`
+                        p-1 rounded transition-all
+                        ${newComment.trim()
+                          ? 'bg-indigo-600 text-white hover:bg-indigo-700'
+                          : 'bg-gray-100 text-gray-300 cursor-not-allowed'
+                        }
+                      `}
+                    >
+                      <Send className="h-3 w-3" />
+                    </button>
+                  </div>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setCommentsExpanded(false);
+                    }}
+                    className="p-1 rounded hover:bg-gray-200 text-gray-400 hover:text-gray-600 transition-colors"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+
+                {/* Comments List */}
+                {loadingComments ? (
+                  <div className="flex items-center gap-2 text-xs text-gray-400 py-2">
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                    Loading comments...
+                  </div>
+                ) : comments.length === 0 ? (
+                  <div className="text-xs text-gray-400 py-2">No comments yet</div>
+                ) : (
+                  <div className="space-y-2 max-h-48 overflow-y-auto">
+                    {comments.map((comment, idx) => (
+                      <div
+                        key={comment.id}
+                        className={`flex gap-2 p-2 rounded-lg ${idx === 0 ? 'bg-blue-50/70' : 'bg-white'}`}
+                      >
+                        <div className="w-6 h-6 rounded-full bg-gray-200 flex items-center justify-center text-[9px] font-bold text-gray-600 flex-shrink-0">
+                          {(comment.author_name || 'U').split(' ').map(n => n?.[0] || '').join('').slice(0, 2).toUpperCase()}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-semibold text-gray-700">{comment.author_name || 'User'}</span>
+                            <span className="text-[10px] text-gray-400">{formatCommentTime(comment.created_at)}</span>
+                          </div>
+                          <p className="text-xs text-gray-600 mt-0.5">{comment.comment_text}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </td>
+          </tr>
+        )}
+      </>
     );
   };
 

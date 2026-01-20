@@ -921,6 +921,16 @@ export interface ScalingTaskSummary {
 
 export type RequirementStatus = 'not_picked' | 'deprioritised' | 'in_progress' | 'done';
 
+// Comment for requirements (leader and venue)
+export interface RequirementComment {
+  id: number;
+  requirement_id: number;
+  requirement_type: 'leader' | 'venue';
+  comment_text: string;
+  author_name: string;
+  created_at: string;
+}
+
 // Base requirement interface (shared by leader and venue)
 export interface BaseRequirement {
   id: number;
@@ -954,6 +964,7 @@ export interface BaseRequirement {
 
   // Comments
   comments?: string;
+  comments_count?: number;  // Count of comments from requirement_comments table
 
   // Team (auto-inherited from activity-city context)
   team?: 'blue' | 'green' | 'yellow';

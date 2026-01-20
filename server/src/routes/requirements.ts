@@ -30,47 +30,50 @@ router.get('/leaders', async (req: Request, res: Response) => {
     } = req.query;
 
     let query = `
-      SELECT * FROM leader_requirements
+      SELECT lr.*,
+        (SELECT COUNT(*) FROM requirement_comments rc
+         WHERE rc.requirement_type = 'leader' AND rc.requirement_id = lr.id) as comments_count
+      FROM leader_requirements lr
       WHERE 1=1
     `;
     const params: any[] = [];
     let paramIndex = 1;
 
     if (activity_id) {
-      query += ` AND activity_id = $${paramIndex++}`;
+      query += ` AND lr.activity_id = $${paramIndex++}`;
       params.push(activity_id);
     }
     if (city_id) {
-      query += ` AND city_id = $${paramIndex++}`;
+      query += ` AND lr.city_id = $${paramIndex++}`;
       params.push(city_id);
     }
     if (area_id) {
-      query += ` AND area_id = $${paramIndex++}`;
+      query += ` AND lr.area_id = $${paramIndex++}`;
       params.push(area_id);
     }
     if (club_id) {
-      query += ` AND club_id = $${paramIndex++}`;
+      query += ` AND lr.club_id = $${paramIndex++}`;
       params.push(club_id);
     }
     if (launch_id) {
-      query += ` AND launch_id = $${paramIndex++}`;
+      query += ` AND lr.launch_id = $${paramIndex++}`;
       params.push(launch_id);
     }
     if (team) {
-      query += ` AND team = $${paramIndex++}`;
+      query += ` AND lr.team = $${paramIndex++}`;
       params.push(team);
     }
     if (status) {
-      query += ` AND status = $${paramIndex++}`;
+      query += ` AND lr.status = $${paramIndex++}`;
       params.push(status);
     }
     if (search) {
-      query += ` AND (name ILIKE $${paramIndex} OR description ILIKE $${paramIndex})`;
+      query += ` AND (lr.name ILIKE $${paramIndex} OR lr.description ILIKE $${paramIndex})`;
       params.push(`%${search}%`);
       paramIndex++;
     }
 
-    query += ` ORDER BY created_at DESC`;
+    query += ` ORDER BY lr.created_at DESC`;
 
     const result = await queryLocal(query, params);
 
@@ -237,9 +240,12 @@ router.get('/leaders/hierarchy', async (req: Request, res: Response) => {
 
     // Get all requirements with the filters
     const query = `
-      SELECT * FROM leader_requirements
-      WHERE ${whereClause}
-      ORDER BY activity_name, city_name, area_name, name
+      SELECT lr.*,
+        (SELECT COUNT(*) FROM requirement_comments rc
+         WHERE rc.requirement_type = 'leader' AND rc.requirement_id = lr.id) as comments_count
+      FROM leader_requirements lr
+      WHERE ${whereClause.replace(/activity_name/g, 'lr.activity_name').replace(/city_name/g, 'lr.city_name').replace(/area_name/g, 'lr.area_name').replace(/club_name/g, 'lr.club_name').replace(/activity_id/g, 'lr.activity_id').replace(/city_id/g, 'lr.city_id').replace(/area_id/g, 'lr.area_id').replace(/club_id/g, 'lr.club_id').replace(/team/g, 'lr.team').replace(/status/g, 'lr.status')}
+      ORDER BY lr.activity_name, lr.city_name, lr.area_name, lr.name
     `;
 
     const result = await queryLocal(query, params);
@@ -606,43 +612,46 @@ router.get('/venues', async (req: Request, res: Response) => {
     } = req.query;
 
     let query = `
-      SELECT * FROM venue_requirements
+      SELECT vr.*,
+        (SELECT COUNT(*) FROM requirement_comments rc
+         WHERE rc.requirement_type = 'venue' AND rc.requirement_id = vr.id) as comments_count
+      FROM venue_requirements vr
       WHERE 1=1
     `;
     const params: any[] = [];
     let paramIndex = 1;
 
     if (activity_id) {
-      query += ` AND activity_id = $${paramIndex++}`;
+      query += ` AND vr.activity_id = $${paramIndex++}`;
       params.push(activity_id);
     }
     if (city_id) {
-      query += ` AND city_id = $${paramIndex++}`;
+      query += ` AND vr.city_id = $${paramIndex++}`;
       params.push(city_id);
     }
     if (area_id) {
-      query += ` AND area_id = $${paramIndex++}`;
+      query += ` AND vr.area_id = $${paramIndex++}`;
       params.push(area_id);
     }
     if (club_id) {
-      query += ` AND club_id = $${paramIndex++}`;
+      query += ` AND vr.club_id = $${paramIndex++}`;
       params.push(club_id);
     }
     if (team) {
-      query += ` AND team = $${paramIndex++}`;
+      query += ` AND vr.team = $${paramIndex++}`;
       params.push(team);
     }
     if (status) {
-      query += ` AND status = $${paramIndex++}`;
+      query += ` AND vr.status = $${paramIndex++}`;
       params.push(status);
     }
     if (search) {
-      query += ` AND (name ILIKE $${paramIndex} OR description ILIKE $${paramIndex})`;
+      query += ` AND (vr.name ILIKE $${paramIndex} OR vr.description ILIKE $${paramIndex})`;
       params.push(`%${search}%`);
       paramIndex++;
     }
 
-    query += ` ORDER BY created_at DESC`;
+    query += ` ORDER BY vr.created_at DESC`;
 
     const result = await queryLocal(query, params);
     const requirements = result.rows.map((r: any) => ({
@@ -773,9 +782,12 @@ router.get('/venues/hierarchy', async (req: Request, res: Response) => {
       : ['activity', 'city', 'area'];
 
     const query = `
-      SELECT * FROM venue_requirements
-      WHERE ${whereClause}
-      ORDER BY activity_name, city_name, area_name, name
+      SELECT vr.*,
+        (SELECT COUNT(*) FROM requirement_comments rc
+         WHERE rc.requirement_type = 'venue' AND rc.requirement_id = vr.id) as comments_count
+      FROM venue_requirements vr
+      WHERE ${whereClause.replace(/activity_id/g, 'vr.activity_id').replace(/city_id/g, 'vr.city_id').replace(/area_id/g, 'vr.area_id').replace(/club_name/g, 'vr.club_name').replace(/club_id/g, 'vr.club_id').replace(/team/g, 'vr.team').replace(/status/g, 'vr.status')}
+      ORDER BY vr.activity_name, vr.city_name, vr.area_name, vr.name
     `;
 
     const result = await queryLocal(query, params);
@@ -1257,6 +1269,79 @@ router.post('/bulk-complete', async (req: Request, res: Response) => {
   } catch (error) {
     console.error('Error bulk completing requirements:', error);
     res.status(500).json({ success: false, error: 'Bulk complete failed' });
+  }
+});
+
+// =====================================================
+// REQUIREMENT COMMENTS
+// =====================================================
+
+// GET /api/requirements/:type/:id/comments - Get comments for a requirement
+router.get('/:type/:id/comments', async (req: Request, res: Response) => {
+  try {
+    const { type, id } = req.params;
+
+    // Validate type
+    const requirementType = type === 'leaders' ? 'leader' : type === 'venues' ? 'venue' : null;
+    if (!requirementType) {
+      return res.status(400).json({ success: false, error: 'Invalid requirement type. Use "leaders" or "venues".' });
+    }
+
+    const requirementId = parseInt(id);
+    if (isNaN(requirementId)) {
+      return res.status(400).json({ success: false, error: 'Invalid requirement ID' });
+    }
+
+    const result = await queryLocal(`
+      SELECT * FROM requirement_comments
+      WHERE requirement_type = $1 AND requirement_id = $2
+      ORDER BY created_at DESC
+    `, [requirementType, requirementId]);
+
+    res.json({
+      success: true,
+      comments: result.rows
+    });
+  } catch (error) {
+    console.error('Error fetching requirement comments:', error);
+    res.status(500).json({ success: false, error: 'Failed to fetch comments' });
+  }
+});
+
+// POST /api/requirements/:type/:id/comments - Add comment to a requirement
+router.post('/:type/:id/comments', async (req: Request, res: Response) => {
+  try {
+    const { type, id } = req.params;
+    const { comment_text, author_name } = req.body;
+
+    // Validate type
+    const requirementType = type === 'leaders' ? 'leader' : type === 'venues' ? 'venue' : null;
+    if (!requirementType) {
+      return res.status(400).json({ success: false, error: 'Invalid requirement type. Use "leaders" or "venues".' });
+    }
+
+    const requirementId = parseInt(id);
+    if (isNaN(requirementId)) {
+      return res.status(400).json({ success: false, error: 'Invalid requirement ID' });
+    }
+
+    if (!comment_text || !comment_text.trim()) {
+      return res.status(400).json({ success: false, error: 'Comment text is required' });
+    }
+
+    const result = await queryLocal(`
+      INSERT INTO requirement_comments (requirement_id, requirement_type, comment_text, author_name)
+      VALUES ($1, $2, $3, $4)
+      RETURNING *
+    `, [requirementId, requirementType, comment_text.trim(), author_name || 'Anonymous']);
+
+    res.json({
+      success: true,
+      comment: result.rows[0]
+    });
+  } catch (error) {
+    console.error('Error adding requirement comment:', error);
+    res.status(500).json({ success: false, error: 'Failed to add comment' });
   }
 });
 

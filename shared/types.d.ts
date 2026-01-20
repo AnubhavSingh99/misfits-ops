@@ -432,6 +432,17 @@ export interface NewClubLaunch {
     created_at?: string;
     updated_at?: string;
 }
+export interface ClubOrLaunch {
+    id: number;
+    name: string;
+    type: 'club' | 'launch';
+    activity_id?: number;
+    activity_name?: string;
+    city_id?: number;
+    city_name?: string;
+    area_id?: number;
+    area_name?: string;
+}
 export type MeetupStageKey = 'not_picked' | 'started' | 'stage_1' | 'stage_2' | 'stage_3' | 'stage_4' | 'realised';
 export interface StageProgress {
     not_picked: number;
@@ -575,11 +586,8 @@ export interface HierarchyNode {
     target_count?: number;
     is_launch?: boolean;
     activity_id?: number;
-    activity_name?: string;
     city_id?: number;
-    city_name?: string;
     area_id?: number;
-    area_name?: string;
     club_id?: number;
     launch_id?: number;
     target_id?: number;
@@ -607,6 +615,21 @@ export interface HierarchyNode {
         red: number;
         gray: number;
     };
+    leaders_required_total?: number;
+    leader_requirements_summary?: {
+        not_picked: number;
+        deprioritised: number;
+        in_progress: number;
+        done: number;
+        total_requirements: number;
+    };
+    matched_from_launch?: {
+        launch_id: number;
+        original_name: string;
+        match_type: 'auto' | 'manual' | 'legacy';
+        matched_at: string;
+    };
+    club_uuid?: string;
 }
 export interface WeeklyTrend {
     week_start: string;
@@ -749,13 +772,18 @@ export interface BaseRequirement {
     area_name?: string;
     club_id?: number;
     club_name?: string;
+    launch_id?: number;
     status: RequirementStatus;
     growth_team_effort: boolean;
     platform_team_effort: boolean;
+    existing_leader_effort: boolean;
+    leaders_required: number;
+    linked_tasks?: ScalingTask[];
     comments?: string;
     team?: 'blue' | 'green' | 'yellow';
     created_at: string;
     updated_at: string;
+    completed_at?: string;
     created_by?: string;
 }
 export interface LeaderRequirement extends BaseRequirement {

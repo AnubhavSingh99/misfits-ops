@@ -17,9 +17,12 @@ import {
   UserPlus,
   Plus,
   Pencil,
-  Trash2
+  Trash2,
+  MessageSquare,
+  Send,
+  X
 } from 'lucide-react';
-import type { LeaderRequirement, HierarchyNode, RequirementStatus, ScalingTask } from '../../../../shared/types';
+import type { LeaderRequirement, HierarchyNode, RequirementStatus, ScalingTask, RequirementComment } from '../../../../shared/types';
 import { TEAMS, getTeamByMember, type TeamKey } from '../../../../shared/teamConfig';
 
 const API_BASE = import.meta.env.VITE_API_URL
@@ -84,6 +87,7 @@ function CompactRequirementTile({
     leaders_required?: number;
     existing_leader_effort?: boolean;
     linked_tasks?: ScalingTask[];
+    comments_count?: number;
   };
   onStatusChange?: (req: LeaderRequirement, newStatus: RequirementStatus) => void;
   canChangeStatus: boolean;
@@ -92,8 +96,123 @@ function CompactRequirementTile({
   const [statusDropdownOpen, setStatusDropdownOpen] = useState(false);
   const [tasksExpanded, setTasksExpanded] = useState(false);
 
+  // Comments state
+  const [commentsExpanded, setCommentsExpanded] = useState(false);
+  const [comments, setComments] = useState<RequirementComment[]>([]);
+  const [loadingComments, setLoadingComments] = useState(false);
+  const [commentsFetched, setCommentsFetched] = useState(false);
+  const [newComment, setNewComment] = useState('');
+  const [submittingComment, setSubmittingComment] = useState(false);
+  const [commentAuthor, setCommentAuthor] = useState('User');
+  const [assignees, setAssignees] = useState<{ id: number; name: string }[]>([]);
+  const [assigneesFetched, setAssigneesFetched] = useState(false);
+  const [authorDropdownOpen, setAuthorDropdownOpen] = useState(false);
+  const authorButtonRef = useRef<HTMLButtonElement>(null);
+  const [authorDropdownPosition, setAuthorDropdownPosition] = useState({ top: 0, left: 0 });
+
   const statusButtonRef = useRef<HTMLButtonElement>(null);
   const [dropdownPosition, setDropdownPosition] = useState({ top: 0, left: 0 });
+
+  // Fetch comments when expanded
+  useEffect(() => {
+    if (commentsExpanded && !commentsFetched) {
+      fetchComments();
+    }
+    if (commentsExpanded && !assigneesFetched) {
+      fetchAssignees();
+    }
+  }, [commentsExpanded, commentsFetched, assigneesFetched]);
+
+  // Update author dropdown position
+  useEffect(() => {
+    if (authorDropdownOpen && authorButtonRef.current) {
+      const rect = authorButtonRef.current.getBoundingClientRect();
+      setAuthorDropdownPosition({ top: rect.bottom + 4, left: rect.left });
+    }
+  }, [authorDropdownOpen]);
+
+  // Close author dropdown on outside click
+  useEffect(() => {
+    if (!authorDropdownOpen) return;
+    const handleClick = (e: MouseEvent) => {
+      if (authorButtonRef.current && !authorButtonRef.current.contains(e.target as Node)) {
+        const dropdown = document.getElementById(`author-dropdown-tooltip-${requirement.id}`);
+        if (dropdown && !dropdown.contains(e.target as Node)) {
+          setAuthorDropdownOpen(false);
+        }
+      }
+    };
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [authorDropdownOpen, requirement.id]);
+
+  const fetchComments = async () => {
+    setLoadingComments(true);
+    try {
+      const response = await fetch(`${API_BASE}/requirements/leaders/${requirement.id}/comments`);
+      const data = await response.json();
+      if (data.success) {
+        setComments(data.comments);
+      }
+    } catch (error) {
+      console.error('Error fetching comments:', error);
+    } finally {
+      setLoadingComments(false);
+      setCommentsFetched(true);
+    }
+  };
+
+  const fetchAssignees = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/scaling-tasks/assignees/list`);
+      const data = await res.json();
+      if (data.success && data.assignees) {
+        setAssignees(data.assignees);
+      }
+    } catch (err) {
+      console.error('Failed to fetch assignees:', err);
+    } finally {
+      setAssigneesFetched(true);
+    }
+  };
+
+  const handleAddComment = async () => {
+    if (!newComment.trim() || submittingComment) return;
+    setSubmittingComment(true);
+    try {
+      const response = await fetch(`${API_BASE}/requirements/leaders/${requirement.id}/comments`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ comment_text: newComment.trim(), author_name: commentAuthor })
+      });
+      const data = await response.json();
+      if (data.success && data.comment) {
+        setComments(prev => [data.comment, ...prev]);
+        setNewComment('');
+        (requirement as any).comments_count = ((requirement as any).comments_count || 0) + 1;
+      }
+    } catch (error) {
+      console.error('Error adding comment:', error);
+    } finally {
+      setSubmittingComment(false);
+    }
+  };
+
+  const formatCommentTime = (dateString: string) => {
+    const date = new Date(dateString);
+    const now = new Date();
+    const diffMs = now.getTime() - date.getTime();
+    const diffMins = Math.floor(diffMs / 60000);
+    const diffHours = Math.floor(diffMins / 60);
+    const diffDays = Math.floor(diffHours / 24);
+    if (diffMins < 1) return 'now';
+    if (diffMins < 60) return `${diffMins}m`;
+    if (diffHours < 24) return `${diffHours}h`;
+    if (diffDays < 7) return `${diffDays}d`;
+    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  };
+
+  const commentsCount = commentsFetched ? comments.length : (requirement.comments_count || 0);
 
   const currentStatus = REQUIREMENT_STATUS_OPTIONS.find(s => s.value === requirement.status) || REQUIREMENT_STATUS_OPTIONS[0];
   const accentColor = getTeamAccent(requirement.team);
@@ -146,7 +265,7 @@ function CompactRequirementTile({
       {/* Main Row */}
       <div className="relative">
         {/* Grid Layout */}
-        <div className="relative grid grid-cols-[auto_1fr_auto_auto_auto_auto_auto] items-center gap-2 px-3 py-2.5">
+        <div className="relative grid grid-cols-[auto_1fr_auto_auto_auto_auto_auto_auto] items-center gap-2 px-3 py-2.5">
           {/* Col 1: Leaders Required Badge */}
           <div className="flex items-center gap-1.5 w-[50px]">
             <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700 text-[10px] font-bold">
@@ -225,7 +344,28 @@ function CompactRequirementTile({
             </button>
           </div>
 
-          {/* Col 4: Create Task Button */}
+          {/* Col 4: Comments Button */}
+          <div className="w-6 flex justify-center">
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setCommentsExpanded(!commentsExpanded);
+              }}
+              className={`p-1 rounded flex items-center gap-0.5 transition-colors ${
+                commentsExpanded
+                  ? 'bg-blue-100 text-blue-600'
+                  : 'text-gray-400 hover:text-blue-600 hover:bg-blue-50'
+              }`}
+              title="Comments"
+            >
+              <MessageSquare className="h-3.5 w-3.5" />
+              {commentsCount > 0 && (
+                <span className="text-[8px] font-bold">{commentsCount}</span>
+              )}
+            </button>
+          </div>
+
+          {/* Col 5: Create Task Button */}
           <div className="w-6 flex justify-center">
             {onCreateTask && (
               <button
@@ -241,7 +381,7 @@ function CompactRequirementTile({
             )}
           </div>
 
-          {/* Col 5: Edit Button */}
+          {/* Col 6: Edit Button */}
           <div className="w-6 flex justify-center">
             <button
               onClick={(e) => {
@@ -255,7 +395,7 @@ function CompactRequirementTile({
             </button>
           </div>
 
-          {/* Col 6: Delete Button */}
+          {/* Col 7: Delete Button */}
           <div className="w-6 flex justify-center">
             <button
               onClick={async (e) => {
@@ -280,7 +420,7 @@ function CompactRequirementTile({
             </button>
           </div>
 
-          {/* Col 7: Team Badge */}
+          {/* Col 8: Team Badge */}
           <div className="w-7 flex justify-center">
             {requirement.team ? (
               <div
@@ -346,6 +486,143 @@ function CompactRequirementTile({
               </div>
             ))}
           </div>
+        </div>
+      )}
+
+      {/* Comments Expansion */}
+      {commentsExpanded && (
+        <div className="border-t border-gray-100 bg-blue-50/30 px-3 py-2">
+          {/* Add Comment Input */}
+          <div className="flex items-center gap-2 mb-2">
+            {/* Author Selector */}
+            <div className="relative">
+              <button
+                ref={authorButtonRef}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setAuthorDropdownOpen(!authorDropdownOpen);
+                }}
+                className="w-5 h-5 rounded-full bg-blue-100 flex items-center justify-center text-[8px] font-bold text-blue-600 flex-shrink-0 hover:ring-2 hover:ring-blue-200 transition-all"
+                title={`Posting as: ${commentAuthor}`}
+              >
+                {commentAuthor.split(' ').map(n => n?.[0] || '').join('').slice(0, 2).toUpperCase() || 'U'}
+              </button>
+            </div>
+
+            {/* Author Dropdown Portal */}
+            {authorDropdownOpen && createPortal(
+              <div
+                id={`author-dropdown-tooltip-${requirement.id}`}
+                className="fixed bg-white rounded-lg shadow-xl border border-gray-200 py-1 min-w-[140px] max-h-[160px] overflow-y-auto animate-in fade-in slide-in-from-top-2 duration-150"
+                style={{
+                  top: authorDropdownPosition.top,
+                  left: authorDropdownPosition.left,
+                  zIndex: 999999
+                }}
+              >
+                <div className="px-2 py-0.5 text-[8px] text-gray-400 uppercase tracking-wide border-b border-gray-100 mb-1">
+                  Post as
+                </div>
+                {!assigneesFetched ? (
+                  <div className="px-2 py-1.5 text-[10px] text-gray-400">Loading...</div>
+                ) : assignees.length === 0 ? (
+                  <div className="px-2 py-1.5 text-[10px] text-gray-400">No members</div>
+                ) : (
+                  assignees.map((assignee) => (
+                    <button
+                      key={assignee.id}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setCommentAuthor(assignee.name);
+                        setAuthorDropdownOpen(false);
+                      }}
+                      className={`
+                        w-full flex items-center gap-1.5 px-2 py-1 text-[10px] text-left
+                        hover:bg-gray-50 transition-colors
+                        ${commentAuthor === assignee.name ? 'bg-blue-50 text-blue-700' : 'text-gray-700'}
+                      `}
+                    >
+                      <div className="w-4 h-4 rounded-full bg-gray-200 flex items-center justify-center text-[7px] font-bold text-gray-600">
+                        {assignee.name.split(' ').map(n => n?.[0] || '').join('').slice(0, 2).toUpperCase()}
+                      </div>
+                      <span className="flex-1 truncate">{assignee.name}</span>
+                      {commentAuthor === assignee.name && (
+                        <Check className="h-2.5 w-2.5 text-blue-600" />
+                      )}
+                    </button>
+                  ))
+                )}
+              </div>,
+              document.body
+            )}
+
+            <div className="flex-1 flex items-center gap-1 bg-white rounded border border-gray-200 px-1.5 py-1 focus-within:border-blue-400 transition-all">
+              <input
+                type="text"
+                value={newComment}
+                onChange={(e) => setNewComment(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleAddComment()}
+                placeholder={`Comment as ${commentAuthor.split(' ')[0]}...`}
+                className="flex-1 text-[10px] bg-transparent outline-none placeholder-gray-400"
+                onClick={(e) => e.stopPropagation()}
+              />
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleAddComment();
+                }}
+                disabled={!newComment.trim() || submittingComment}
+                className={`
+                  p-0.5 rounded transition-all
+                  ${newComment.trim()
+                    ? 'bg-blue-600 text-white hover:bg-blue-700'
+                    : 'bg-gray-100 text-gray-300 cursor-not-allowed'
+                  }
+                `}
+              >
+                <Send className="h-2.5 w-2.5" />
+              </button>
+            </div>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setCommentsExpanded(false);
+              }}
+              className="p-0.5 rounded hover:bg-gray-200 text-gray-400 hover:text-gray-600 transition-colors"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </div>
+
+          {/* Comments List */}
+          {loadingComments ? (
+            <div className="flex items-center justify-center py-2">
+              <Loader2 className="h-3 w-3 animate-spin text-blue-400" />
+              <span className="ml-1.5 text-[9px] text-gray-400">Loading...</span>
+            </div>
+          ) : comments.length === 0 ? (
+            <div className="text-[9px] text-gray-400 py-1">No comments yet</div>
+          ) : (
+            <div className="space-y-1 max-h-[100px] overflow-y-auto">
+              {comments.map((comment, idx) => (
+                <div
+                  key={comment.id}
+                  className={`flex gap-1.5 p-1.5 rounded ${idx === 0 ? 'bg-blue-50' : 'bg-white'}`}
+                >
+                  <div className="w-4 h-4 rounded-full bg-gray-200 flex items-center justify-center text-[7px] font-bold text-gray-600 flex-shrink-0">
+                    {(comment.author_name || 'U').split(' ').map(n => n?.[0] || '').join('').slice(0, 2).toUpperCase()}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-1">
+                      <span className="text-[9px] font-semibold text-gray-700">{comment.author_name || 'User'}</span>
+                      <span className="text-[8px] text-gray-400">{formatCommentTime(comment.created_at)}</span>
+                    </div>
+                    <p className="text-[9px] text-gray-600">{comment.comment_text}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>
