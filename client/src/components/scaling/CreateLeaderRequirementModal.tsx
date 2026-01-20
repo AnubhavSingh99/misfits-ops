@@ -409,7 +409,7 @@ export function CreateLeaderRequirementModal({
                 </select>
               </div>
               <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">Club / Launch (Optional)</label>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Club / Launch *</label>
                 <select
                   value={isLaunchSelected ? `launch_${selectedLaunchId}` : (selectedClubId || '')}
                   onChange={handleClubChange}

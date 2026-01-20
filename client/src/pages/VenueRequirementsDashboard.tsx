@@ -389,19 +389,24 @@ export default function VenueRequirementsDashboard() {
   };
 
   // Create new requirement
-  const createRequirement = async (data: CreateRequirementRequest) => {
+  const createRequirement = async (data: CreateRequirementRequest): Promise<string | null> => {
     try {
       const response = await fetch(`${API_BASE}/requirements/venues`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data)
       });
-      if (response.ok) {
+      const result = await response.json();
+      if (response.ok && result.success) {
         setShowCreateModal(false);
         fetchData(true); // Refresh data, keeps expanded state
+        return null;
+      } else {
+        return result.error || 'Failed to create requirement';
       }
     } catch (err) {
       console.error('Failed to create requirement:', err);
+      return 'Failed to create requirement. Please try again.';
     }
   };
 
@@ -1707,7 +1712,7 @@ function CreateRequirementModal({
 }: {
   context: CreateContext;
   onClose: () => void;
-  onCreate: (data: CreateRequirementRequest) => void;
+  onCreate: (data: CreateRequirementRequest) => Promise<string | null>;
 }) {
   // Form fields
   const [name, setName] = useState('');
@@ -1715,6 +1720,7 @@ function CreateRequirementModal({
   const [growthEffort, setGrowthEffort] = useState(false);
   const [platformEffort, setPlatformEffort] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   // Hierarchy selection state
   const [selectedActivityId, setSelectedActivityId] = useState<number | undefined>(context.activity_id);
@@ -1879,7 +1885,8 @@ function CreateRequirementModal({
     if (!isValid) return;
 
     setSubmitting(true);
-    await onCreate({
+    setError(null);
+    const errorMsg = await onCreate({
       name: name.trim(),
       description: description.trim() || undefined,
       activity_id: selectedActivityId,
@@ -1894,6 +1901,9 @@ function CreateRequirementModal({
       platform_team_effort: platformEffort,
       team
     });
+    if (errorMsg) {
+      setError(errorMsg);
+    }
     setSubmitting(false);
   };
 
@@ -1920,6 +1930,12 @@ function CreateRequirementModal({
 
           {/* Form */}
           <form onSubmit={handleSubmit} className="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
+            {/* Error Display */}
+            {error && (
+              <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+                {error}
+              </div>
+            )}
             {/* Hierarchy Selection */}
             <div className="grid grid-cols-2 gap-3">
               <div>
@@ -1964,7 +1980,7 @@ function CreateRequirementModal({
                 </select>
               </div>
               <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">Club (Optional)</label>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Club / Launch *</label>
                 <select
                   value={selectedClubId || ''}
                   onChange={handleClubChange}
