@@ -590,6 +590,10 @@ export default function LeaderRequirementsDashboard() {
     const [submittingComment, setSubmittingComment] = useState(false);
     const [commentAuthor, setCommentAuthor] = useState('User');
 
+    // Comments tooltip position
+    const commentsButtonRef = useRef<HTMLButtonElement>(null);
+    const [tooltipPosition, setTooltipPosition] = useState({ top: 0, left: 0 });
+
     // Author dropdown state
     const [assignees, setAssignees] = useState<{ id: number; name: string }[]>([]);
     const [assigneesFetched, setAssigneesFetched] = useState(false);
@@ -632,6 +636,50 @@ export default function LeaderRequirementsDashboard() {
       document.addEventListener('mousedown', handleClick);
       return () => document.removeEventListener('mousedown', handleClick);
     }, [authorDropdownOpen, req.id]);
+
+    // Update tooltip position when comments expanded
+    useEffect(() => {
+      if (commentsExpanded && commentsButtonRef.current) {
+        const rect = commentsButtonRef.current.getBoundingClientRect();
+        const tooltipWidth = 320;
+        const tooltipHeight = 280;
+        const padding = 8;
+
+        // Position to the left of the button, or right if not enough space
+        let left = rect.left - tooltipWidth - padding;
+        if (left < padding) {
+          left = rect.right + padding;
+        }
+
+        // Vertically center on the button, but keep within viewport
+        let top = rect.top - tooltipHeight / 2 + rect.height / 2;
+        top = Math.max(padding, Math.min(top, window.innerHeight - tooltipHeight - padding));
+
+        setTooltipPosition({ top, left });
+      }
+    }, [commentsExpanded]);
+
+    // Close comments tooltip on outside click
+    useEffect(() => {
+      if (!commentsExpanded) return;
+      const handleClick = (e: MouseEvent) => {
+        const tooltip = document.getElementById(`comments-tooltip-${req.id}`);
+        if (commentsButtonRef.current?.contains(e.target as Node)) return;
+        if (tooltip?.contains(e.target as Node)) return;
+        // Don't close if clicking author dropdown
+        const authorDropdown = document.getElementById(`author-dropdown-req-${req.id}`);
+        if (authorDropdown?.contains(e.target as Node)) return;
+        setCommentsExpanded(false);
+        setAuthorDropdownOpen(false);
+      };
+      const timeoutId = setTimeout(() => {
+        document.addEventListener('mousedown', handleClick);
+      }, 0);
+      return () => {
+        clearTimeout(timeoutId);
+        document.removeEventListener('mousedown', handleClick);
+      };
+    }, [commentsExpanded, req.id]);
 
     const fetchAssignees = async () => {
       try {
@@ -802,6 +850,7 @@ export default function LeaderRequirementsDashboard() {
             <div className="flex items-center justify-center gap-1">
               {/* Comments button - always visible */}
               <button
+                ref={commentsButtonRef}
                 onClick={(e) => {
                   e.stopPropagation();
                   setCommentsExpanded(!commentsExpanded);
@@ -845,145 +894,165 @@ export default function LeaderRequirementsDashboard() {
           </td>
         </tr>
 
-        {/* Expanded Comments Row */}
-        {commentsExpanded && (
-          <tr className="bg-slate-50/70 border-b border-gray-100">
-            <td colSpan={9} style={{ paddingLeft: `${12 + depth * 24 + 20}px` }} className="py-3 pr-4">
-              <div className="max-w-2xl">
-                {/* Add Comment Input */}
-                <div className="flex items-center gap-2 mb-3">
-                  {/* Author Selector */}
-                  <div className="relative">
-                    <button
-                      ref={authorButtonRef}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setAuthorDropdownOpen(!authorDropdownOpen);
-                      }}
-                      className="w-6 h-6 rounded-full bg-indigo-100 flex items-center justify-center text-[9px] font-bold text-indigo-600 flex-shrink-0 hover:ring-2 hover:ring-indigo-200 transition-all"
-                      title={`Posting as: ${commentAuthor}`}
-                    >
-                      {commentAuthor.split(' ').map(n => n?.[0] || '').join('').slice(0, 2).toUpperCase() || 'U'}
-                    </button>
-                  </div>
+        {/* Comments Tooltip Portal */}
+        {commentsExpanded && createPortal(
+          <div
+            id={`comments-tooltip-${req.id}`}
+            className="fixed bg-white rounded-xl shadow-2xl border border-gray-200/80 w-80 animate-in fade-in zoom-in-95 duration-150"
+            style={{
+              top: tooltipPosition.top,
+              left: tooltipPosition.left,
+              zIndex: 9998
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between px-3 py-2 border-b border-gray-100 bg-gradient-to-r from-slate-50 to-white rounded-t-xl">
+              <div className="flex items-center gap-2">
+                <MessageSquare className="h-3.5 w-3.5 text-indigo-500" />
+                <span className="text-xs font-semibold text-gray-700">Comments</span>
+                {comments.length > 0 && (
+                  <span className="text-[10px] text-gray-400">({comments.length})</span>
+                )}
+              </div>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setCommentsExpanded(false);
+                  setAuthorDropdownOpen(false);
+                }}
+                className="p-1 rounded hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
 
-                  {/* Author Dropdown Portal */}
-                  {authorDropdownOpen && createPortal(
-                    <div
-                      id={`author-dropdown-req-${req.id}`}
-                      className="fixed bg-white rounded-lg shadow-xl border border-gray-200 py-1 min-w-[160px] max-h-[200px] overflow-y-auto animate-in fade-in slide-in-from-top-2 duration-150"
-                      style={{
-                        top: authorDropdownPosition.top,
-                        left: authorDropdownPosition.left,
-                        zIndex: 9999
-                      }}
-                    >
-                      <div className="px-2 py-1 text-[9px] text-gray-400 uppercase tracking-wide border-b border-gray-100 mb-1">
-                        Post as
-                      </div>
-                      {!assigneesFetched ? (
-                        <div className="px-3 py-2 text-xs text-gray-400">Loading...</div>
-                      ) : assignees.length === 0 ? (
-                        <div className="px-3 py-2 text-xs text-gray-400">No members found</div>
-                      ) : (
-                        assignees.map((assignee) => (
-                          <button
-                            key={assignee.id}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setCommentAuthor(assignee.name);
-                              setAuthorDropdownOpen(false);
-                            }}
-                            className={`
-                              w-full flex items-center gap-2 px-3 py-1.5 text-xs text-left
-                              hover:bg-gray-50 transition-colors
-                              ${commentAuthor === assignee.name ? 'bg-indigo-50 text-indigo-700' : 'text-gray-700'}
-                            `}
-                          >
-                            <div className="w-5 h-5 rounded-full bg-gray-200 flex items-center justify-center text-[8px] font-bold text-gray-600">
-                              {assignee.name.split(' ').map(n => n?.[0] || '').join('').slice(0, 2).toUpperCase()}
-                            </div>
-                            <span className="flex-1 truncate">{assignee.name}</span>
-                            {commentAuthor === assignee.name && (
-                              <Check className="h-3 w-3 text-indigo-600" />
-                            )}
-                          </button>
-                        ))
-                      )}
-                    </div>,
-                    document.body
-                  )}
+            {/* Add Comment Input */}
+            <div className="px-3 py-2 border-b border-gray-100 bg-slate-50/50">
+              <div className="flex items-center gap-2">
+                {/* Author Selector */}
+                <button
+                  ref={authorButtonRef}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setAuthorDropdownOpen(!authorDropdownOpen);
+                  }}
+                  className="w-6 h-6 rounded-full bg-indigo-100 flex items-center justify-center text-[9px] font-bold text-indigo-600 flex-shrink-0 hover:ring-2 hover:ring-indigo-200 transition-all"
+                  title={`Posting as: ${commentAuthor}`}
+                >
+                  {commentAuthor.split(' ').map(n => n?.[0] || '').join('').slice(0, 2).toUpperCase() || 'U'}
+                </button>
 
-                  <div className="flex-1 flex items-center gap-1.5 bg-white rounded-lg border border-gray-200 px-2 py-1.5 focus-within:border-indigo-400 transition-all">
-                    <input
-                      type="text"
-                      value={newComment}
-                      onChange={(e) => setNewComment(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Enter' && handleAddComment()}
-                      placeholder={`Comment as ${commentAuthor.split(' ')[0]}...`}
-                      className="flex-1 text-xs bg-transparent outline-none placeholder-gray-400"
-                      onClick={(e) => e.stopPropagation()}
-                    />
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleAddComment();
-                      }}
-                      disabled={!newComment.trim() || submittingComment}
-                      className={`
-                        p-1 rounded transition-all
-                        ${newComment.trim()
-                          ? 'bg-indigo-600 text-white hover:bg-indigo-700'
-                          : 'bg-gray-100 text-gray-300 cursor-not-allowed'
-                        }
-                      `}
-                    >
-                      <Send className="h-3 w-3" />
-                    </button>
-                  </div>
+                <div className="flex-1 flex items-center gap-1.5 bg-white rounded-lg border border-gray-200 px-2 py-1.5 focus-within:border-indigo-400 transition-all">
+                  <input
+                    type="text"
+                    value={newComment}
+                    onChange={(e) => setNewComment(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && handleAddComment()}
+                    placeholder={`Comment as ${commentAuthor.split(' ')[0]}...`}
+                    className="flex-1 text-xs bg-transparent outline-none placeholder-gray-400"
+                    onClick={(e) => e.stopPropagation()}
+                  />
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
-                      setCommentsExpanded(false);
+                      handleAddComment();
                     }}
-                    className="p-1 rounded hover:bg-gray-200 text-gray-400 hover:text-gray-600 transition-colors"
+                    disabled={!newComment.trim() || submittingComment}
+                    className={`
+                      p-1 rounded transition-all
+                      ${newComment.trim()
+                        ? 'bg-indigo-600 text-white hover:bg-indigo-700'
+                        : 'bg-gray-100 text-gray-300 cursor-not-allowed'
+                      }
+                    `}
                   >
-                    <X className="h-3.5 w-3.5" />
+                    <Send className="h-3 w-3" />
                   </button>
                 </div>
-
-                {/* Comments List */}
-                {loadingComments ? (
-                  <div className="flex items-center gap-2 text-xs text-gray-400 py-2">
-                    <Loader2 className="h-3 w-3 animate-spin" />
-                    Loading comments...
-                  </div>
-                ) : comments.length === 0 ? (
-                  <div className="text-xs text-gray-400 py-2">No comments yet</div>
-                ) : (
-                  <div className="space-y-2 max-h-48 overflow-y-auto">
-                    {comments.map((comment, idx) => (
-                      <div
-                        key={comment.id}
-                        className={`flex gap-2 p-2 rounded-lg ${idx === 0 ? 'bg-blue-50/70' : 'bg-white'}`}
-                      >
-                        <div className="w-6 h-6 rounded-full bg-gray-200 flex items-center justify-center text-[9px] font-bold text-gray-600 flex-shrink-0">
-                          {(comment.author_name || 'U').split(' ').map(n => n?.[0] || '').join('').slice(0, 2).toUpperCase()}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs font-semibold text-gray-700">{comment.author_name || 'User'}</span>
-                            <span className="text-[10px] text-gray-400">{formatCommentTime(comment.created_at)}</span>
-                          </div>
-                          <p className="text-xs text-gray-600 mt-0.5">{comment.comment_text}</p>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
               </div>
-            </td>
-          </tr>
+            </div>
+
+            {/* Author Dropdown Portal */}
+            {authorDropdownOpen && createPortal(
+              <div
+                id={`author-dropdown-req-${req.id}`}
+                className="fixed bg-white rounded-lg shadow-xl border border-gray-200 py-1 min-w-[160px] max-h-[200px] overflow-y-auto animate-in fade-in slide-in-from-top-2 duration-150"
+                style={{
+                  top: authorDropdownPosition.top,
+                  left: authorDropdownPosition.left,
+                  zIndex: 9999
+                }}
+              >
+                <div className="px-2 py-1 text-[9px] text-gray-400 uppercase tracking-wide border-b border-gray-100 mb-1">
+                  Post as
+                </div>
+                {!assigneesFetched ? (
+                  <div className="px-3 py-2 text-xs text-gray-400">Loading...</div>
+                ) : assignees.length === 0 ? (
+                  <div className="px-3 py-2 text-xs text-gray-400">No members found</div>
+                ) : (
+                  assignees.map((assignee) => (
+                    <button
+                      key={assignee.id}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setCommentAuthor(assignee.name);
+                        setAuthorDropdownOpen(false);
+                      }}
+                      className={`
+                        w-full flex items-center gap-2 px-3 py-1.5 text-xs text-left
+                        hover:bg-gray-50 transition-colors
+                        ${commentAuthor === assignee.name ? 'bg-indigo-50 text-indigo-700' : 'text-gray-700'}
+                      `}
+                    >
+                      <div className="w-5 h-5 rounded-full bg-gray-200 flex items-center justify-center text-[8px] font-bold text-gray-600">
+                        {assignee.name.split(' ').map(n => n?.[0] || '').join('').slice(0, 2).toUpperCase()}
+                      </div>
+                      <span className="flex-1 truncate">{assignee.name}</span>
+                      {commentAuthor === assignee.name && (
+                        <Check className="h-3 w-3 text-indigo-600" />
+                      )}
+                    </button>
+                  ))
+                )}
+              </div>,
+              document.body
+            )}
+
+            {/* Comments List */}
+            <div className="px-3 py-2 max-h-56 overflow-y-auto">
+              {loadingComments ? (
+                <div className="flex items-center justify-center gap-2 text-xs text-gray-400 py-4">
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  Loading...
+                </div>
+              ) : comments.length === 0 ? (
+                <div className="text-xs text-gray-400 text-center py-4">No comments yet</div>
+              ) : (
+                <div className="space-y-2">
+                  {comments.map((comment, idx) => (
+                    <div
+                      key={comment.id}
+                      className={`flex gap-2 p-2 rounded-lg ${idx === 0 ? 'bg-indigo-50/50' : 'bg-slate-50/50'}`}
+                    >
+                      <div className="w-5 h-5 rounded-full bg-gray-200 flex items-center justify-center text-[8px] font-bold text-gray-600 flex-shrink-0">
+                        {(comment.author_name || 'U').split(' ').map(n => n?.[0] || '').join('').slice(0, 2).toUpperCase()}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[11px] font-semibold text-gray-700">{comment.author_name || 'User'}</span>
+                          <span className="text-[9px] text-gray-400">{formatCommentTime(comment.created_at)}</span>
+                        </div>
+                        <p className="text-[11px] text-gray-600 mt-0.5 leading-relaxed">{comment.comment_text}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>,
+          document.body
         )}
       </>
     );

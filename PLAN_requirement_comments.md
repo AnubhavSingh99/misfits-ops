@@ -4,14 +4,14 @@
 
 | Step | Description | Status |
 |------|-------------|--------|
-| 1 | Database Migration | ✅ Done |
+| 1 | Database Migration (misfits_ops) | ✅ Done |
 | 2 | Backend API (GET/POST comments) | ✅ Done |
 | 3 | Add comments_count to list/hierarchy | ✅ Done |
 | 4 | Shared Types | ✅ Done |
 | 5 | Leader Dashboard Comments | ✅ Done |
 | 6 | Venue Dashboard Comments | ✅ Done |
 | 7 | Leader Tooltip Comments | ✅ Done |
-| 8 | Test & Deploy | ⏳ In Progress |
+| 8 | Deploy & Test | ✅ Done |
 
 ---
 
