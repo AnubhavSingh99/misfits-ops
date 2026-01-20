@@ -417,7 +417,7 @@ export function CreateLeaderRequirementModal({
                   className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-sm bg-white disabled:bg-gray-100 disabled:cursor-not-allowed ${selectedAreaId && clubs.length === 0 ? 'border-amber-300 text-amber-600' : 'border-gray-300'}`}
                 >
                   {selectedAreaId && clubs.length === 0 ? (
-                    <option value="">No clubs, make a launch target first</option>
+                    <option value="">No clubs, add a launch first</option>
                   ) : (
                     <>
                       <option value="">Select Club</option>
