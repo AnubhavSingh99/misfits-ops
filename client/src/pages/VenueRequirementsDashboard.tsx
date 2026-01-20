@@ -653,9 +653,9 @@ export default function VenueRequirementsDashboard() {
     useEffect(() => {
       if (commentsExpanded && commentsButtonRef.current) {
         const rect = commentsButtonRef.current.getBoundingClientRect();
-        const tooltipWidth = 320;
+        const tooltipWidth = 420;
         const tooltipHeight = 280;
-        const padding = 8;
+        const padding = 12;
 
         // Position to the left of the button, or right if not enough space
         let left = rect.left - tooltipWidth - padding;
@@ -899,24 +899,29 @@ export default function VenueRequirementsDashboard() {
         {commentsExpanded && createPortal(
           <div
             id={`comments-tooltip-venue-${req.id}`}
-            className="fixed bg-white rounded-xl shadow-2xl border border-gray-200/80 w-80 animate-in fade-in zoom-in-95 duration-150"
+            className="fixed bg-white rounded-2xl shadow-2xl border border-gray-100 animate-in fade-in zoom-in-95 duration-150"
             style={{
               top: tooltipPosition.top,
               left: tooltipPosition.left,
-              zIndex: 9998
+              zIndex: 9998,
+              width: '420px'
             }}
             onClick={(e) => e.stopPropagation()}
             onMouseEnter={handleMouseEnter}
             onMouseLeave={handleMouseLeave}
           >
             {/* Header */}
-            <div className="flex items-center justify-between px-3 py-2 border-b border-gray-100 bg-gradient-to-r from-slate-50 to-white rounded-t-xl">
-              <div className="flex items-center gap-2">
-                <MessageSquare className="h-3.5 w-3.5 text-teal-500" />
-                <span className="text-xs font-semibold text-gray-700">Comments</span>
-                {comments.length > 0 && (
-                  <span className="text-[10px] text-gray-400">({comments.length})</span>
-                )}
+            <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100/80 bg-gradient-to-r from-teal-50/50 via-white to-emerald-50/30 rounded-t-2xl">
+              <div className="flex items-center gap-3">
+                <div className="p-1.5 bg-teal-100 rounded-lg">
+                  <MessageSquare className="h-4 w-4 text-teal-600" />
+                </div>
+                <div className="flex items-baseline gap-2">
+                  <span className="text-sm font-semibold text-gray-800">Comments</span>
+                  {comments.length > 0 && (
+                    <span className="text-xs text-gray-400 font-medium">{comments.length} {comments.length === 1 ? 'note' : 'notes'}</span>
+                  )}
+                </div>
               </div>
               <button
                 onClick={(e) => {
@@ -924,15 +929,15 @@ export default function VenueRequirementsDashboard() {
                   setCommentsExpanded(false);
                   setAuthorDropdownOpen(false);
                 }}
-                className="p-1 rounded hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors"
+                className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors"
               >
-                <X className="h-3.5 w-3.5" />
+                <X className="h-4 w-4" />
               </button>
             </div>
 
             {/* Add Comment Input */}
-            <div className="px-3 py-2 border-b border-gray-100 bg-slate-50/50">
-              <div className="flex items-center gap-2">
+            <div className="px-5 py-3 border-b border-gray-100/80 bg-gray-50/30">
+              <div className="flex items-center gap-3">
                 {/* Author Selector */}
                 <button
                   ref={authorButtonRef}
@@ -940,20 +945,20 @@ export default function VenueRequirementsDashboard() {
                     e.stopPropagation();
                     setAuthorDropdownOpen(!authorDropdownOpen);
                   }}
-                  className="w-6 h-6 rounded-full bg-teal-100 flex items-center justify-center text-[9px] font-bold text-teal-600 flex-shrink-0 hover:ring-2 hover:ring-teal-200 transition-all"
+                  className="w-8 h-8 rounded-full bg-gradient-to-br from-teal-400 to-emerald-500 flex items-center justify-center text-[10px] font-bold text-white flex-shrink-0 hover:shadow-md hover:scale-105 transition-all ring-2 ring-white"
                   title={`Posting as: ${commentAuthor}`}
                 >
                   {commentAuthor.split(' ').map(n => n?.[0] || '').join('').slice(0, 2).toUpperCase() || 'U'}
                 </button>
 
-                <div className="flex-1 flex items-center gap-1.5 bg-white rounded-lg border border-gray-200 px-2 py-1.5 focus-within:border-teal-400 transition-all">
+                <div className="flex-1 flex items-center gap-2 bg-white rounded-xl border border-gray-200 px-4 py-2.5 focus-within:border-teal-400 focus-within:ring-2 focus-within:ring-teal-100 transition-all shadow-sm">
                   <input
                     type="text"
                     value={newComment}
                     onChange={(e) => setNewComment(e.target.value)}
                     onKeyDown={(e) => e.key === 'Enter' && handleAddComment()}
-                    placeholder={`Comment as ${commentAuthor.split(' ')[0]}...`}
-                    className="flex-1 text-xs bg-transparent outline-none placeholder-gray-400"
+                    placeholder={`Add a comment as ${commentAuthor.split(' ')[0]}...`}
+                    className="flex-1 text-sm bg-transparent outline-none placeholder-gray-400"
                     onClick={(e) => e.stopPropagation()}
                   />
                   <button
@@ -963,14 +968,14 @@ export default function VenueRequirementsDashboard() {
                     }}
                     disabled={!newComment.trim() || submittingComment}
                     className={`
-                      p-1 rounded transition-all
+                      p-2 rounded-lg transition-all
                       ${newComment.trim()
-                        ? 'bg-teal-600 text-white hover:bg-teal-700'
+                        ? 'bg-teal-600 text-white hover:bg-teal-700 shadow-sm'
                         : 'bg-gray-100 text-gray-300 cursor-not-allowed'
                       }
                     `}
                   >
-                    <Send className="h-3 w-3" />
+                    <Send className="h-4 w-4" />
                   </button>
                 </div>
               </div>

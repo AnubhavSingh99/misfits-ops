@@ -259,49 +259,49 @@ function CompactRequirementTile({
 
   return (
     <div
-      className={`relative rounded-lg border bg-white overflow-hidden transition-all duration-150 hover:shadow-md ${currentStatus.border}`}
-      style={{ borderLeftWidth: '3px', borderLeftColor: accentColor }}
+      className={`relative rounded-xl border bg-white overflow-hidden transition-all duration-150 hover:shadow-lg ${currentStatus.border}`}
+      style={{ borderLeftWidth: '4px', borderLeftColor: accentColor }}
     >
       {/* Main Row */}
       <div className="relative">
-        {/* Grid Layout */}
-        <div className="relative grid grid-cols-[auto_1fr_auto_auto_auto_auto_auto_auto] items-center gap-2 px-3 py-2.5">
+        {/* Grid Layout - More spacious */}
+        <div className="relative grid grid-cols-[auto_1fr_auto_auto_auto_auto_auto_auto] items-center gap-4 px-5 py-4">
           {/* Col 1: Leaders Required Badge */}
-          <div className="flex items-center gap-1.5 w-[50px]">
-            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700 text-[10px] font-bold">
-              <Users className="h-3 w-3" />
+          <div className="flex items-center gap-2 w-[56px]">
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-indigo-50 text-indigo-700 text-xs font-bold border border-indigo-100">
+              <Users className="h-3.5 w-3.5" />
               {leadersRequired}
             </span>
           </div>
 
           {/* Col 2: Name + Description + Effort Badges */}
           <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <h4 className="font-semibold text-gray-900 text-xs truncate">{requirement.name}</h4>
+            <div className="flex items-center gap-3">
+              <h4 className="font-semibold text-gray-900 text-sm truncate">{requirement.name}</h4>
               {requirement.club_name && (
-                <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-medium bg-orange-100 text-orange-700 whitespace-nowrap max-w-[100px]">
-                  <Home className="h-2.5 w-2.5 flex-shrink-0" />
+                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium bg-amber-50 text-amber-700 border border-amber-100 whitespace-nowrap max-w-[140px]">
+                  <Home className="h-3 w-3 flex-shrink-0" />
                   <span className="truncate">{requirement.club_name}</span>
                 </span>
               )}
             </div>
             {/* Effort Badges Row */}
-            <div className="flex items-center gap-1.5 mt-1 flex-nowrap overflow-hidden">
+            <div className="flex items-center gap-2 mt-2 flex-nowrap overflow-hidden">
               {requirement.growth_team_effort && (
-                <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-medium bg-violet-100 text-violet-700 whitespace-nowrap">
-                  <Zap className="h-2.5 w-2.5" />
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-semibold bg-violet-50 text-violet-700 border border-violet-100 whitespace-nowrap">
+                  <Zap className="h-3 w-3" />
                   Growth
                 </span>
               )}
               {requirement.platform_team_effort && (
-                <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-medium bg-sky-100 text-sky-700 whitespace-nowrap">
-                  <Settings className="h-2.5 w-2.5" />
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-semibold bg-sky-50 text-sky-700 border border-sky-100 whitespace-nowrap">
+                  <Settings className="h-3 w-3" />
                   Platform
                 </span>
               )}
               {requirement.existing_leader_effort && (
-                <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-medium bg-emerald-100 text-emerald-700 whitespace-nowrap">
-                  <UserPlus className="h-2.5 w-2.5" />
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-100 whitespace-nowrap">
+                  <UserPlus className="h-3 w-3" />
                   Existing
                 </span>
               )}
@@ -311,22 +311,22 @@ function CompactRequirementTile({
                     e.stopPropagation();
                     setTasksExpanded(!tasksExpanded);
                   }}
-                  className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-medium whitespace-nowrap transition-colors ${
+                  className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-semibold whitespace-nowrap transition-colors border ${
                     tasksExpanded
-                      ? 'bg-slate-200 text-slate-700'
-                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                      ? 'bg-slate-100 text-slate-700 border-slate-200'
+                      : 'bg-slate-50 text-slate-600 border-slate-100 hover:bg-slate-100'
                   }`}
                 >
-                  <ListTodo className="h-2.5 w-2.5" />
+                  <ListTodo className="h-3 w-3" />
                   {linkedTasks.length} task{linkedTasks.length !== 1 ? 's' : ''}
-                  <ChevronRight className={`h-2.5 w-2.5 transition-transform ${tasksExpanded ? 'rotate-90' : ''}`} />
+                  <ChevronRight className={`h-3 w-3 transition-transform ${tasksExpanded ? 'rotate-90' : ''}`} />
                 </button>
               )}
             </div>
           </div>
 
           {/* Col 3: Status Dropdown */}
-          <div className="w-[100px]">
+          <div className="w-[120px]">
             <button
               ref={statusButtonRef}
               onClick={(e) => {
@@ -334,69 +334,69 @@ function CompactRequirementTile({
                 e.preventDefault();
                 if (canChangeStatus && onStatusChange) setStatusDropdownOpen(!statusDropdownOpen);
               }}
-              className={`w-full flex items-center justify-between gap-1 px-2 py-1.5 rounded text-[10px] font-semibold transition-all border ${currentStatus.bg} ${currentStatus.text} ${currentStatus.border} ${canChangeStatus && onStatusChange ? 'cursor-pointer hover:shadow-sm' : 'cursor-default'}`}
+              className={`w-full flex items-center justify-between gap-2 px-3 py-2 rounded-lg text-xs font-semibold transition-all border ${currentStatus.bg} ${currentStatus.text} ${currentStatus.border} ${canChangeStatus && onStatusChange ? 'cursor-pointer hover:shadow-sm' : 'cursor-default'}`}
             >
-              <span className="flex items-center gap-1.5">
-                <span className={`w-2 h-2 rounded-full ${currentStatus.dot} ${requirement.status === 'in_progress' ? 'animate-pulse' : ''}`} />
+              <span className="flex items-center gap-2">
+                <span className={`w-2.5 h-2.5 rounded-full ${currentStatus.dot} ${requirement.status === 'in_progress' ? 'animate-pulse' : ''}`} />
                 <span className="truncate">{currentStatus.label}</span>
               </span>
-              {canChangeStatus && onStatusChange && <ChevronDown className={`h-3 w-3 transition-transform ${statusDropdownOpen ? 'rotate-180' : ''}`} />}
+              {canChangeStatus && onStatusChange && <ChevronDown className={`h-3.5 w-3.5 transition-transform ${statusDropdownOpen ? 'rotate-180' : ''}`} />}
             </button>
           </div>
 
           {/* Col 4: Comments Button */}
-          <div className="w-6 flex justify-center">
+          <div className="w-9 flex justify-center">
             <button
               onClick={(e) => {
                 e.stopPropagation();
                 setCommentsExpanded(!commentsExpanded);
               }}
-              className={`p-1 rounded flex items-center gap-0.5 transition-colors ${
+              className={`p-2 rounded-lg flex items-center gap-1 transition-colors ${
                 commentsExpanded
                   ? 'bg-blue-100 text-blue-600'
                   : 'text-gray-400 hover:text-blue-600 hover:bg-blue-50'
               }`}
               title="Comments"
             >
-              <MessageSquare className="h-3.5 w-3.5" />
+              <MessageSquare className="h-4 w-4" />
               {commentsCount > 0 && (
-                <span className="text-[8px] font-bold">{commentsCount}</span>
+                <span className="text-[10px] font-bold">{commentsCount}</span>
               )}
             </button>
           </div>
 
           {/* Col 5: Create Task Button */}
-          <div className="w-6 flex justify-center">
+          <div className="w-9 flex justify-center">
             {onCreateTask && (
               <button
                 onClick={(e) => {
                   e.stopPropagation();
                   onCreateTask(requirement);
                 }}
-                className="p-1 rounded text-gray-400 hover:text-green-600 hover:bg-green-50 transition-colors"
+                className="p-2 rounded-lg text-gray-400 hover:text-green-600 hover:bg-green-50 transition-colors"
                 title="Create Task for this Requirement"
               >
-                <Plus className="h-3.5 w-3.5" />
+                <Plus className="h-4 w-4" />
               </button>
             )}
           </div>
 
           {/* Col 6: Edit Button */}
-          <div className="w-6 flex justify-center">
+          <div className="w-9 flex justify-center">
             <button
               onClick={(e) => {
                 e.stopPropagation();
                 window.open(`/leader-requirements?edit=${requirement.id}`, '_blank');
               }}
-              className="p-1 rounded text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors"
+              className="p-2 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors"
               title="Edit Requirement"
             >
-              <Pencil className="h-3.5 w-3.5" />
+              <Pencil className="h-4 w-4" />
             </button>
           </div>
 
           {/* Col 7: Delete Button */}
-          <div className="w-6 flex justify-center">
+          <div className="w-9 flex justify-center">
             <button
               onClick={async (e) => {
                 e.stopPropagation();
@@ -413,10 +413,10 @@ function CompactRequirementTile({
                   alert('Failed to delete');
                 }
               }}
-              className="p-1 rounded text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+              className="p-2 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors"
               title="Delete Requirement"
             >
-              <Trash2 className="h-3.5 w-3.5" />
+              <Trash2 className="h-4 w-4" />
             </button>
           </div>
 
@@ -491,42 +491,40 @@ function CompactRequirementTile({
 
       {/* Comments Expansion */}
       {commentsExpanded && (
-        <div className="border-t border-gray-100 bg-blue-50/30 px-3 py-2">
+        <div className="border-t border-gray-100 bg-gradient-to-r from-blue-50/40 to-indigo-50/30 px-5 py-4">
           {/* Add Comment Input */}
-          <div className="flex items-center gap-2 mb-2">
+          <div className="flex items-center gap-3 mb-3">
             {/* Author Selector */}
-            <div className="relative">
-              <button
-                ref={authorButtonRef}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setAuthorDropdownOpen(!authorDropdownOpen);
-                }}
-                className="w-5 h-5 rounded-full bg-blue-100 flex items-center justify-center text-[8px] font-bold text-blue-600 flex-shrink-0 hover:ring-2 hover:ring-blue-200 transition-all"
-                title={`Posting as: ${commentAuthor}`}
-              >
-                {commentAuthor.split(' ').map(n => n?.[0] || '').join('').slice(0, 2).toUpperCase() || 'U'}
-              </button>
-            </div>
+            <button
+              ref={authorButtonRef}
+              onClick={(e) => {
+                e.stopPropagation();
+                setAuthorDropdownOpen(!authorDropdownOpen);
+              }}
+              className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-400 to-indigo-500 flex items-center justify-center text-[10px] font-bold text-white flex-shrink-0 hover:shadow-md hover:scale-105 transition-all ring-2 ring-white"
+              title={`Posting as: ${commentAuthor}`}
+            >
+              {commentAuthor.split(' ').map(n => n?.[0] || '').join('').slice(0, 2).toUpperCase() || 'U'}
+            </button>
 
             {/* Author Dropdown Portal */}
             {authorDropdownOpen && createPortal(
               <div
                 id={`author-dropdown-tooltip-${requirement.id}`}
-                className="fixed bg-white rounded-lg shadow-xl border border-gray-200 py-1 min-w-[140px] max-h-[160px] overflow-y-auto animate-in fade-in slide-in-from-top-2 duration-150"
+                className="fixed bg-white rounded-xl shadow-xl border border-gray-200 py-2 min-w-[180px] max-h-[200px] overflow-y-auto animate-in fade-in slide-in-from-top-2 duration-150"
                 style={{
                   top: authorDropdownPosition.top,
                   left: authorDropdownPosition.left,
                   zIndex: 999999
                 }}
               >
-                <div className="px-2 py-0.5 text-[8px] text-gray-400 uppercase tracking-wide border-b border-gray-100 mb-1">
+                <div className="px-3 py-1 text-[10px] text-gray-400 uppercase tracking-wide border-b border-gray-100 mb-1 font-medium">
                   Post as
                 </div>
                 {!assigneesFetched ? (
-                  <div className="px-2 py-1.5 text-[10px] text-gray-400">Loading...</div>
+                  <div className="px-3 py-2 text-xs text-gray-400">Loading...</div>
                 ) : assignees.length === 0 ? (
-                  <div className="px-2 py-1.5 text-[10px] text-gray-400">No members</div>
+                  <div className="px-3 py-2 text-xs text-gray-400">No members</div>
                 ) : (
                   assignees.map((assignee) => (
                     <button
@@ -537,17 +535,17 @@ function CompactRequirementTile({
                         setAuthorDropdownOpen(false);
                       }}
                       className={`
-                        w-full flex items-center gap-1.5 px-2 py-1 text-[10px] text-left
+                        w-full flex items-center gap-2 px-3 py-2 text-xs text-left
                         hover:bg-gray-50 transition-colors
                         ${commentAuthor === assignee.name ? 'bg-blue-50 text-blue-700' : 'text-gray-700'}
                       `}
                     >
-                      <div className="w-4 h-4 rounded-full bg-gray-200 flex items-center justify-center text-[7px] font-bold text-gray-600">
+                      <div className="w-6 h-6 rounded-full bg-gray-200 flex items-center justify-center text-[9px] font-bold text-gray-600">
                         {assignee.name.split(' ').map(n => n?.[0] || '').join('').slice(0, 2).toUpperCase()}
                       </div>
                       <span className="flex-1 truncate">{assignee.name}</span>
                       {commentAuthor === assignee.name && (
-                        <Check className="h-2.5 w-2.5 text-blue-600" />
+                        <Check className="h-3.5 w-3.5 text-blue-600" />
                       )}
                     </button>
                   ))
@@ -556,14 +554,14 @@ function CompactRequirementTile({
               document.body
             )}
 
-            <div className="flex-1 flex items-center gap-1 bg-white rounded border border-gray-200 px-1.5 py-1 focus-within:border-blue-400 transition-all">
+            <div className="flex-1 flex items-center gap-2 bg-white rounded-xl border border-gray-200 px-4 py-2.5 focus-within:border-blue-400 focus-within:ring-2 focus-within:ring-blue-100 transition-all shadow-sm">
               <input
                 type="text"
                 value={newComment}
                 onChange={(e) => setNewComment(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleAddComment()}
-                placeholder={`Comment as ${commentAuthor.split(' ')[0]}...`}
-                className="flex-1 text-[10px] bg-transparent outline-none placeholder-gray-400"
+                placeholder={`Add a comment as ${commentAuthor.split(' ')[0]}...`}
+                className="flex-1 text-sm bg-transparent outline-none placeholder-gray-400"
                 onClick={(e) => e.stopPropagation()}
               />
               <button
@@ -573,14 +571,14 @@ function CompactRequirementTile({
                 }}
                 disabled={!newComment.trim() || submittingComment}
                 className={`
-                  p-0.5 rounded transition-all
+                  p-2 rounded-lg transition-all
                   ${newComment.trim()
-                    ? 'bg-blue-600 text-white hover:bg-blue-700'
+                    ? 'bg-blue-600 text-white hover:bg-blue-700 shadow-sm'
                     : 'bg-gray-100 text-gray-300 cursor-not-allowed'
                   }
                 `}
               >
-                <Send className="h-2.5 w-2.5" />
+                <Send className="h-4 w-4" />
               </button>
             </div>
             <button
@@ -588,36 +586,37 @@ function CompactRequirementTile({
                 e.stopPropagation();
                 setCommentsExpanded(false);
               }}
-              className="p-0.5 rounded hover:bg-gray-200 text-gray-400 hover:text-gray-600 transition-colors"
+              className="p-2 rounded-lg hover:bg-white/80 text-gray-400 hover:text-gray-600 transition-colors"
             >
-              <X className="h-3 w-3" />
+              <X className="h-4 w-4" />
             </button>
           </div>
 
           {/* Comments List */}
           {loadingComments ? (
-            <div className="flex items-center justify-center py-2">
-              <Loader2 className="h-3 w-3 animate-spin text-blue-400" />
-              <span className="ml-1.5 text-[9px] text-gray-400">Loading...</span>
+            <div className="flex items-center justify-center py-4">
+              <Loader2 className="h-4 w-4 animate-spin text-blue-400" />
+              <span className="ml-2 text-xs text-gray-400">Loading comments...</span>
             </div>
           ) : comments.length === 0 ? (
-            <div className="text-[9px] text-gray-400 py-1">No comments yet</div>
+            <div className="text-xs text-gray-400 py-3 text-center">No comments yet. Be the first to add one!</div>
           ) : (
-            <div className="space-y-1 max-h-[100px] overflow-y-auto">
+            <div className="space-y-2 max-h-[120px] overflow-y-auto">
               {comments.map((comment, idx) => (
                 <div
                   key={comment.id}
-                  className={`flex gap-1.5 p-1.5 rounded ${idx === 0 ? 'bg-blue-50' : 'bg-white'}`}
+                  className={`flex gap-3 px-4 py-3 rounded-xl transition-colors ${idx === 0 ? 'bg-blue-50/80 border border-blue-100/50' : 'bg-white/80 hover:bg-white'}`}
                 >
-                  <div className="w-4 h-4 rounded-full bg-gray-200 flex items-center justify-center text-[7px] font-bold text-gray-600 flex-shrink-0">
+                  <div className="w-7 h-7 rounded-full bg-gradient-to-br from-gray-200 to-gray-300 flex items-center justify-center text-[9px] font-bold text-gray-600 flex-shrink-0 ring-2 ring-white">
                     {(comment.author_name || 'U').split(' ').map(n => n?.[0] || '').join('').slice(0, 2).toUpperCase()}
                   </div>
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-1">
-                      <span className="text-[9px] font-semibold text-gray-700">{comment.author_name || 'User'}</span>
-                      <span className="text-[8px] text-gray-400">{formatCommentTime(comment.created_at)}</span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-semibold text-gray-800">{comment.author_name || 'User'}</span>
+                      <span className="text-[10px] text-gray-400">·</span>
+                      <span className="text-[10px] text-gray-400">{formatCommentTime(comment.created_at)}</span>
                     </div>
-                    <p className="text-[9px] text-gray-600">{comment.comment_text}</p>
+                    <p className="text-sm text-gray-600 mt-1 leading-relaxed">{comment.comment_text}</p>
                   </div>
                 </div>
               ))}
@@ -862,10 +861,10 @@ export function LeaderRequirementsTooltip({
   const getTooltipStyle = () => {
     if (!triggerRect) return {};
 
-    const tooltipWidth = 600;
-    const tooltipMaxHeight = 400;
-    const gap = 8;
-    const viewportPadding = 16;
+    const tooltipWidth = 720;
+    const tooltipMaxHeight = 420;
+    const gap = 12;
+    const viewportPadding = 20;
 
     // Center horizontally on trigger, but keep within viewport
     let left = triggerRect.left + triggerRect.width / 2 - tooltipWidth / 2;
@@ -895,10 +894,10 @@ export function LeaderRequirementsTooltip({
 
   // Calculate arrow position
   const getArrowLeft = () => {
-    if (!triggerRect) return 20;
+    if (!triggerRect) return 24;
     const tooltipLeft = tooltipStyle.left as number || 0;
     const triggerCenter = triggerRect.left + triggerRect.width / 2;
-    return Math.max(20, Math.min(triggerCenter - tooltipLeft, 580));
+    return Math.max(24, Math.min(triggerCenter - tooltipLeft, 696));
   };
 
   // Summary stats
@@ -934,17 +933,19 @@ export function LeaderRequirementsTooltip({
           onMouseEnter={handleTooltipEnter}
           onMouseLeave={handleTooltipLeave}
         >
-          <div className="bg-white rounded-xl shadow-2xl border border-gray-200 animate-in fade-in zoom-in-95 duration-150 flex flex-col overflow-hidden" style={{ maxHeight: 'inherit' }}>
+          <div className="bg-white rounded-2xl shadow-2xl border border-gray-100 animate-in fade-in zoom-in-95 duration-150 flex flex-col overflow-hidden" style={{ maxHeight: 'inherit' }}>
             {/* Header */}
-            <div className="px-3 py-2 bg-gradient-to-r from-indigo-50 to-violet-50 border-b border-indigo-100 flex-shrink-0">
+            <div className="px-5 py-4 bg-gradient-to-r from-indigo-50/80 via-white to-violet-50/60 border-b border-indigo-100/60 flex-shrink-0">
               <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <User className="h-4 w-4 text-indigo-600" />
-                  <span className="text-xs font-bold text-gray-800">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-indigo-100 rounded-xl">
+                    <User className="h-5 w-5 text-indigo-600" />
+                  </div>
+                  <span className="text-sm font-bold text-gray-800">
                     Leader Requirements ({leadersRequiredTotal})
                   </span>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-3">
                   {onCreateTask && (
                     <button
                       onClick={(e) => {
@@ -952,62 +953,62 @@ export function LeaderRequirementsTooltip({
                         setIsOpen(false);
                         onCreateTask(node);
                       }}
-                      className="inline-flex items-center gap-1 px-2 py-1 text-[10px] font-semibold text-green-700 bg-green-100 hover:bg-green-200 rounded-md transition-colors"
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-green-700 bg-green-100 hover:bg-green-200 rounded-lg transition-colors border border-green-200"
                     >
-                      <Plus className="h-3 w-3" />
+                      <Plus className="h-3.5 w-3.5" />
                       Create Task
                     </button>
                   )}
-                  <span className="text-[10px] font-medium text-gray-500 bg-white px-2 py-0.5 rounded-full border border-gray-200 max-w-[150px] truncate">
+                  <span className="text-xs font-medium text-gray-600 bg-white px-3 py-1.5 rounded-lg border border-gray-200 max-w-[180px] truncate shadow-sm">
                     {node.name}
                   </span>
                 </div>
               </div>
               {/* Summary Stats */}
-              <div className="flex items-center gap-3 mt-2">
+              <div className="flex items-center gap-4 mt-3">
                 {summary.not_picked > 0 && (
-                  <span className="inline-flex items-center gap-1 text-[10px] font-medium text-gray-600">
-                    <span className="w-2 h-2 rounded-full bg-gray-400" />
+                  <span className="inline-flex items-center gap-1.5 text-xs font-medium text-gray-600">
+                    <span className="w-2.5 h-2.5 rounded-full bg-gray-400" />
                     {summary.not_picked} not picked
                   </span>
                 )}
                 {summary.deprioritised > 0 && (
-                  <span className="inline-flex items-center gap-1 text-[10px] font-medium text-orange-600">
-                    <span className="w-2 h-2 rounded-full bg-orange-500" />
+                  <span className="inline-flex items-center gap-1.5 text-xs font-medium text-orange-600">
+                    <span className="w-2.5 h-2.5 rounded-full bg-orange-500" />
                     {summary.deprioritised} deprioritised
                   </span>
                 )}
                 {summary.in_progress > 0 && (
-                  <span className="inline-flex items-center gap-1 text-[10px] font-medium text-blue-600">
-                    <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
+                  <span className="inline-flex items-center gap-1.5 text-xs font-medium text-blue-600">
+                    <span className="w-2.5 h-2.5 rounded-full bg-blue-500 animate-pulse" />
                     {summary.in_progress} in progress
                   </span>
                 )}
                 {summary.done > 0 && (
-                  <span className="inline-flex items-center gap-1 text-[10px] font-medium text-emerald-600">
-                    <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                  <span className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-600">
+                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
                     {summary.done} done
                   </span>
                 )}
               </div>
               {/* Effort Type Summary - only show when requirements are loaded */}
               {requirements.length > 0 && (effortSummary.growth.total > 0 || effortSummary.platform.total > 0 || effortSummary.existing.total > 0) && (
-                <div className="flex flex-wrap items-center gap-2 mt-2 pt-2 border-t border-indigo-100/50">
+                <div className="flex flex-wrap items-center gap-3 mt-3 pt-3 border-t border-indigo-100/50">
                   {effortSummary.growth.total > 0 && (
-                    <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-violet-100 text-violet-700 text-[9px] font-semibold">
-                      <span className="w-1.5 h-1.5 rounded-full bg-violet-500" />
+                    <span className="inline-flex items-center gap-2 px-3 py-1 rounded-lg bg-violet-50 text-violet-700 text-xs font-semibold border border-violet-100">
+                      <span className="w-2 h-2 rounded-full bg-violet-500" />
                       Growth: {effortSummary.growth.done}/{effortSummary.growth.total}
                     </span>
                   )}
                   {effortSummary.platform.total > 0 && (
-                    <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-cyan-100 text-cyan-700 text-[9px] font-semibold">
-                      <span className="w-1.5 h-1.5 rounded-full bg-cyan-500" />
+                    <span className="inline-flex items-center gap-2 px-3 py-1 rounded-lg bg-cyan-50 text-cyan-700 text-xs font-semibold border border-cyan-100">
+                      <span className="w-2 h-2 rounded-full bg-cyan-500" />
                       Platform: {effortSummary.platform.done}/{effortSummary.platform.total}
                     </span>
                   )}
                   {effortSummary.existing.total > 0 && (
-                    <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 text-[9px] font-semibold">
-                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                    <span className="inline-flex items-center gap-2 px-3 py-1 rounded-lg bg-emerald-50 text-emerald-700 text-xs font-semibold border border-emerald-100">
+                      <span className="w-2 h-2 rounded-full bg-emerald-500" />
                       Existing: {effortSummary.existing.done}/{effortSummary.existing.total}
                     </span>
                   )}
@@ -1017,7 +1018,7 @@ export function LeaderRequirementsTooltip({
 
             {/* Content - scrollable area */}
             <div
-              className="p-2 overflow-y-auto flex-1 min-h-0 space-y-1.5"
+              className="p-4 overflow-y-auto flex-1 min-h-0 space-y-3"
               onScroll={(e) => e.stopPropagation()}
             >
               {loading ? (
