@@ -588,6 +588,23 @@ export default function VenueRequirementsDashboard() {
     // Comments tooltip position
     const commentsButtonRef = useRef<HTMLButtonElement>(null);
     const [tooltipPosition, setTooltipPosition] = useState({ top: 0, left: 0 });
+    const hoverTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+    // Handle hover to show tooltip
+    const handleMouseEnter = () => {
+      if (hoverTimeoutRef.current) {
+        clearTimeout(hoverTimeoutRef.current);
+        hoverTimeoutRef.current = null;
+      }
+      setCommentsExpanded(true);
+    };
+
+    const handleMouseLeave = () => {
+      hoverTimeoutRef.current = setTimeout(() => {
+        setCommentsExpanded(false);
+        setAuthorDropdownOpen(false);
+      }, 150);
+    };
 
     // Author dropdown state
     const [assignees, setAssignees] = useState<{ id: number; name: string }[]>([]);
@@ -837,6 +854,8 @@ export default function VenueRequirementsDashboard() {
                   e.stopPropagation();
                   setCommentsExpanded(!commentsExpanded);
                 }}
+                onMouseEnter={handleMouseEnter}
+                onMouseLeave={handleMouseLeave}
                 className={`p-1.5 rounded-md flex items-center gap-0.5 transition-colors ${
                   commentsExpanded
                     ? 'bg-blue-100 text-blue-600'
@@ -887,6 +906,8 @@ export default function VenueRequirementsDashboard() {
               zIndex: 9998
             }}
             onClick={(e) => e.stopPropagation()}
+            onMouseEnter={handleMouseEnter}
+            onMouseLeave={handleMouseLeave}
           >
             {/* Header */}
             <div className="flex items-center justify-between px-3 py-2 border-b border-gray-100 bg-gradient-to-r from-slate-50 to-white rounded-t-xl">

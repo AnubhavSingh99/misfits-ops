@@ -12,6 +12,7 @@
 | 6 | Venue Dashboard Comments | ✅ Done |
 | 7 | Leader Tooltip Comments | ✅ Done |
 | 8 | Deploy & Test | ✅ Done |
+| 9 | UI Update: Floating Tooltip | ✅ Done |
 
 ---
 
