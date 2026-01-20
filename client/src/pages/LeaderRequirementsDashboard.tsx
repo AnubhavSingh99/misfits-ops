@@ -2041,13 +2041,19 @@ function CreateRequirementModal({
                 <select
                   value={selectedClubId || ''}
                   onChange={handleClubChange}
-                  disabled={!selectedAreaId}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-sm bg-white disabled:bg-gray-100 disabled:cursor-not-allowed"
+                  disabled={!selectedAreaId || (selectedAreaId && clubs.length === 0)}
+                  className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-sm bg-white disabled:bg-gray-100 disabled:cursor-not-allowed ${selectedAreaId && clubs.length === 0 ? 'border-amber-300 text-amber-600' : 'border-gray-300'}`}
                 >
-                  <option value="">Select Club</option>
-                  {clubs.map(c => (
-                    <option key={c.id} value={c.id}>{c.name}</option>
-                  ))}
+                  {selectedAreaId && clubs.length === 0 ? (
+                    <option value="">No clubs - Create a launch target first</option>
+                  ) : (
+                    <>
+                      <option value="">Select Club</option>
+                      {clubs.map(c => (
+                        <option key={c.id} value={c.id}>{c.name}</option>
+                      ))}
+                    </>
+                  )}
                 </select>
               </div>
             </div>
