@@ -80,6 +80,7 @@ function getMetricHealth(value: number, thresholds: { green: number; yellow: num
  */
 function rollupHealth(children: Array<{
   health_score?: number;
+  health_status?: 'green' | 'yellow' | 'red' | 'gray';
   is_launch?: boolean;
   l4w_avg_meetups_per_week?: number;
 }>): {
@@ -88,7 +89,7 @@ function rollupHealth(children: Array<{
   health_distribution: { green: number; yellow: number; red: number; gray: number };
 } {
   // Filter out launches - they don't contribute to health
-  const clubChildren = children.filter(c => !c.is_launch && c.health_score !== undefined);
+  const clubChildren = children.filter(c => !c.is_launch && c.health_status !== undefined);
 
   if (clubChildren.length === 0) {
     return {
@@ -111,16 +112,20 @@ function rollupHealth(children: Array<{
 
   const avgScore = totalWeight > 0 ? Math.round(totalWeightedScore / totalWeight) : 0;
 
-  // Count distribution
+  // Count distribution using actual health_status from children (not recalculated)
   const distribution = { green: 0, yellow: 0, red: 0, gray: 0 };
   for (const child of clubChildren) {
-    const status = getHealthStatus(child.health_score || 0, true);
+    const status = child.health_status || 'gray';
     distribution[status]++;
   }
 
+  // Determine overall status based on distribution
+  const hasActiveClubs = distribution.green + distribution.yellow + distribution.red > 0;
+  const overallStatus = hasActiveClubs ? getHealthStatus(avgScore, true) : 'gray';
+
   return {
     health_score: avgScore,
-    health_status: getHealthStatus(avgScore, true),
+    health_status: overallStatus,
     health_distribution: distribution
   };
 }
