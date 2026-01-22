@@ -310,10 +310,13 @@ interface CreateRequirementModalProps {
 
 function CreateRequirementModal({ type, context, onClose, onCreate }: CreateRequirementModalProps) {
   // Generate default name from context hierarchy
-  // If club/launch/expansion is selected, use that as the primary name
+  // Format: "Club/Launch/Expansion Name - Area Name"
   const generateDefaultName = () => {
-    // If a club/launch/expansion is selected, use that as the name
+    // If a club/launch/expansion is selected, use "ClubName - AreaName" format
     if (context.club_name) {
+      if (context.area_name) {
+        return `${context.club_name} - ${context.area_name}`;
+      }
       return context.club_name;
     }
 

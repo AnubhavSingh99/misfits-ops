@@ -1852,9 +1852,13 @@ function CreateRequirementModal({
   };
 
   // Generate default name from current selection
+  // Format: "Club/Launch/Expansion Name - Area Name"
   const generateName = () => {
-    // If a club/launch/expansion is selected, use that as the primary name
+    // If a club/launch/expansion is selected, use "ClubName - AreaName" format
     if (selectedClubName) {
+      if (selectedAreaName) {
+        return `${selectedClubName} - ${selectedAreaName}`;
+      }
       return selectedClubName;
     }
 
