@@ -224,8 +224,8 @@ export default function VenueRequirementsDashboard() {
   });
 
   // Hierarchy level ordering (drag-and-drop)
-  const [hierarchyLevels, setHierarchyLevels] = useState<HierarchyLevel[]>(['activity', 'city', 'area']);
-  const [enabledLevels, setEnabledLevels] = useState<Set<HierarchyLevel>>(new Set(['activity', 'city', 'area']));
+  const [hierarchyLevels, setHierarchyLevels] = useState<HierarchyLevel[]>(['city', 'activity', 'area']);
+  const [enabledLevels, setEnabledLevels] = useState<Set<HierarchyLevel>>(new Set(['city', 'activity']));
   const [draggingLevel, setDraggingLevel] = useState<HierarchyLevel | null>(null);
 
   // Expanded state
