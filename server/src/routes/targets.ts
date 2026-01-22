@@ -101,15 +101,16 @@ function rollupHealth(children: Array<{
     };
   }
 
-  // Separate club nodes (have health_status) from roll-up nodes (have health_distribution)
-  const clubNodes = validChildren.filter(c => c.type === 'club' && c.health_status !== undefined);
-  const rollupNodes = validChildren.filter(c => c.type !== 'club' && c.health_distribution !== undefined);
+  // Separate leaf nodes (clubs/launches with health_status) from roll-up nodes (with health_distribution)
+  // Don't check type - just check what data they have
+  const leafNodes = validChildren.filter(c => c.health_status !== undefined && !c.health_distribution);
+  const rollupNodes = validChildren.filter(c => c.health_distribution !== undefined);
 
-  // Calculate weighted average health score from clubs only
+  // Calculate weighted average health score from leaf nodes only
   let totalWeightedScore = 0;
   let totalWeight = 0;
 
-  for (const child of clubNodes) {
+  for (const child of leafNodes) {
     const weight = Math.max(0.5, child.l4w_avg_meetups_per_week || 0.5);
     totalWeightedScore += (child.health_score || 0) * weight;
     totalWeight += weight;
@@ -118,12 +119,12 @@ function rollupHealth(children: Array<{
   const avgScore = totalWeight > 0 ? Math.round(totalWeightedScore / totalWeight) : 0;
 
   // Aggregate distribution:
-  // 1. From club nodes: use their health_status directly
+  // 1. From leaf nodes (clubs): use their health_status directly
   // 2. From roll-up nodes: sum their health_distribution
   const distribution = { green: 0, yellow: 0, red: 0, gray: 0 };
 
-  // Add from clubs
-  for (const child of clubNodes) {
+  // Add from leaf nodes (clubs)
+  for (const child of leafNodes) {
     const status = child.health_status || 'gray';
     distribution[status]++;
   }
