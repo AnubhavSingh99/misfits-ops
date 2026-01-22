@@ -3553,6 +3553,9 @@ export default function ScalingPlannerV2() {
       ? node.name  // Launch name is the planned club name
       : (node.club_name || (node.type === 'club' ? node.name : undefined))
 
+    // Check if this is an expansion target
+    const isExpansion = node.is_expansion === true
+
     return {
       task_scope: node.type as 'activity' | 'city' | 'area' | 'club' | 'launch',
       // Use parent context for IDs and names, fall back to node properties
@@ -3566,6 +3569,9 @@ export default function ScalingPlannerV2() {
       club_name: clubName,
       launch_id: node.launch_id,
       launch_name: isLaunch ? node.name : undefined,
+      // Include target_id for expansion targets
+      target_id: isExpansion ? node.target_id : undefined,
+      is_expansion: isExpansion,
       // Include progress summary for pre-filling stage transition
       progress_summary: node.progress_summary
     }

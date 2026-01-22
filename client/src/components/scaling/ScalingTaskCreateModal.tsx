@@ -976,7 +976,9 @@ export function ScalingTaskCreateModal({
                     area_id: selectedAreaId || context.area_id,
                     area_name: selectedAreaName || context.area_name,
                     club_id: selectedClubId || context.club_id,
-                    club_name: selectedClubName || context.club_name
+                    club_name: selectedClubName || context.club_name,
+                    launch_id: context.launch_id,
+                    target_id: context.target_id
                   }}
                   selectedRequirements={selectedLeaderRequirements}
                   onSelectionsChange={(reqs) => updateLeaderRequirements(reqs as LeaderRequirement[])}
@@ -992,7 +994,9 @@ export function ScalingTaskCreateModal({
                     area_id: selectedAreaId || context.area_id,
                     area_name: selectedAreaName || context.area_name,
                     club_id: selectedClubId || context.club_id,
-                    club_name: selectedClubName || context.club_name
+                    club_name: selectedClubName || context.club_name,
+                    launch_id: context.launch_id,
+                    target_id: context.target_id
                   }}
                   selectedRequirements={selectedVenueRequirements}
                   onSelectionsChange={(reqs) => updateVenueRequirements(reqs as VenueRequirement[])}

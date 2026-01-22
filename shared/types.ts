@@ -680,6 +680,7 @@ export interface HierarchyNode {
   city_count?: number;
   target_count?: number;  // Number of targets for a club
   is_launch?: boolean;  // For new club launches (displayed differently)
+  is_expansion?: boolean;  // For expansion targets (clubs expanding to new areas)
   // IDs for linking
   activity_id?: number;
   city_id?: number;

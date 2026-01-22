@@ -591,7 +591,9 @@ export function ScalingTaskEditModal({
                   area_id: task.area_id,
                   area_name: task.area_name,
                   club_id: task.club_id,
-                  club_name: task.club_name
+                  club_name: task.club_name,
+                  launch_id: task.launch_id,
+                  target_id: task.target_id
                 }}
                 selectedRequirements={selectedLeaderRequirements}
                 onSelectionsChange={(reqs) => updateLeaderRequirements(reqs as LeaderRequirement[])}
@@ -608,7 +610,9 @@ export function ScalingTaskEditModal({
                   area_id: task.area_id,
                   area_name: task.area_name,
                   club_id: task.club_id,
-                  club_name: task.club_name
+                  club_name: task.club_name,
+                  launch_id: task.launch_id,
+                  target_id: task.target_id
                 }}
                 selectedRequirements={selectedVenueRequirements}
                 onSelectionsChange={(reqs) => updateVenueRequirements(reqs as VenueRequirement[])}
