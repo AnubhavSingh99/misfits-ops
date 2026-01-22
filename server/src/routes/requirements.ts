@@ -1221,9 +1221,18 @@ router.get('/clubs-and-launches', async (req: Request, res: Response) => {
 
     launchQuery += ` ORDER BY activity_name LIMIT 20`;
 
-    // Build expansion targets query from local database
-    // Expansion targets are club_dimensional_targets - includes both expansions and new targets
-    // Simplified query: just get all targets for the activity/area without complex exclusion logic
+    // Build expansion targets query
+    // Since activity_id in club_dimensional_targets is often NULL,
+    // we need to filter by club's activity from production
+    let activityClubIds: number[] = [];
+    if (activity_id) {
+      const activityClubsResult = await queryProduction(
+        `SELECT pk FROM club WHERE activity_id = $1 AND status = 'ACTIVE'`,
+        [activity_id]
+      ).catch(() => ({ rows: [] }));
+      activityClubIds = activityClubsResult.rows.map((r: any) => r.pk);
+    }
+
     let expansionQuery = `
       SELECT
         cdt.id as target_id,
@@ -1241,12 +1250,19 @@ router.get('/clubs-and-launches', async (req: Request, res: Response) => {
     const expansionParams: any[] = [];
     let expansionParamIndex = 1;
 
-    // Note: activity_id in club_dimensional_targets is often NULL
-    // The activity comes from the club itself, not the target
-    // So we only filter by area_id which is more reliable
+    // Filter by area
     if (area_id) {
       expansionQuery += ` AND da.production_area_id = $${expansionParamIndex++}`;
       expansionParams.push(area_id);
+    }
+
+    // Filter by club_ids that belong to the selected activity
+    if (activityClubIds.length > 0) {
+      expansionQuery += ` AND cdt.club_id = ANY($${expansionParamIndex++})`;
+      expansionParams.push(activityClubIds);
+    } else if (activity_id) {
+      // Activity selected but no clubs found - return empty
+      expansionQuery += ` AND FALSE`;
     }
 
     expansionQuery += ` ORDER BY cdt.club_name LIMIT 20`;
