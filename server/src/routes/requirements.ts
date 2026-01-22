@@ -981,10 +981,10 @@ router.post('/venues', async (req: Request, res: Response) => {
         activity_id, activity_name,
         city_id, city_name,
         area_id, area_name,
-        club_id, club_name,
+        club_id, club_name, launch_id,
         growth_team_effort, platform_team_effort,
         comments, team, created_by
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
       RETURNING *`,
       [
         data.name,
@@ -997,6 +997,7 @@ router.post('/venues', async (req: Request, res: Response) => {
         data.area_name || null,
         data.club_id || null,
         data.club_name || null,
+        data.launch_id || null,
         data.growth_team_effort || false,
         data.platform_team_effort || false,
         data.comments || null,

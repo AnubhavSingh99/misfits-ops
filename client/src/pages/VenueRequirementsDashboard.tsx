@@ -1731,12 +1731,13 @@ function CreateRequirementModal({
   const [selectedAreaName, setSelectedAreaName] = useState<string | undefined>(context.area_name);
   const [selectedClubId, setSelectedClubId] = useState<number | undefined>(undefined);
   const [selectedClubName, setSelectedClubName] = useState<string | undefined>(undefined);
+  const [selectedLaunchId, setSelectedLaunchId] = useState<number | undefined>(undefined);
 
   // Filter options
   const [activities, setActivities] = useState<FilterOption[]>([]);
   const [cities, setCities] = useState<FilterOption[]>([]);
   const [areas, setAreas] = useState<FilterOption[]>([]);
-  const [clubs, setClubs] = useState<FilterOption[]>([]);
+  const [clubsAndLaunches, setClubsAndLaunches] = useState<Array<{ id: number; name: string; type: 'club' | 'launch' }>>([]);
 
   // Calculate team from selection
   const team = selectedActivityName && selectedCityName
@@ -1809,21 +1810,32 @@ function CreateRequirementModal({
     }
   }, [selectedCityId]);
 
-  // Fetch clubs when area changes
+  // Fetch clubs and launches when area changes
   useEffect(() => {
     if (selectedActivityId && selectedCityId && selectedAreaId) {
-      const fetchClubs = async () => {
+      const fetchClubsAndLaunches = async () => {
         try {
-          const res = await fetch(`${API_BASE}/scaling-tasks/filters/clubs?activity_ids=${selectedActivityId}&city_ids=${selectedCityId}&area_ids=${selectedAreaId}`);
+          const params = new URLSearchParams();
+          params.append('activity_id', String(selectedActivityId));
+          params.append('city_id', String(selectedCityId));
+          params.append('area_id', String(selectedAreaId));
+          const res = await fetch(`${API_BASE}/requirements/clubs-and-launches?${params}`);
           const data = await res.json();
-          if (data.success) setClubs(data.options || []);
+          if (data.success) {
+            // Combine clubs and launches into single list
+            const items = [
+              ...(data.clubs || []).map((c: any) => ({ id: c.id, name: c.name, type: 'club' as const })),
+              ...(data.launches || []).map((l: any) => ({ id: l.id, name: l.name || `Launch: ${l.activity_name}`, type: 'launch' as const }))
+            ];
+            setClubsAndLaunches(items);
+          }
         } catch (err) {
-          console.error('Failed to fetch clubs:', err);
+          console.error('Failed to fetch clubs and launches:', err);
         }
       };
-      fetchClubs();
+      fetchClubsAndLaunches();
     } else {
-      setClubs([]);
+      setClubsAndLaunches([]);
     }
   }, [selectedActivityId, selectedCityId, selectedAreaId]);
 
@@ -1847,6 +1859,7 @@ function CreateRequirementModal({
     setSelectedAreaName(undefined);
     setSelectedClubId(undefined);
     setSelectedClubName(undefined);
+    setSelectedLaunchId(undefined);
   };
 
   const handleCityChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
@@ -1859,6 +1872,7 @@ function CreateRequirementModal({
     setSelectedAreaName(undefined);
     setSelectedClubId(undefined);
     setSelectedClubName(undefined);
+    setSelectedLaunchId(undefined);
   };
 
   const handleAreaChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
@@ -1866,16 +1880,34 @@ function CreateRequirementModal({
     const area = areas.find(a => String(a.id) === e.target.value);
     setSelectedAreaId(id);
     setSelectedAreaName(area?.name);
-    // Reset club selection
+    // Reset club/launch selection
     setSelectedClubId(undefined);
     setSelectedClubName(undefined);
+    setSelectedLaunchId(undefined);
   };
 
-  const handleClubChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const id = e.target.value ? parseInt(e.target.value) : undefined;
-    const club = clubs.find(c => String(c.id) === e.target.value);
-    setSelectedClubId(id);
-    setSelectedClubName(club?.name);
+  const handleClubOrLaunchChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const value = e.target.value;
+    if (!value) {
+      setSelectedClubId(undefined);
+      setSelectedClubName(undefined);
+      setSelectedLaunchId(undefined);
+      return;
+    }
+    // Value format: "club:123" or "launch:456"
+    const [type, idStr] = value.split(':');
+    const id = parseInt(idStr);
+    const item = clubsAndLaunches.find(c => c.type === type && c.id === id);
+
+    if (type === 'club') {
+      setSelectedClubId(id);
+      setSelectedClubName(item?.name);
+      setSelectedLaunchId(undefined);
+    } else {
+      setSelectedLaunchId(id);
+      setSelectedClubId(undefined);
+      setSelectedClubName(item?.name); // Use launch name as club_name for display
+    }
   };
 
   const isValid = name.trim() && selectedActivityId && selectedCityId && selectedAreaId;
@@ -1897,6 +1929,7 @@ function CreateRequirementModal({
       area_name: selectedAreaName,
       club_id: selectedClubId,
       club_name: selectedClubName,
+      launch_id: selectedLaunchId,
       growth_team_effort: growthEffort,
       platform_team_effort: platformEffort,
       team
@@ -1980,21 +2013,32 @@ function CreateRequirementModal({
                 </select>
               </div>
               <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">Club / Launch *</label>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Club / Launch (Optional)</label>
                 <select
-                  value={selectedClubId || ''}
-                  onChange={handleClubChange}
-                  disabled={!selectedAreaId || (selectedAreaId && clubs.length === 0)}
-                  className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-teal-500 text-sm bg-white disabled:bg-gray-100 disabled:cursor-not-allowed ${selectedAreaId && clubs.length === 0 ? 'border-amber-300 text-amber-600' : 'border-gray-300'}`}
+                  value={selectedClubId ? `club:${selectedClubId}` : selectedLaunchId ? `launch:${selectedLaunchId}` : ''}
+                  onChange={handleClubOrLaunchChange}
+                  disabled={!selectedAreaId}
+                  className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-teal-500 text-sm bg-white disabled:bg-gray-100 disabled:cursor-not-allowed ${selectedAreaId && clubsAndLaunches.length === 0 ? 'border-amber-300 text-amber-600' : 'border-gray-300'}`}
                 >
-                  {selectedAreaId && clubs.length === 0 ? (
-                    <option value="">No clubs, add a launch first</option>
+                  {selectedAreaId && clubsAndLaunches.length === 0 ? (
+                    <option value="">No clubs or launches in this area</option>
                   ) : (
                     <>
-                      <option value="">Select Club</option>
-                      {clubs.map(c => (
-                        <option key={c.id} value={c.id}>{c.name}</option>
-                      ))}
+                      <option value="">Select Club or Launch</option>
+                      {clubsAndLaunches.filter(c => c.type === 'club').length > 0 && (
+                        <optgroup label="Clubs">
+                          {clubsAndLaunches.filter(c => c.type === 'club').map(c => (
+                            <option key={`club:${c.id}`} value={`club:${c.id}`}>{c.name}</option>
+                          ))}
+                        </optgroup>
+                      )}
+                      {clubsAndLaunches.filter(c => c.type === 'launch').length > 0 && (
+                        <optgroup label="Launches">
+                          {clubsAndLaunches.filter(c => c.type === 'launch').map(c => (
+                            <option key={`launch:${c.id}`} value={`launch:${c.id}`}>{c.name}</option>
+                          ))}
+                        </optgroup>
+                      )}
                     </>
                   )}
                 </select>
