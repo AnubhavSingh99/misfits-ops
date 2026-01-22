@@ -2091,7 +2091,8 @@ function CreateRequirementModal({
   const generateName = () => {
     // If a club/launch/expansion is selected, use "ClubName - AreaName" format
     if (selectedClubName) {
-      if (selectedAreaName) {
+      // Don't append area name if club name already ends with it
+      if (selectedAreaName && !selectedClubName.endsWith(selectedAreaName)) {
         return `${selectedClubName} - ${selectedAreaName}`;
       }
       return selectedClubName;
