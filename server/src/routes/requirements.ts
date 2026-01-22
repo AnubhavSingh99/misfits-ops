@@ -1292,6 +1292,27 @@ router.get('/clubs-and-launches', async (req: Request, res: Response) => {
     launches = launchResult.rows;
     expansionTargets = expansionResult.rows;
 
+    // Enrich expansion targets with club names from production
+    if (expansionTargets.length > 0) {
+      const clubIdsToEnrich = [...new Set(expansionTargets.map((t: any) => t.club_id).filter(Boolean))];
+      if (clubIdsToEnrich.length > 0) {
+        const clubNamesResult = await queryProduction(
+          `SELECT pk, name FROM club WHERE pk = ANY($1)`,
+          [clubIdsToEnrich]
+        ).catch(() => ({ rows: [] }));
+        const clubNameMap = new Map(clubNamesResult.rows.map((c: any) => [c.pk, c.name]));
+
+        expansionTargets = expansionTargets.map((t: any) => {
+          const clubName = clubNameMap.get(t.club_id) || t.club_name;
+          return {
+            ...t,
+            club_name: clubName,
+            name: clubName ? `${clubName} - ${t.area_name}` : t.name
+          };
+        });
+      }
+    }
+
     res.json({
       success: true,
       clubs,
