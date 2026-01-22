@@ -1294,16 +1294,16 @@ router.get('/clubs-and-launches', async (req: Request, res: Response) => {
 
     // Enrich expansion targets with club names from production
     if (expansionTargets.length > 0) {
-      const clubIdsToEnrich = [...new Set(expansionTargets.map((t: any) => t.club_id).filter(Boolean))];
+      const clubIdsToEnrich = [...new Set(expansionTargets.map((t: any) => parseInt(t.club_id)).filter(Boolean))];
       if (clubIdsToEnrich.length > 0) {
         const clubNamesResult = await queryProduction(
           `SELECT pk, name FROM club WHERE pk = ANY($1)`,
           [clubIdsToEnrich]
         ).catch(() => ({ rows: [] }));
-        const clubNameMap = new Map(clubNamesResult.rows.map((c: any) => [c.pk, c.name]));
+        const clubNameMap = new Map(clubNamesResult.rows.map((c: any) => [parseInt(c.pk), c.name]));
 
         expansionTargets = expansionTargets.map((t: any) => {
-          const clubName = clubNameMap.get(t.club_id) || t.club_name;
+          const clubName = clubNameMap.get(parseInt(t.club_id)) || t.club_name;
           return {
             ...t,
             club_name: clubName,
