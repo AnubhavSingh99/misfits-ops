@@ -467,6 +467,67 @@ export default function VenueRequirementsDashboard() {
     return context;
   };
 
+  // Completed section collapse state
+  const [completedSectionExpanded, setCompletedSectionExpanded] = useState(false);
+
+  // Status categories for splitting the view
+  const ACTIVE_STATUSES: VenueRequirementStatus[] = ['not_picked', 'picked', 'venue_aligned', 'leader_approval'];
+  const COMPLETED_STATUSES: VenueRequirementStatus[] = ['done', 'deprioritised'];
+
+  // Helper function to filter hierarchy by status
+  const filterHierarchyByStatus = useCallback((
+    nodes: HierarchyNode[],
+    statuses: VenueRequirementStatus[]
+  ): HierarchyNode[] => {
+    return nodes.map(node => {
+      const filteredNode = { ...node };
+
+      // Filter children recursively
+      if (node.children) {
+        filteredNode.children = filterHierarchyByStatus(node.children, statuses);
+      }
+
+      // Filter requirements to only matching statuses
+      if (node.requirements) {
+        filteredNode.requirements = node.requirements.filter(
+          req => statuses.includes(req.status)
+        );
+      }
+
+      // Recalculate count
+      if (filteredNode.children) {
+        filteredNode.count = filteredNode.children.reduce((sum, c) => sum + c.count, 0);
+      } else if (filteredNode.requirements) {
+        filteredNode.count = filteredNode.requirements.length;
+      }
+
+      return filteredNode;
+    }).filter(node => node.count > 0); // Remove empty nodes
+  }, []);
+
+  // Filtered hierarchies for Active and Completed sections
+  const activeHierarchy = useMemo(() =>
+    filterHierarchyByStatus(hierarchy, ACTIVE_STATUSES),
+    [hierarchy, filterHierarchyByStatus]
+  );
+
+  const completedHierarchy = useMemo(() =>
+    filterHierarchyByStatus(hierarchy, COMPLETED_STATUSES),
+    [hierarchy, filterHierarchyByStatus]
+  );
+
+  const completedCount = useMemo(() =>
+    (summary?.done || 0) + (summary?.deprioritised || 0),
+    [summary]
+  );
+
+  // Auto-expand completed section when filtering to completed statuses
+  useEffect(() => {
+    if (statusFilter === 'done' || statusFilter === 'deprioritised') {
+      setCompletedSectionExpanded(true);
+    }
+  }, [statusFilter]);
+
   // Status badge component
   const StatusBadge = ({ status, count }: { status: VenueRequirementStatus; count: number }) => {
     if (count === 0) return null;
@@ -547,7 +608,7 @@ export default function VenueRequirementsDashboard() {
           </td>
 
           {/* Amenities (empty for hierarchy rows) */}
-          <td className="py-3 px-4 text-center">
+          <td className="py-3 px-4 text-center max-w-[180px]">
           </td>
 
           {/* Created (empty for hierarchy rows) */}
@@ -886,14 +947,18 @@ export default function VenueRequirementsDashboard() {
           </td>
 
           {/* Amenities */}
-          <td className="py-2.5 px-4 text-center">
+          <td className="py-2.5 px-4 text-center max-w-[180px]">
             {req.amenities_required ? (
-              <span
-                className="text-xs text-gray-600 max-w-[150px] truncate inline-block"
-                title={req.amenities_required}
-              >
-                {req.amenities_required}
-              </span>
+              <div className="group relative inline-block max-w-full">
+                <span className="text-xs text-gray-600 block truncate cursor-help">
+                  {req.amenities_required}
+                </span>
+                {/* Tooltip on hover - positioned below */}
+                <div className="absolute z-[100] invisible group-hover:visible opacity-0 group-hover:opacity-100 transition-opacity duration-150 top-full left-1/2 -translate-x-1/2 mt-1.5 px-3 py-2 bg-white text-gray-700 text-xs rounded-lg shadow-lg border border-gray-200 whitespace-normal min-w-[150px] max-w-[280px]">
+                  <div className="absolute -top-1.5 left-1/2 -translate-x-1/2 w-3 h-3 bg-white border-l border-t border-gray-200 rotate-45"></div>
+                  <span className="relative">{req.amenities_required}</span>
+                </div>
+              </div>
             ) : (
               <span className="text-xs text-gray-400">-</span>
             )}
@@ -1141,7 +1206,7 @@ export default function VenueRequirementsDashboard() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-teal-50/30">
-      <div className="max-w-7xl mx-auto px-6 py-8">
+      <div className="max-w-[1800px] mx-auto px-6 py-8">
         {/* Header */}
         <div className="mb-8">
           <div className="flex items-center justify-between">
@@ -1481,7 +1546,7 @@ export default function VenueRequirementsDashboard() {
           </div>
         </div>
 
-        {/* Hierarchy Table */}
+        {/* Active Requirements Section */}
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
           {loading ? (
             <div className="flex items-center justify-center py-20">
@@ -1492,6 +1557,12 @@ export default function VenueRequirementsDashboard() {
               <MapPin className="h-12 w-12 mb-4 opacity-40" />
               <p className="text-lg font-medium">No venue requirements found</p>
               <p className="text-sm mt-1">Create your first requirement to get started</p>
+            </div>
+          ) : activeHierarchy.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-12 text-gray-400">
+              <CheckCircle className="h-10 w-10 mb-3 opacity-40" />
+              <p className="text-sm font-medium">No active requirements</p>
+              <p className="text-xs mt-1">All requirements are completed or deprioritised</p>
             </div>
           ) : (
             <table className="w-full">
@@ -1525,7 +1596,7 @@ export default function VenueRequirementsDashboard() {
                   <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">
                     Time of Day
                   </th>
-                  <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                  <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider max-w-[180px]">
                     Amenities
                   </th>
                   <th
@@ -1551,13 +1622,96 @@ export default function VenueRequirementsDashboard() {
                 </tr>
               </thead>
               <tbody>
-                {hierarchy.map(node => (
+                {activeHierarchy.map(node => (
                   <HierarchyRow key={node.id} node={node} />
                 ))}
               </tbody>
             </table>
           )}
         </div>
+
+        {/* Completed Requirements Section - Collapsible */}
+        {!loading && completedCount > 0 && (
+          <div className="mt-6 bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+            <button
+              onClick={() => setCompletedSectionExpanded(!completedSectionExpanded)}
+              className="w-full px-4 py-3 flex items-center justify-between bg-gray-50/80 hover:bg-gray-100 transition-colors"
+            >
+              <div className="flex items-center gap-2">
+                <CheckCircle className="h-5 w-5 text-emerald-500" />
+                <span className="font-medium text-gray-700">
+                  Completed & Deprioritised ({completedCount})
+                </span>
+              </div>
+              {completedSectionExpanded ? <ChevronUp size={20} className="text-gray-400" /> : <ChevronDown size={20} className="text-gray-400" />}
+            </button>
+
+            {completedSectionExpanded && completedHierarchy.length > 0 && (
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b border-gray-200 bg-gray-50/50">
+                    <th className="text-left py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                      Hierarchy
+                    </th>
+                    <th
+                      className="text-left py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition-colors"
+                      onClick={() => handleSort('status')}
+                    >
+                      <div className="flex items-center gap-1">
+                        Status
+                        {sortField === 'status' && (
+                          sortDirection === 'asc' ? <ChevronUp size={14} /> : <ChevronDown size={14} />
+                        )}
+                      </div>
+                    </th>
+                    <th
+                      className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition-colors"
+                      onClick={() => handleSort('day_type')}
+                    >
+                      <div className="flex items-center justify-center gap-1">
+                        Day Type
+                        {sortField === 'day_type' && (
+                          sortDirection === 'asc' ? <ChevronUp size={14} /> : <ChevronDown size={14} />
+                        )}
+                      </div>
+                    </th>
+                    <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                      Time of Day
+                    </th>
+                    <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider max-w-[180px]">
+                      Amenities
+                    </th>
+                    <th
+                      className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition-colors"
+                      onClick={() => handleSort('created_at')}
+                    >
+                      <div className="flex items-center justify-center gap-1">
+                        Created
+                        {sortField === 'created_at' && (
+                          sortDirection === 'asc' ? <ChevronUp size={14} /> : <ChevronDown size={14} />
+                        )}
+                      </div>
+                    </th>
+                    <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                      Completed
+                    </th>
+                    <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                      TAT
+                    </th>
+                    <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                      Actions
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {completedHierarchy.map(node => (
+                    <HierarchyRow key={node.id} node={node} />
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Create Requirement Modal */}
