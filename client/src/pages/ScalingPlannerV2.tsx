@@ -40,7 +40,7 @@ import type {
   ScalingTaskSummary,
   LeaderRequirement
 } from '../../shared/types'
-import { SprintViewModal, TaskSummaryCell, ScalingTaskCreateModal, SummaryTiles, HierarchyFilterBar, HierarchyRollupHeader, RevenueStatusPills, DayTypeTags, StageInfoModal, InfoIconButton, buildRolledUpSummaryMap, buildSummaryKey, type HierarchyFilters, type HierarchyLevel, type HealthFilter, MeetupDetailsTooltip, ExpandClubModal, AddChoiceModal, type ExpandClubTargetData, WeekSelector, getWeekBounds, formatWeekLabel, type WeekOption, HealthDot, HealthDistributionBar, HealthInfoModal, type HealthStatus, TaskListTooltip, LeaderRequirementsTooltip } from '../components/scaling'
+import { SprintViewModal, TaskSummaryCell, ScalingTaskCreateModal, SummaryTiles, HierarchyFilterBar, HierarchyRollupHeader, RevenueStatusPills, DayTypeTags, StageInfoModal, InfoIconButton, buildRolledUpSummaryMap, buildSummaryKey, type HierarchyFilters, type HierarchyLevel, type HealthFilter, MeetupDetailsTooltip, ExpandClubModal, AddChoiceModal, type ExpandClubTargetData, WeekSelector, getWeekBounds, formatWeekLabel, type WeekOption, HealthDot, HealthDistributionBar, HealthTrafficIndicators, HealthInfoModal, type HealthStatus, TaskListTooltip, LeaderRequirementsTooltip } from '../components/scaling'
 import { CreateLeaderRequirementModal } from '../components/scaling/CreateLeaderRequirementModal'
 import { MatchedLaunchIndicator } from '../components/scaling/MatchedLaunchIndicator'
 import { LinkToClubModal } from '../components/scaling/LinkToClubModal'
@@ -2370,7 +2370,7 @@ function HierarchyRow({ node, level, expanded, onToggle, onEditTarget, onDeleteT
         </div>
       </td>
 
-      {/* Health column - show single health dot for all levels */}
+      {/* Health column - show traffic indicators for roll-ups, single dot for clubs */}
       {/* For clubs/launches, clicking opens the meetup details tooltip with health section */}
       <td className="py-3 px-3 text-center">
         {isTarget ? (
@@ -2397,8 +2397,11 @@ function HierarchyRow({ node, level, expanded, onToggle, onEditTarget, onDeleteT
               />
             </div>
           </MeetupDetailsTooltip>
+        ) : node.health_distribution ? (
+          // Roll-up level (activity/city/area): show traffic indicators like frozen row
+          <HealthTrafficIndicators distribution={node.health_distribution} />
         ) : node.health_status ? (
-          // Roll-up level: show health dot with tooltip
+          // Fallback: show health dot with tooltip
           <div className="flex justify-center" onClick={(e) => e.stopPropagation()}>
             <HealthDot
               status={node.health_status as HealthStatus}

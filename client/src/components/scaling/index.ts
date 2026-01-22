@@ -15,7 +15,7 @@ export { MeetupDetailsTooltip } from './MeetupDetailsTooltip';
 export { ExpandClubModal, type ExpandClubTargetData } from './ExpandClubModal';
 export { AddChoiceModal } from './AddChoiceModal';
 export { WeekSelector, getWeekBounds, formatWeekLabel, type WeekOption } from './WeekSelector';
-export { HealthDot, HealthDistributionBar, type HealthStatus } from './HealthDot';
+export { HealthDot, HealthDistributionBar, HealthTrafficIndicators, type HealthStatus } from './HealthDot';
 export { HealthInfoModal } from './HealthInfoModal';
 export { TaskListTooltip } from './TaskListTooltip';
 export { LeaderRequirementsTooltip } from './LeaderRequirementsTooltip';
