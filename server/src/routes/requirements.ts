@@ -598,6 +598,30 @@ router.delete('/leaders/:id', async (req: Request, res: Response) => {
 // VENUE REQUIREMENTS CRUD (Same pattern as leaders)
 // =====================================================
 
+// GET /api/requirements/venues/day-types - Get available day types for venue requirements
+router.get('/venues/day-types', async (req: Request, res: Response) => {
+  try {
+    const result = await queryLocal(`
+      SELECT id, day_type, display_order
+      FROM dim_day_types
+      WHERE is_active = true
+      ORDER BY display_order
+    `);
+
+    res.json({
+      success: true,
+      day_types: result.rows.map((row: any) => ({
+        id: row.id,
+        name: row.day_type,
+        display_order: row.display_order
+      }))
+    });
+  } catch (error) {
+    console.error('Error fetching day types:', error);
+    res.status(500).json({ success: false, error: 'Failed to fetch day types' });
+  }
+});
+
 // GET /api/requirements/venues - List venue requirements with filters
 router.get('/venues', async (req: Request, res: Response) => {
   try {
@@ -613,9 +637,11 @@ router.get('/venues', async (req: Request, res: Response) => {
 
     let query = `
       SELECT vr.*,
+        dt.day_type as day_type_name,
         (SELECT COUNT(*) FROM requirement_comments rc
          WHERE rc.requirement_type = 'venue' AND rc.requirement_id = vr.id) as comments_count
       FROM venue_requirements vr
+      LEFT JOIN dim_day_types dt ON vr.day_type_id = dt.id
       WHERE 1=1
     `;
     const params: any[] = [];
@@ -783,9 +809,11 @@ router.get('/venues/hierarchy', async (req: Request, res: Response) => {
 
     const query = `
       SELECT vr.*,
+        dt.day_type as day_type_name,
         (SELECT COUNT(*) FROM requirement_comments rc
          WHERE rc.requirement_type = 'venue' AND rc.requirement_id = vr.id) as comments_count
       FROM venue_requirements vr
+      LEFT JOIN dim_day_types dt ON vr.day_type_id = dt.id
       WHERE ${whereClause.replace(/activity_id/g, 'vr.activity_id').replace(/city_id/g, 'vr.city_id').replace(/area_id/g, 'vr.area_id').replace(/club_name/g, 'vr.club_name').replace(/club_id/g, 'vr.club_id').replace(/team/g, 'vr.team').replace(/status/g, 'vr.status')}
       ORDER BY vr.activity_name, vr.city_name, vr.area_name, vr.name
     `;
@@ -841,7 +869,15 @@ router.get('/venues/hierarchy', async (req: Request, res: Response) => {
             city_id: reqData.city_id,
             area_id: reqData.area_id,
             count: 0,
-            status_counts: { not_picked: 0, deprioritised: 0, in_progress: 0, done: 0 },
+            // Include all venue requirement statuses
+            status_counts: {
+              not_picked: 0,
+              picked: 0,
+              venue_aligned: 0,
+              leader_approval: 0,
+              done: 0,
+              deprioritised: 0
+            },
             growth_effort_count: 0,
             platform_effort_count: 0
           };
@@ -858,7 +894,11 @@ router.get('/venues/hierarchy', async (req: Request, res: Response) => {
         const node = currentMap.get(levelKey);
 
         node.count++;
-        node.status_counts[reqData.status as RequirementStatus]++;
+        // Increment status count (handle all venue statuses)
+        const status = reqData.status as string;
+        if (node.status_counts[status] !== undefined) {
+          node.status_counts[status]++;
+        }
         if (reqData.growth_team_effort) node.growth_effort_count++;
         if (reqData.platform_team_effort) node.platform_effort_count++;
 
@@ -883,9 +923,11 @@ router.get('/venues/hierarchy', async (req: Request, res: Response) => {
     const summary = {
       total: requirements.length,
       not_picked: requirements.filter((r: any) => r.status === 'not_picked').length,
-      deprioritised: requirements.filter((r: any) => r.status === 'deprioritised').length,
-      in_progress: requirements.filter((r: any) => r.status === 'in_progress').length,
-      done: requirements.filter((r: any) => r.status === 'done').length
+      picked: requirements.filter((r: any) => r.status === 'picked').length,
+      venue_aligned: requirements.filter((r: any) => r.status === 'venue_aligned').length,
+      leader_approval: requirements.filter((r: any) => r.status === 'leader_approval').length,
+      done: requirements.filter((r: any) => r.status === 'done').length,
+      deprioritised: requirements.filter((r: any) => r.status === 'deprioritised').length
     };
 
     res.json({ success: true, hierarchy, summary });
@@ -947,7 +989,10 @@ router.get('/venues/:id', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const result = await queryLocal(
-      'SELECT * FROM venue_requirements WHERE id = $1',
+      `SELECT vr.*, dt.day_type as day_type_name
+       FROM venue_requirements vr
+       LEFT JOIN dim_day_types dt ON vr.day_type_id = dt.id
+       WHERE vr.id = $1`,
       [id]
     );
 
@@ -970,6 +1015,30 @@ router.post('/venues', async (req: Request, res: Response) => {
   try {
     const data: CreateRequirementRequest = req.body;
 
+    // Validate required scheduling fields for NEW requirements
+    if (!data.day_type_id) {
+      return res.status(400).json({
+        success: false,
+        error: 'day_type_id is required for new venue requirements'
+      });
+    }
+    if (!data.time_of_day || data.time_of_day.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'time_of_day is required for new venue requirements (select at least one time slot)'
+      });
+    }
+
+    // Validate time_of_day values
+    const validTimeSlots = ['early_morning', 'morning', 'afternoon', 'evening', 'night', 'all_nighter'];
+    const invalidSlots = (data.time_of_day || []).filter(slot => !validTimeSlots.includes(slot));
+    if (invalidSlots.length > 0) {
+      return res.status(400).json({
+        success: false,
+        error: `Invalid time_of_day values: ${invalidSlots.join(', ')}. Valid options: ${validTimeSlots.join(', ')}`
+      });
+    }
+
     let team = data.team;
     if (!team && data.activity_name && data.city_name) {
       team = getTeamForClub(data.activity_name, data.city_name);
@@ -981,10 +1050,11 @@ router.post('/venues', async (req: Request, res: Response) => {
         activity_id, activity_name,
         city_id, city_name,
         area_id, area_name,
-        club_id, club_name, launch_id, target_id,
+        club_id, club_name,
         growth_team_effort, platform_team_effort,
+        day_type_id, time_of_day, amenities_required,
         comments, team, created_by
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
       RETURNING *`,
       [
         data.name,
@@ -997,19 +1067,32 @@ router.post('/venues', async (req: Request, res: Response) => {
         data.area_name || null,
         data.club_id || null,
         data.club_name || null,
-        data.launch_id || null,
-        data.target_id || null,
         data.growth_team_effort || false,
         data.platform_team_effort || false,
+        data.day_type_id,
+        data.time_of_day || null,
+        data.amenities_required || null,
         data.comments || null,
         team || null,
         'system'
       ]
     );
 
+    // Fetch day_type_name for response
+    let day_type_name = null;
+    if (data.day_type_id) {
+      const dayTypeResult = await queryLocal(
+        'SELECT day_type FROM dim_day_types WHERE id = $1',
+        [data.day_type_id]
+      );
+      if (dayTypeResult.rows.length > 0) {
+        day_type_name = dayTypeResult.rows[0].day_type;
+      }
+    }
+
     res.status(201).json({
       success: true,
-      requirement: { ...result.rows[0], type: 'venue' }
+      requirement: { ...result.rows[0], type: 'venue', day_type_name }
     });
   } catch (error) {
     console.error('Error creating venue requirement:', error);
@@ -1057,6 +1140,30 @@ router.put('/venues/:id', async (req: Request, res: Response) => {
       updates.push(`comments = $${paramIndex++}`);
       params.push(data.comments);
     }
+    // New scheduling fields (allow NULL for legacy requirements)
+    if (data.day_type_id !== undefined) {
+      updates.push(`day_type_id = $${paramIndex++}`);
+      params.push(data.day_type_id);
+    }
+    if (data.time_of_day !== undefined) {
+      // Validate time_of_day values if provided
+      if (data.time_of_day && data.time_of_day.length > 0) {
+        const validTimeSlots = ['early_morning', 'morning', 'afternoon', 'evening', 'night', 'all_nighter'];
+        const invalidSlots = data.time_of_day.filter(slot => !validTimeSlots.includes(slot));
+        if (invalidSlots.length > 0) {
+          return res.status(400).json({
+            success: false,
+            error: `Invalid time_of_day values: ${invalidSlots.join(', ')}. Valid options: ${validTimeSlots.join(', ')}`
+          });
+        }
+      }
+      updates.push(`time_of_day = $${paramIndex++}`);
+      params.push(data.time_of_day);
+    }
+    if (data.amenities_required !== undefined) {
+      updates.push(`amenities_required = $${paramIndex++}`);
+      params.push(data.amenities_required);
+    }
 
     updates.push(`updated_at = CURRENT_TIMESTAMP`);
 
@@ -1074,9 +1181,22 @@ router.put('/venues/:id', async (req: Request, res: Response) => {
       return res.status(404).json({ success: false, error: 'Requirement not found' });
     }
 
+    // Fetch day_type_name for response
+    let day_type_name = null;
+    const req_row = result.rows[0];
+    if (req_row.day_type_id) {
+      const dayTypeResult = await queryLocal(
+        'SELECT day_type FROM dim_day_types WHERE id = $1',
+        [req_row.day_type_id]
+      );
+      if (dayTypeResult.rows.length > 0) {
+        day_type_name = dayTypeResult.rows[0].day_type;
+      }
+    }
+
     res.json({
       success: true,
-      requirement: { ...result.rows[0], type: 'venue' }
+      requirement: { ...req_row, type: 'venue', day_type_name }
     });
   } catch (error) {
     console.error('Error updating venue requirement:', error);

@@ -920,7 +920,24 @@ export interface ScalingTaskSummary {
 // LEADER & VENUE REQUIREMENTS
 // =====================================================
 
+// Requirement status for venue requirements (expanded workflow)
+export type VenueRequirementStatus = 'not_picked' | 'picked' | 'venue_aligned' | 'leader_approval' | 'done' | 'deprioritised';
+
+// Requirement status for leader requirements (original workflow)
 export type RequirementStatus = 'not_picked' | 'deprioritised' | 'in_progress' | 'done';
+
+// Time of day options for venue requirements
+export type TimeOfDay = 'early_morning' | 'morning' | 'afternoon' | 'evening' | 'night' | 'all_nighter';
+
+// Time of day options configuration
+export const TIME_OF_DAY_OPTIONS: { value: TimeOfDay; label: string; time: string; icon: string }[] = [
+  { value: 'early_morning', label: 'Early Morning', time: '5-8 AM', icon: '🌅' },
+  { value: 'morning', label: 'Morning', time: '8 AM-12 PM', icon: '☀️' },
+  { value: 'afternoon', label: 'Afternoon', time: '12-4 PM', icon: '🌤️' },
+  { value: 'evening', label: 'Evening', time: '4-8 PM', icon: '🌆' },
+  { value: 'night', label: 'Night', time: '8 PM-12 AM', icon: '🌙' },
+  { value: 'all_nighter', label: 'All-Nighter', time: '12-5 AM', icon: '🌃' }
+];
 
 // Comment for requirements (leader and venue)
 export interface RequirementComment {
@@ -949,8 +966,8 @@ export interface BaseRequirement {
   club_name?: string;
   launch_id?: number;  // For new club launches (alternative to club_id)
 
-  // Status
-  status: RequirementStatus;
+  // Status (can be RequirementStatus for leaders or VenueRequirementStatus for venues)
+  status: RequirementStatus | VenueRequirementStatus;
 
   // Effort attributes
   growth_team_effort: boolean;
@@ -983,6 +1000,13 @@ export interface LeaderRequirement extends BaseRequirement {
 
 export interface VenueRequirement extends BaseRequirement {
   type: 'venue';
+  // Override status to use venue-specific statuses
+  status: VenueRequirementStatus;
+  // Scheduling fields
+  day_type_id?: number;
+  day_type_name?: string;
+  time_of_day?: TimeOfDay[];
+  amenities_required?: string;
 }
 
 // Request types for creating/updating requirements
@@ -1005,10 +1029,14 @@ export interface CreateRequirementRequest {
   leaders_required?: number;  // Default 1
   comments?: string;
   team?: 'blue' | 'green' | 'yellow';
+  // Venue requirement scheduling fields
+  day_type_id?: number;
+  time_of_day?: TimeOfDay[];
+  amenities_required?: string;
 }
 
 export interface UpdateRequirementRequest extends Partial<CreateRequirementRequest> {
-  status?: RequirementStatus;
+  status?: RequirementStatus | VenueRequirementStatus;
 }
 
 // Response types for requirement API
@@ -1041,8 +1069,12 @@ export interface RequirementHierarchyNode {
   status_counts: {
     not_picked: number;
     deprioritised: number;
-    in_progress: number;
+    in_progress: number;  // For leader requirements
     done: number;
+    // Venue-specific statuses (optional for backward compatibility)
+    picked?: number;
+    venue_aligned?: number;
+    leader_approval?: number;
   };
   growth_effort_count: number;
   platform_effort_count: number;

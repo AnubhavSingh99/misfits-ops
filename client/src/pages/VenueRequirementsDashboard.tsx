@@ -13,7 +13,6 @@ import {
   Activity,
   Building2,
   TrendingUp,
-  Settings,
   Home,
   X,
   GripVertical,
@@ -22,9 +21,14 @@ import {
   Edit3,
   Trash2,
   MessageSquare,
-  Send
+  Send,
+  CheckCircle,
+  UserCheck,
+  Calendar,
+  Sun
 } from 'lucide-react';
-import type { VenueRequirement, RequirementStatus, CreateRequirementRequest, RequirementComment } from '../../../shared/types';
+import type { VenueRequirement, VenueRequirementStatus, CreateRequirementRequest, RequirementComment, TimeOfDay } from '../../../shared/types';
+import { TIME_OF_DAY_OPTIONS } from '../../../shared/types';
 import { getTeamForClub, TEAMS, TEAM_KEYS, type TeamKey } from '../../../shared/teamConfig';
 import { MultiSelectDropdown } from '../components/ui/MultiSelectDropdown';
 
@@ -74,7 +78,7 @@ interface HierarchyFilters {
   teams: TeamKey[];
 }
 
-// Status configuration
+// Status configuration for venue requirements (6 statuses)
 const STATUS_CONFIG = {
   not_picked: {
     label: 'Not Picked',
@@ -87,26 +91,37 @@ const STATUS_CONFIG = {
       accent: '#64748b'
     }
   },
-  deprioritised: {
-    label: 'Deprioritised',
-    shortLabel: 'DP',
-    icon: Pause,
+  picked: {
+    label: 'Picked',
+    shortLabel: 'PK',
+    icon: CheckCircle,
     color: {
-      bg: 'bg-amber-100',
-      text: 'text-amber-700',
-      badge: 'bg-amber-50 text-amber-700 border-amber-200',
-      accent: '#d97706'
+      bg: 'bg-blue-100',
+      text: 'text-blue-700',
+      badge: 'bg-blue-50 text-blue-700 border-blue-200',
+      accent: '#2563eb'
     }
   },
-  in_progress: {
-    label: 'In Progress',
-    shortLabel: 'IP',
-    icon: TrendingUp,
+  venue_aligned: {
+    label: 'Venue Aligned',
+    shortLabel: 'VA',
+    icon: MapPin,
     color: {
       bg: 'bg-teal-100',
       text: 'text-teal-700',
       badge: 'bg-teal-50 text-teal-700 border-teal-200',
       accent: '#0d9488'
+    }
+  },
+  leader_approval: {
+    label: 'Leader Approval',
+    shortLabel: 'LA',
+    icon: UserCheck,
+    color: {
+      bg: 'bg-purple-100',
+      text: 'text-purple-700',
+      badge: 'bg-purple-50 text-purple-700 border-purple-200',
+      accent: '#7c3aed'
     }
   },
   done: {
@@ -118,6 +133,17 @@ const STATUS_CONFIG = {
       text: 'text-emerald-700',
       badge: 'bg-emerald-50 text-emerald-700 border-emerald-200',
       accent: '#059669'
+    }
+  },
+  deprioritised: {
+    label: 'Deprioritised',
+    shortLabel: 'DP',
+    icon: Pause,
+    color: {
+      bg: 'bg-amber-100',
+      text: 'text-amber-700',
+      badge: 'bg-amber-50 text-amber-700 border-amber-200',
+      accent: '#d97706'
     }
   }
 } as const;
@@ -140,20 +166,22 @@ interface HierarchyNode {
   city_id?: number;
   area_id?: number;
   count: number;
-  status_counts: Record<RequirementStatus, number>;
+  status_counts: Record<VenueRequirementStatus, number>;
   growth_effort_count: number;
   platform_effort_count: number;
   children?: HierarchyNode[];
   requirements?: VenueRequirement[];
 }
 
-// Summary data
+// Summary data (6 statuses)
 interface Summary {
   total: number;
   not_picked: number;
-  deprioritised: number;
-  in_progress: number;
+  picked: number;
+  venue_aligned: number;
+  leader_approval: number;
   done: number;
+  deprioritised: number;
 }
 
 // Context for creating requirement from hierarchy
@@ -180,7 +208,7 @@ export default function VenueRequirementsDashboard() {
     clubs: [],
     teams: []
   });
-  const [statusFilter, setStatusFilter] = useState<RequirementStatus | null>(null);
+  const [statusFilter, setStatusFilter] = useState<VenueRequirementStatus | null>(null);
 
   // Filter options from API
   const [filterOptions, setFilterOptions] = useState<{
@@ -300,7 +328,7 @@ export default function VenueRequirementsDashboard() {
   };
 
   // Update requirement status
-  const updateRequirementStatus = async (id: number, status: RequirementStatus) => {
+  const updateRequirementStatus = async (id: number, status: VenueRequirementStatus) => {
     try {
       const response = await fetch(`${API_BASE}/requirements/venues/${id}`, {
         method: 'PUT',
@@ -424,9 +452,10 @@ export default function VenueRequirementsDashboard() {
   };
 
   // Status badge component
-  const StatusBadge = ({ status, count }: { status: RequirementStatus; count: number }) => {
+  const StatusBadge = ({ status, count }: { status: VenueRequirementStatus; count: number }) => {
     if (count === 0) return null;
     const config = STATUS_CONFIG[status];
+    if (!config) return null;
     return (
       <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-semibold border ${config.color.badge}`}>
         <span className="opacity-70">{config.shortLabel}</span>
@@ -434,24 +463,6 @@ export default function VenueRequirementsDashboard() {
       </span>
     );
   };
-
-  // Effort badges
-  const EffortBadges = ({ growth, platform }: { growth: number; platform: number }) => (
-    <div className="flex items-center gap-1.5">
-      {growth > 0 && (
-        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-violet-50 text-violet-600 border border-violet-200">
-          <TrendingUp className="h-3 w-3" />
-          {growth}
-        </span>
-      )}
-      {platform > 0 && (
-        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-cyan-50 text-cyan-600 border border-cyan-200">
-          <Settings className="h-3 w-3" />
-          {platform}
-        </span>
-      )}
-    </div>
-  );
 
   // Hierarchy row component
   const HierarchyRow = ({ node, depth = 0, parentContext = {} }: { node: HierarchyNode; depth?: number; parentContext?: CreateContext }) => {
@@ -503,20 +514,20 @@ export default function VenueRequirementsDashboard() {
           <td className="py-3 px-4">
             <div className="flex flex-wrap gap-1">
               <StatusBadge status="not_picked" count={node.status_counts.not_picked} />
-              <StatusBadge status="in_progress" count={node.status_counts.in_progress} />
+              <StatusBadge status="picked" count={node.status_counts.picked} />
+              <StatusBadge status="venue_aligned" count={node.status_counts.venue_aligned} />
+              <StatusBadge status="leader_approval" count={node.status_counts.leader_approval} />
               <StatusBadge status="done" count={node.status_counts.done} />
               <StatusBadge status="deprioritised" count={node.status_counts.deprioritised} />
             </div>
           </td>
 
-          {/* Effort */}
-          <td className="py-3 px-4">
-            <EffortBadges growth={node.growth_effort_count} platform={node.platform_effort_count} />
+          {/* Day Type (empty for hierarchy rows) */}
+          <td className="py-3 px-4 text-center">
           </td>
 
-          {/* Team (empty for hierarchy rows) */}
+          {/* Time of Day (empty for hierarchy rows) */}
           <td className="py-3 px-4 text-center">
-            {/* Team column only shown for requirement rows */}
           </td>
 
           {/* Created (empty for hierarchy rows) */}
@@ -575,11 +586,11 @@ export default function VenueRequirementsDashboard() {
   }: {
     requirement: VenueRequirement;
     depth: number;
-    onStatusChange: (id: number, status: RequirementStatus) => void;
+    onStatusChange: (id: number, status: VenueRequirementStatus) => void;
     onEdit: (req: VenueRequirement) => void;
     onDelete: (req: VenueRequirement) => void;
   }) => {
-    const statusConfig = STATUS_CONFIG[req.status];
+    const statusConfig = STATUS_CONFIG[req.status] || STATUS_CONFIG.not_picked;
 
     // Comments state
     const [commentsExpanded, setCommentsExpanded] = useState(false);
@@ -790,7 +801,7 @@ export default function VenueRequirementsDashboard() {
           <td className="py-2.5 px-4">
             <select
               value={req.status}
-              onChange={(e) => onStatusChange(req.id, e.target.value as RequirementStatus)}
+              onChange={(e) => onStatusChange(req.id, e.target.value as VenueRequirementStatus)}
               onClick={(e) => e.stopPropagation()}
               className={`px-2.5 py-1 text-xs font-medium rounded-md border cursor-pointer
                 ${statusConfig.color.badge} focus:ring-2 focus:ring-teal-500 focus:border-teal-500`}
@@ -801,28 +812,36 @@ export default function VenueRequirementsDashboard() {
             </select>
           </td>
 
-          {/* Effort flags */}
-          <td className="py-2.5 px-4">
-            <div className="flex items-center gap-1.5">
-              {req.growth_team_effort && (
-                <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-violet-50 text-violet-600 border border-violet-200">
-                  Growth
-                </span>
-              )}
-              {req.platform_team_effort && (
-                <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-cyan-50 text-cyan-600 border border-cyan-200">
-                  Platform
-                </span>
-              )}
-            </div>
+          {/* Day Type */}
+          <td className="py-2.5 px-4 text-center">
+            {req.day_type_name ? (
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-indigo-50 text-indigo-600 border border-indigo-200 capitalize">
+                {req.day_type_name}
+              </span>
+            ) : (
+              <span className="text-xs text-gray-400">-</span>
+            )}
           </td>
 
-          {/* Team */}
+          {/* Time of Day */}
           <td className="py-2.5 px-4 text-center">
-            {req.team && (
-              <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase ${TEAM_COLORS[req.team].light} ${TEAM_COLORS[req.team].text}`}>
-                {req.team}
-              </span>
+            {req.time_of_day && req.time_of_day.length > 0 ? (
+              <div className="flex flex-wrap justify-center gap-1">
+                {req.time_of_day.map((slot: TimeOfDay) => {
+                  const option = TIME_OF_DAY_OPTIONS.find(o => o.value === slot);
+                  return (
+                    <span
+                      key={slot}
+                      className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-50 text-amber-700 border border-amber-200"
+                      title={option?.time || slot}
+                    >
+                      {option?.icon} {option?.label.split(' ')[0] || slot}
+                    </span>
+                  );
+                })}
+              </div>
+            ) : (
+              <span className="text-xs text-gray-400">-</span>
             )}
           </td>
 
@@ -1104,7 +1123,7 @@ export default function VenueRequirementsDashboard() {
 
         {/* Summary Tiles */}
         {summary && (
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
+          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3 mb-6">
             <SummaryTile
               label="Total"
               count={summary.total}
@@ -1118,10 +1137,22 @@ export default function VenueRequirementsDashboard() {
               color="slate"
             />
             <SummaryTile
-              label="In Progress"
-              count={summary.in_progress}
-              icon={TrendingUp}
+              label="Picked"
+              count={summary.picked}
+              icon={CheckCircle}
+              color="blue"
+            />
+            <SummaryTile
+              label="Venue Aligned"
+              count={summary.venue_aligned}
+              icon={MapPin}
               color="cyan"
+            />
+            <SummaryTile
+              label="Leader Approval"
+              count={summary.leader_approval}
+              icon={UserCheck}
+              color="purple"
             />
             <SummaryTile
               label="Done"
@@ -1211,7 +1242,7 @@ export default function VenueRequirementsDashboard() {
 
             {/* Status Filter */}
             <div className="flex items-center gap-1">
-              {(Object.keys(STATUS_CONFIG) as RequirementStatus[]).map(status => {
+              {(Object.keys(STATUS_CONFIG) as VenueRequirementStatus[]).map(status => {
                 const config = STATUS_CONFIG[status];
                 const isActive = statusFilter === status;
                 return (
@@ -1418,11 +1449,11 @@ export default function VenueRequirementsDashboard() {
                   <th className="text-left py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">
                     Status
                   </th>
-                  <th className="text-left py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                    Effort
+                  <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                    Day Type
                   </th>
                   <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                    Team
+                    Time of Day
                   </th>
                   <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">
                     Created
@@ -1537,10 +1568,36 @@ function EditRequirementModal({
 }) {
   const [name, setName] = useState(requirement.name);
   const [description, setDescription] = useState(requirement.description || '');
-  const [status, setStatus] = useState(requirement.status);
-  const [growthEffort, setGrowthEffort] = useState(requirement.growth_team_effort);
-  const [platformEffort, setPlatformEffort] = useState(requirement.platform_team_effort);
+  const [status, setStatus] = useState<VenueRequirementStatus>(requirement.status);
   const [submitting, setSubmitting] = useState(false);
+
+  // New scheduling fields
+  const [dayTypeId, setDayTypeId] = useState<number | undefined>(requirement.day_type_id);
+  const [selectedTimeSlots, setSelectedTimeSlots] = useState<TimeOfDay[]>(requirement.time_of_day || []);
+  const [amenitiesRequired, setAmenitiesRequired] = useState(requirement.amenities_required || '');
+
+  // Fetch day types
+  const [dayTypes, setDayTypes] = useState<{ id: number; name: string }[]>([]);
+  useEffect(() => {
+    const fetchDayTypes = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/requirements/venues/day-types`);
+        const data = await res.json();
+        if (data.success) setDayTypes(data.day_types || []);
+      } catch (err) {
+        console.error('Failed to fetch day types:', err);
+      }
+    };
+    fetchDayTypes();
+  }, []);
+
+  const toggleTimeSlot = (slot: TimeOfDay) => {
+    setSelectedTimeSlots(prev =>
+      prev.includes(slot)
+        ? prev.filter(s => s !== slot)
+        : [...prev, slot]
+    );
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1551,9 +1608,10 @@ function EditRequirementModal({
       name: name.trim(),
       description: description.trim() || undefined,
       status,
-      growth_team_effort: growthEffort,
-      platform_team_effort: platformEffort
-    });
+      day_type_id: dayTypeId,
+      time_of_day: selectedTimeSlots.length > 0 ? selectedTimeSlots : undefined,
+      amenities_required: amenitiesRequired.trim() || undefined
+    } as any);
     setSubmitting(false);
   };
 
@@ -1562,7 +1620,7 @@ function EditRequirementModal({
       <div className="flex min-h-full items-center justify-center p-4 text-center">
         <div className="fixed inset-0 bg-black/30 backdrop-blur-sm" onClick={onClose} />
 
-        <div className="relative transform overflow-hidden rounded-2xl bg-white text-left shadow-2xl transition-all w-full max-w-md">
+        <div className="relative transform overflow-hidden rounded-2xl bg-white text-left shadow-2xl transition-all w-full max-w-lg">
           {/* Header */}
           <div className="bg-gradient-to-r from-teal-500 to-cyan-600 px-6 py-4">
             <div className="flex items-center justify-between">
@@ -1579,7 +1637,7 @@ function EditRequirementModal({
           </div>
 
           {/* Form */}
-          <form onSubmit={handleSubmit} className="p-6 space-y-4">
+          <form onSubmit={handleSubmit} className="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Name *</label>
               <input
@@ -1604,7 +1662,7 @@ function EditRequirementModal({
               <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
               <select
                 value={status}
-                onChange={(e) => setStatus(e.target.value as RequirementStatus)}
+                onChange={(e) => setStatus(e.target.value as VenueRequirementStatus)}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-teal-500 text-sm bg-white"
               >
                 {Object.entries(STATUS_CONFIG).map(([key, config]) => (
@@ -1613,28 +1671,61 @@ function EditRequirementModal({
               </select>
             </div>
 
+            {/* Day Type */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Effort Required</label>
-              <div className="flex gap-4">
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={growthEffort}
-                    onChange={(e) => setGrowthEffort(e.target.checked)}
-                    className="w-4 h-4 text-violet-600 border-gray-300 rounded focus:ring-violet-500"
-                  />
-                  <span className="text-sm text-gray-600">Growth Team</span>
-                </label>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={platformEffort}
-                    onChange={(e) => setPlatformEffort(e.target.checked)}
-                    className="w-4 h-4 text-cyan-600 border-gray-300 rounded focus:ring-cyan-500"
-                  />
-                  <span className="text-sm text-gray-600">Platform Team</span>
-                </label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                <Calendar className="inline h-4 w-4 mr-1" />
+                Day Type
+              </label>
+              <select
+                value={dayTypeId || ''}
+                onChange={(e) => setDayTypeId(e.target.value ? parseInt(e.target.value) : undefined)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-teal-500 text-sm bg-white"
+              >
+                <option value="">Select Day Type</option>
+                {dayTypes.map(dt => (
+                  <option key={dt.id} value={dt.id}>{dt.name}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Time of Day */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                <Sun className="inline h-4 w-4 mr-1" />
+                Time of Day
+              </label>
+              <div className="flex flex-wrap gap-2">
+                {TIME_OF_DAY_OPTIONS.map(option => {
+                  const isSelected = selectedTimeSlots.includes(option.value);
+                  return (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() => toggleTimeSlot(option.value)}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all border
+                        ${isSelected
+                          ? 'bg-amber-100 text-amber-800 border-amber-300'
+                          : 'bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100'
+                        }`}
+                    >
+                      {option.icon} {option.label}
+                    </button>
+                  );
+                })}
               </div>
+            </div>
+
+            {/* Amenities */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Amenities Required</label>
+              <textarea
+                value={amenitiesRequired}
+                onChange={(e) => setAmenitiesRequired(e.target.value)}
+                rows={2}
+                placeholder="e.g., Parking, AC, Changing rooms..."
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-teal-500 text-sm resize-none"
+              />
             </div>
 
             {/* Actions */}
@@ -1717,10 +1808,16 @@ function CreateRequirementModal({
   // Form fields
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
-  const [growthEffort, setGrowthEffort] = useState(false);
-  const [platformEffort, setPlatformEffort] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // New scheduling fields
+  const [dayTypeId, setDayTypeId] = useState<number | undefined>(undefined);
+  const [selectedTimeSlots, setSelectedTimeSlots] = useState<TimeOfDay[]>([]);
+  const [amenitiesRequired, setAmenitiesRequired] = useState('');
+
+  // Day types from API
+  const [dayTypes, setDayTypes] = useState<{ id: number; name: string }[]>([]);
 
   // Hierarchy selection state
   const [selectedActivityId, setSelectedActivityId] = useState<number | undefined>(context.activity_id);
@@ -1745,6 +1842,15 @@ function CreateRequirementModal({
     ? getTeamForClub(selectedActivityName, selectedCityName)
     : undefined;
 
+  // Toggle time slot selection
+  const toggleTimeSlot = (slot: TimeOfDay) => {
+    setSelectedTimeSlots(prev =>
+      prev.includes(slot)
+        ? prev.filter(s => s !== slot)
+        : [...prev, slot]
+    );
+  };
+
   // Generate default name from current selection
   const generateName = () => {
     const parts: string[] = [];
@@ -1765,7 +1871,7 @@ function CreateRequirementModal({
     return parts.join(' ');
   };
 
-  // Fetch activities on mount
+  // Fetch activities and day types on mount
   useEffect(() => {
     const fetchActivities = async () => {
       try {
@@ -1776,7 +1882,17 @@ function CreateRequirementModal({
         console.error('Failed to fetch activities:', err);
       }
     };
+    const fetchDayTypes = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/requirements/venues/day-types`);
+        const data = await res.json();
+        if (data.success) setDayTypes(data.day_types || []);
+      } catch (err) {
+        console.error('Failed to fetch day types:', err);
+      }
+    };
     fetchActivities();
+    fetchDayTypes();
   }, []);
 
   // Fetch all cities on mount (no activity filter - show all cities)
@@ -1921,7 +2037,7 @@ function CreateRequirementModal({
     }
   };
 
-  const isValid = name.trim() && selectedActivityId && selectedCityId && selectedAreaId;
+  const isValid = name.trim() && selectedActivityId && selectedCityId && selectedAreaId && dayTypeId && selectedTimeSlots.length > 0;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1942,8 +2058,9 @@ function CreateRequirementModal({
       club_name: selectedClubName,
       launch_id: selectedLaunchId,
       target_id: selectedTargetId,
-      growth_team_effort: growthEffort,
-      platform_team_effort: platformEffort,
+      day_type_id: dayTypeId,
+      time_of_day: selectedTimeSlots,
+      amenities_required: amenitiesRequired.trim() || undefined,
       team
     });
     if (errorMsg) {
@@ -2097,28 +2214,65 @@ function CreateRequirementModal({
               />
             </div>
 
+            {/* Day Type */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Effort Required</label>
-              <div className="flex gap-4">
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={growthEffort}
-                    onChange={(e) => setGrowthEffort(e.target.checked)}
-                    className="w-4 h-4 text-violet-600 border-gray-300 rounded focus:ring-violet-500"
-                  />
-                  <span className="text-sm text-gray-600">Growth Team</span>
-                </label>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={platformEffort}
-                    onChange={(e) => setPlatformEffort(e.target.checked)}
-                    className="w-4 h-4 text-cyan-600 border-gray-300 rounded focus:ring-cyan-500"
-                  />
-                  <span className="text-sm text-gray-600">Platform Team</span>
-                </label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                <Calendar className="inline h-4 w-4 mr-1" />
+                Day Type *
+              </label>
+              <select
+                value={dayTypeId || ''}
+                onChange={(e) => setDayTypeId(e.target.value ? parseInt(e.target.value) : undefined)}
+                className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-teal-500 text-sm bg-white
+                  ${!dayTypeId ? 'border-gray-300' : 'border-teal-300'}`}
+              >
+                <option value="">Select Day Type</option>
+                {dayTypes.map(dt => (
+                  <option key={dt.id} value={dt.id}>{dt.name}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Time of Day */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                <Sun className="inline h-4 w-4 mr-1" />
+                Time of Day *
+              </label>
+              <div className="flex flex-wrap gap-2">
+                {TIME_OF_DAY_OPTIONS.map(option => {
+                  const isSelected = selectedTimeSlots.includes(option.value);
+                  return (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() => toggleTimeSlot(option.value)}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all border
+                        ${isSelected
+                          ? 'bg-amber-100 text-amber-800 border-amber-300'
+                          : 'bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100'
+                        }`}
+                    >
+                      {option.icon} {option.label}
+                    </button>
+                  );
+                })}
               </div>
+              {selectedTimeSlots.length === 0 && (
+                <p className="mt-1 text-xs text-gray-500">Select at least one time slot</p>
+              )}
+            </div>
+
+            {/* Amenities */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Amenities Required (Optional)</label>
+              <textarea
+                value={amenitiesRequired}
+                onChange={(e) => setAmenitiesRequired(e.target.value)}
+                rows={2}
+                placeholder="e.g., Parking, AC, Changing rooms..."
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-teal-500 text-sm resize-none"
+              />
             </div>
 
             {/* Actions */}
@@ -2160,7 +2314,7 @@ interface SummaryTileProps {
   label: string;
   count: number;
   icon: React.ElementType;
-  color: 'teal' | 'slate' | 'cyan' | 'emerald' | 'amber';
+  color: 'teal' | 'slate' | 'cyan' | 'emerald' | 'amber' | 'blue' | 'purple';
 }
 
 function SummaryTile({ label, count, icon: Icon, color }: SummaryTileProps) {
@@ -2169,7 +2323,9 @@ function SummaryTile({ label, count, icon: Icon, color }: SummaryTileProps) {
     slate: { bg: 'bg-slate-50', icon: 'bg-slate-100 text-slate-600', text: 'text-slate-600' },
     cyan: { bg: 'bg-cyan-50', icon: 'bg-cyan-100 text-cyan-600', text: 'text-cyan-600' },
     emerald: { bg: 'bg-emerald-50', icon: 'bg-emerald-100 text-emerald-600', text: 'text-emerald-600' },
-    amber: { bg: 'bg-amber-50', icon: 'bg-amber-100 text-amber-600', text: 'text-amber-600' }
+    amber: { bg: 'bg-amber-50', icon: 'bg-amber-100 text-amber-600', text: 'text-amber-600' },
+    blue: { bg: 'bg-blue-50', icon: 'bg-blue-100 text-blue-600', text: 'text-blue-600' },
+    purple: { bg: 'bg-purple-50', icon: 'bg-purple-100 text-purple-600', text: 'text-purple-600' }
   };
 
   const classes = colorClasses[color];

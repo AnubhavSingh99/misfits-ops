@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { Search, Plus, X, User, MapPin, ChevronDown, Check, Loader2, Users } from 'lucide-react';
-import type { LeaderRequirement, VenueRequirement, CreateRequirementRequest } from '../../../../shared/types';
+import { Search, Plus, X, User, MapPin, ChevronDown, Check, Loader2, Users, Calendar, Sun } from 'lucide-react';
+import type { LeaderRequirement, VenueRequirement, CreateRequirementRequest, TimeOfDay } from '../../../../shared/types';
+import { TIME_OF_DAY_OPTIONS } from '../../../../shared/types';
 import { getTeamForClub } from '../../../../shared/teamConfig';
 
 const API_BASE = import.meta.env.VITE_API_URL
@@ -344,14 +345,48 @@ function CreateRequirementModal({ type, context, onClose, onCreate }: CreateRequ
   const [leadersRequired, setLeadersRequired] = useState(1);
   const [creating, setCreating] = useState(false);
 
+  // Venue-specific scheduling fields
+  const [dayTypeId, setDayTypeId] = useState<number | undefined>(undefined);
+  const [selectedTimeSlots, setSelectedTimeSlots] = useState<TimeOfDay[]>([]);
+  const [amenitiesRequired, setAmenitiesRequired] = useState('');
+  const [dayTypes, setDayTypes] = useState<{ id: number; name: string }[]>([]);
+
+  // Fetch day types for venue requirements
+  useEffect(() => {
+    if (type === 'venue') {
+      const fetchDayTypes = async () => {
+        try {
+          const res = await fetch(`${API_BASE}/requirements/venues/day-types`);
+          const data = await res.json();
+          if (data.success) setDayTypes(data.day_types || []);
+        } catch (err) {
+          console.error('Failed to fetch day types:', err);
+        }
+      };
+      fetchDayTypes();
+    }
+  }, [type]);
+
+  const toggleTimeSlot = (slot: TimeOfDay) => {
+    setSelectedTimeSlots(prev =>
+      prev.includes(slot)
+        ? prev.filter(s => s !== slot)
+        : [...prev, slot]
+    );
+  };
+
   const typeLabel = type === 'leader' ? 'Leader' : 'Venue';
   const autoTeam = context.activity_name && context.city_name
     ? getTeamForClub(context.activity_name, context.city_name)
     : null;
 
+  // Validation: venue requires day_type and time_of_day
+  const isVenueValid = type !== 'venue' || (dayTypeId && selectedTimeSlots.length > 0);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) return;
+    if (!isVenueValid) return;
 
     setCreating(true);
     await onCreate({
@@ -371,6 +406,10 @@ function CreateRequirementModal({ type, context, onClose, onCreate }: CreateRequ
       platform_team_effort: platformEffort,
       existing_leader_effort: type === 'leader' ? existingLeaderEffort : undefined,
       leaders_required: type === 'leader' ? leadersRequired : undefined,
+      // Venue-specific fields
+      day_type_id: type === 'venue' ? dayTypeId : undefined,
+      time_of_day: type === 'venue' ? selectedTimeSlots : undefined,
+      amenities_required: type === 'venue' ? (amenitiesRequired.trim() || undefined) : undefined,
       team: autoTeam || undefined
     });
     setCreating(false);
@@ -476,28 +515,95 @@ function CreateRequirementModal({ type, context, onClose, onCreate }: CreateRequ
               </div>
             )}
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Effort Required</label>
-              <div className="flex flex-wrap gap-4">
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={growthEffort}
-                    onChange={(e) => setGrowthEffort(e.target.checked)}
-                    className="w-4 h-4 rounded border-gray-300 text-violet-600 focus:ring-violet-500"
+            {/* Venue-specific scheduling fields */}
+            {type === 'venue' && (
+              <>
+                {/* Day Type */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    <Calendar className="inline h-4 w-4 mr-1" />
+                    Day Type *
+                  </label>
+                  <select
+                    value={dayTypeId || ''}
+                    onChange={(e) => setDayTypeId(e.target.value ? parseInt(e.target.value) : undefined)}
+                    className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-teal-500 text-sm bg-white
+                      ${!dayTypeId ? 'border-gray-300' : 'border-teal-300'}`}
+                  >
+                    <option value="">Select Day Type</option>
+                    {dayTypes.map(dt => (
+                      <option key={dt.id} value={dt.id}>{dt.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Time of Day */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    <Sun className="inline h-4 w-4 mr-1" />
+                    Time of Day *
+                  </label>
+                  <div className="flex flex-wrap gap-2">
+                    {TIME_OF_DAY_OPTIONS.map(option => {
+                      const isSelected = selectedTimeSlots.includes(option.value);
+                      return (
+                        <button
+                          key={option.value}
+                          type="button"
+                          onClick={() => toggleTimeSlot(option.value)}
+                          className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all border
+                            ${isSelected
+                              ? 'bg-amber-100 text-amber-800 border-amber-300'
+                              : 'bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100'
+                            }`}
+                        >
+                          {option.icon} {option.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {selectedTimeSlots.length === 0 && (
+                    <p className="mt-1 text-xs text-gray-500">Select at least one time slot</p>
+                  )}
+                </div>
+
+                {/* Amenities */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Amenities Required (Optional)</label>
+                  <textarea
+                    value={amenitiesRequired}
+                    onChange={(e) => setAmenitiesRequired(e.target.value)}
+                    rows={2}
+                    placeholder="e.g., Parking, AC, Changing rooms..."
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-teal-500 text-sm resize-none"
                   />
-                  <span className="text-sm text-gray-700">Growth Team</span>
-                </label>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={platformEffort}
-                    onChange={(e) => setPlatformEffort(e.target.checked)}
-                    className="w-4 h-4 rounded border-gray-300 text-cyan-600 focus:ring-cyan-500"
-                  />
-                  <span className="text-sm text-gray-700">Platform Team</span>
-                </label>
-                {type === 'leader' && (
+                </div>
+              </>
+            )}
+
+            {/* Effort Required - Only for leader type */}
+            {type === 'leader' && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Effort Required</label>
+                <div className="flex flex-wrap gap-4">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={growthEffort}
+                      onChange={(e) => setGrowthEffort(e.target.checked)}
+                      className="w-4 h-4 rounded border-gray-300 text-violet-600 focus:ring-violet-500"
+                    />
+                    <span className="text-sm text-gray-700">Growth Team</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={platformEffort}
+                      onChange={(e) => setPlatformEffort(e.target.checked)}
+                      className="w-4 h-4 rounded border-gray-300 text-cyan-600 focus:ring-cyan-500"
+                    />
+                    <span className="text-sm text-gray-700">Platform Team</span>
+                  </label>
                   <label className="flex items-center gap-2 cursor-pointer">
                     <input
                       type="checkbox"
@@ -507,9 +613,9 @@ function CreateRequirementModal({ type, context, onClose, onCreate }: CreateRequ
                     />
                     <span className="text-sm text-gray-700">Existing Leader</span>
                   </label>
-                )}
+                </div>
               </div>
-            </div>
+            )}
 
             <div className="flex gap-3 pt-3 border-t border-gray-200">
               <button
@@ -521,7 +627,7 @@ function CreateRequirementModal({ type, context, onClose, onCreate }: CreateRequ
               </button>
               <button
                 type="submit"
-                disabled={creating || !name.trim()}
+                disabled={creating || !name.trim() || !isVenueValid}
                 className={`flex-1 flex items-center justify-center gap-2 px-4 py-2 text-white rounded-lg
                   ${type === 'leader'
                     ? 'bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-300'
