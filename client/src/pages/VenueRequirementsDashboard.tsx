@@ -1737,7 +1737,8 @@ function CreateRequirementModal({
   const [activities, setActivities] = useState<FilterOption[]>([]);
   const [cities, setCities] = useState<FilterOption[]>([]);
   const [areas, setAreas] = useState<FilterOption[]>([]);
-  const [clubsAndLaunches, setClubsAndLaunches] = useState<Array<{ id: number; name: string; type: 'club' | 'launch' }>>([]);
+  const [clubsAndLaunches, setClubsAndLaunches] = useState<Array<{ id: number; name: string; type: 'club' | 'launch' | 'expansion'; targetId?: number }>>([]);
+  const [selectedTargetId, setSelectedTargetId] = useState<number | undefined>(undefined);
 
   // Calculate team from selection
   const team = selectedActivityName && selectedCityName
@@ -1822,10 +1823,11 @@ function CreateRequirementModal({
           const res = await fetch(`${API_BASE}/requirements/clubs-and-launches?${params}`);
           const data = await res.json();
           if (data.success) {
-            // Combine clubs and launches into single list
+            // Combine clubs, launches, and expansion targets into single list
             const items = [
               ...(data.clubs || []).map((c: any) => ({ id: c.id, name: c.name, type: 'club' as const })),
-              ...(data.launches || []).map((l: any) => ({ id: l.id, name: l.name || `Launch: ${l.activity_name}`, type: 'launch' as const }))
+              ...(data.launches || []).map((l: any) => ({ id: l.id, name: l.name || `Launch: ${l.activity_name}`, type: 'launch' as const })),
+              ...(data.expansionTargets || []).map((e: any) => ({ id: e.club_id || 0, name: e.name, type: 'expansion' as const, targetId: e.target_id }))
             ];
             setClubsAndLaunches(items);
           }
@@ -1880,10 +1882,11 @@ function CreateRequirementModal({
     const area = areas.find(a => String(a.id) === e.target.value);
     setSelectedAreaId(id);
     setSelectedAreaName(area?.name);
-    // Reset club/launch selection
+    // Reset club/launch/target selection
     setSelectedClubId(undefined);
     setSelectedClubName(undefined);
     setSelectedLaunchId(undefined);
+    setSelectedTargetId(undefined);
   };
 
   const handleClubOrLaunchChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
@@ -1892,21 +1895,29 @@ function CreateRequirementModal({
       setSelectedClubId(undefined);
       setSelectedClubName(undefined);
       setSelectedLaunchId(undefined);
+      setSelectedTargetId(undefined);
       return;
     }
-    // Value format: "club:123" or "launch:456"
+    // Value format: "club:123", "launch:456", or "expansion:789"
     const [type, idStr] = value.split(':');
     const id = parseInt(idStr);
-    const item = clubsAndLaunches.find(c => c.type === type && c.id === id);
+    const item = clubsAndLaunches.find(c => c.type === type && (c.type === 'expansion' ? c.targetId === id : c.id === id));
 
     if (type === 'club') {
       setSelectedClubId(id);
       setSelectedClubName(item?.name);
       setSelectedLaunchId(undefined);
-    } else {
+      setSelectedTargetId(undefined);
+    } else if (type === 'launch') {
       setSelectedLaunchId(id);
       setSelectedClubId(undefined);
-      setSelectedClubName(item?.name); // Use launch name as club_name for display
+      setSelectedClubName(item?.name);
+      setSelectedTargetId(undefined);
+    } else if (type === 'expansion') {
+      setSelectedTargetId(id);
+      setSelectedClubId(item?.id || undefined); // expansion targets may have club_id
+      setSelectedClubName(item?.name);
+      setSelectedLaunchId(undefined);
     }
   };
 
@@ -1930,6 +1941,7 @@ function CreateRequirementModal({
       club_id: selectedClubId,
       club_name: selectedClubName,
       launch_id: selectedLaunchId,
+      target_id: selectedTargetId,
       growth_team_effort: growthEffort,
       platform_team_effort: platformEffort,
       team
@@ -2013,18 +2025,18 @@ function CreateRequirementModal({
                 </select>
               </div>
               <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">Club / Launch (Optional)</label>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Club / Launch / Expansion (Optional)</label>
                 <select
-                  value={selectedClubId ? `club:${selectedClubId}` : selectedLaunchId ? `launch:${selectedLaunchId}` : ''}
+                  value={selectedTargetId ? `expansion:${selectedTargetId}` : selectedClubId ? `club:${selectedClubId}` : selectedLaunchId ? `launch:${selectedLaunchId}` : ''}
                   onChange={handleClubOrLaunchChange}
                   disabled={!selectedAreaId}
                   className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-teal-500 text-sm bg-white disabled:bg-gray-100 disabled:cursor-not-allowed ${selectedAreaId && clubsAndLaunches.length === 0 ? 'border-amber-300 text-amber-600' : 'border-gray-300'}`}
                 >
                   {selectedAreaId && clubsAndLaunches.length === 0 ? (
-                    <option value="">No clubs or launches in this area</option>
+                    <option value="">No clubs, launches, or targets in this area</option>
                   ) : (
                     <>
-                      <option value="">Select Club or Launch</option>
+                      <option value="">Select Club, Launch, or Expansion Target</option>
                       {clubsAndLaunches.filter(c => c.type === 'club').length > 0 && (
                         <optgroup label="Clubs">
                           {clubsAndLaunches.filter(c => c.type === 'club').map(c => (
@@ -2036,6 +2048,13 @@ function CreateRequirementModal({
                         <optgroup label="Launches">
                           {clubsAndLaunches.filter(c => c.type === 'launch').map(c => (
                             <option key={`launch:${c.id}`} value={`launch:${c.id}`}>{c.name}</option>
+                          ))}
+                        </optgroup>
+                      )}
+                      {clubsAndLaunches.filter(c => c.type === 'expansion').length > 0 && (
+                        <optgroup label="Expansion Targets">
+                          {clubsAndLaunches.filter(c => c.type === 'expansion').map(c => (
+                            <option key={`expansion:${c.targetId}`} value={`expansion:${c.targetId}`}>{c.name}</option>
                           ))}
                         </optgroup>
                       )}

@@ -981,10 +981,10 @@ router.post('/venues', async (req: Request, res: Response) => {
         activity_id, activity_name,
         city_id, city_name,
         area_id, area_name,
-        club_id, club_name, launch_id,
+        club_id, club_name, launch_id, target_id,
         growth_team_effort, platform_team_effort,
         comments, team, created_by
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
       RETURNING *`,
       [
         data.name,
@@ -998,6 +998,7 @@ router.post('/venues', async (req: Request, res: Response) => {
         data.club_id || null,
         data.club_name || null,
         data.launch_id || null,
+        data.target_id || null,
         data.growth_team_effort || false,
         data.platform_team_effort || false,
         data.comments || null,
@@ -1210,21 +1211,60 @@ router.get('/clubs-and-launches', async (req: Request, res: Response) => {
 
     launchQuery += ` ORDER BY activity_name LIMIT 20`;
 
-    // Execute both queries in parallel
-    const [clubResult, launchResult] = await Promise.all([
+    // Build expansion targets query from local database
+    // Expansion targets are club_dimensional_targets where area differs from club's home area
+    let expansionQuery = `
+      SELECT
+        cdt.id as target_id,
+        cdt.club_id,
+        cdt.club_name,
+        cdt.activity_id,
+        da.name as area_name,
+        cdt.target_meetups,
+        'expansion' as type,
+        COALESCE(cdt.club_name, 'Expansion Target') || ' - ' || da.name as name
+      FROM club_dimensional_targets cdt
+      JOIN dim_areas da ON cdt.area_id = da.id
+      WHERE cdt.club_id IS NULL OR cdt.club_id NOT IN (
+        SELECT c.pk FROM club c
+        JOIN location l ON c.location_id = l.pk
+        WHERE l.area_id = (
+          SELECT prod_area_id FROM dim_areas WHERE id = cdt.area_id
+        )
+      )
+    `;
+    const expansionParams: any[] = [];
+    let expansionParamIndex = 1;
+
+    if (activity_id) {
+      expansionQuery += ` AND cdt.activity_id = $${expansionParamIndex++}`;
+      expansionParams.push(activity_id);
+    }
+    if (areaName) {
+      expansionQuery += ` AND LOWER(da.name) = LOWER($${expansionParamIndex++})`;
+      expansionParams.push(areaName);
+    }
+
+    expansionQuery += ` ORDER BY cdt.club_name LIMIT 20`;
+
+    // Execute all queries in parallel
+    const [clubResult, launchResult, expansionResult] = await Promise.all([
       queryProduction(clubQuery, clubParams),
-      queryLocal(launchQuery, launchParams)
+      queryLocal(launchQuery, launchParams),
+      queryLocal(expansionQuery, expansionParams)
     ]);
 
     // Combine and return
     const clubs = clubResult.rows;
     const launches = launchResult.rows;
+    const expansionTargets = expansionResult.rows;
 
     res.json({
       success: true,
       clubs,
       launches,
-      total: clubs.length + launches.length
+      expansionTargets,
+      total: clubs.length + launches.length + expansionTargets.length
     });
   } catch (error) {
     console.error('Error fetching clubs and launches:', error);

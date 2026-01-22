@@ -997,6 +997,7 @@ export interface CreateRequirementRequest {
   club_id?: number;  // Required for V2 - must link to club or launch
   club_name?: string;
   launch_id?: number;  // Alternative to club_id for new launches
+  target_id?: number;  // For expansion targets (club_dimensional_targets.id)
   growth_team_effort?: boolean;
   platform_team_effort?: boolean;
   existing_leader_effort?: boolean;  // New effort type
