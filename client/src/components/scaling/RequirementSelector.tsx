@@ -309,8 +309,15 @@ interface CreateRequirementModalProps {
 }
 
 function CreateRequirementModal({ type, context, onClose, onCreate }: CreateRequirementModalProps) {
-  // Generate default name from context hierarchy (e.g., "Art GGN Sec 28")
+  // Generate default name from context hierarchy
+  // If club/launch/expansion is selected, use that as the primary name
   const generateDefaultName = () => {
+    // If a club/launch/expansion is selected, use that as the name
+    if (context.club_name) {
+      return context.club_name;
+    }
+
+    // Otherwise, generate from activity/city/area
     const parts: string[] = [];
     if (context.activity_name) {
       // Shorten activity name if too long
@@ -330,9 +337,6 @@ function CreateRequirementModal({ type, context, onClose, onCreate }: CreateRequ
     }
     if (context.area_name) {
       parts.push(context.area_name);
-    }
-    if (context.club_name && !parts.includes(context.club_name)) {
-      parts.push(context.club_name);
     }
     return parts.join(' ') || '';
   };

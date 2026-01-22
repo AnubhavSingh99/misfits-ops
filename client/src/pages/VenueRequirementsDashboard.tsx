@@ -1853,6 +1853,12 @@ function CreateRequirementModal({
 
   // Generate default name from current selection
   const generateName = () => {
+    // If a club/launch/expansion is selected, use that as the primary name
+    if (selectedClubName) {
+      return selectedClubName;
+    }
+
+    // Otherwise, generate from activity/city/area
     const parts: string[] = [];
     if (selectedActivityName) {
       parts.push(selectedActivityName.length > 12 ? selectedActivityName.substring(0, 10) : selectedActivityName);
@@ -1957,12 +1963,18 @@ function CreateRequirementModal({
     }
   }, [selectedActivityId, selectedCityId, selectedAreaId]);
 
+  // Track the last auto-generated name to detect manual edits
+  const [lastGeneratedName, setLastGeneratedName] = useState('');
+
   // Update default name when selection changes
   useEffect(() => {
-    if (!name || name === generateDefaultName(context)) {
-      setName(generateName());
+    const newName = generateName();
+    // Update name if: empty, or matches last generated name (not manually edited)
+    if (!name || name === lastGeneratedName || name === generateDefaultName(context)) {
+      setName(newName);
+      setLastGeneratedName(newName);
     }
-  }, [selectedActivityName, selectedCityName, selectedAreaName]);
+  }, [selectedActivityName, selectedCityName, selectedAreaName, selectedClubName]);
 
   const handleActivityChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const id = e.target.value ? parseInt(e.target.value) : undefined;
