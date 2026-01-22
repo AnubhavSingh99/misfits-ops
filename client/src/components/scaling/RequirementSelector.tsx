@@ -19,6 +19,8 @@ interface RequirementSelectorProps {
     area_name?: string;
     club_id?: number;
     club_name?: string;
+    launch_id?: number;
+    target_id?: number;
   };
   selectedRequirements: (LeaderRequirement | VenueRequirement)[];
   onSelectionsChange: (requirements: (LeaderRequirement | VenueRequirement)[]) => void;
@@ -298,6 +300,8 @@ interface CreateRequirementModalProps {
     area_name?: string;
     club_id?: number;
     club_name?: string;
+    launch_id?: number;
+    target_id?: number;
   };
   onClose: () => void;
   onCreate: (data: CreateRequirementRequest) => void;
@@ -361,6 +365,8 @@ function CreateRequirementModal({ type, context, onClose, onCreate }: CreateRequ
       area_name: context.area_name,
       club_id: context.club_id,
       club_name: context.club_name,
+      launch_id: context.launch_id,
+      target_id: context.target_id,
       growth_team_effort: growthEffort,
       platform_team_effort: platformEffort,
       existing_leader_effort: type === 'leader' ? existingLeaderEffort : undefined,
@@ -403,9 +409,19 @@ function CreateRequirementModal({ type, context, onClose, onCreate }: CreateRequ
                   {context.area_name}
                 </span>
               )}
-              {context.club_name && (
+              {context.club_name && !context.launch_id && !context.target_id && (
                 <span className="px-2 py-0.5 bg-orange-100 text-orange-700 rounded-full text-xs">
                   {context.club_name}
+                </span>
+              )}
+              {context.launch_id && (
+                <span className="px-2 py-0.5 bg-violet-100 text-violet-700 rounded-full text-xs">
+                  🚀 Launch: {context.club_name || `#${context.launch_id}`}
+                </span>
+              )}
+              {context.target_id && (
+                <span className="px-2 py-0.5 bg-amber-100 text-amber-700 rounded-full text-xs">
+                  📍 Expansion: {context.club_name || `Target #${context.target_id}`}
                 </span>
               )}
             </div>

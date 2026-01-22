@@ -561,6 +561,20 @@ router.post('/clubs/:clubId/dimensional', async (req, res) => {
       });
     }
 
+    // If activity_id not provided, fetch from production club table
+    let resolvedActivityId = activity_id;
+    let resolvedClubName = club_name;
+    if (!resolvedActivityId || !resolvedClubName) {
+      const clubResult = await queryProduction(
+        `SELECT activity_id, name FROM club WHERE pk = $1`,
+        [clubId]
+      );
+      if (clubResult.rows.length > 0) {
+        if (!resolvedActivityId) resolvedActivityId = clubResult.rows[0].activity_id;
+        if (!resolvedClubName) resolvedClubName = clubResult.rows[0].name;
+      }
+    }
+
     // Resolve area_id: The frontend passes production_area_id, but we need dim_areas.id
     // First check if this area already exists in dim_areas by production_area_id
     let resolvedAreaId = area_id;
@@ -642,8 +656,8 @@ router.post('/clubs/:clubId/dimensional', async (req, res) => {
       RETURNING *
     `, [
       clubId,
-      activity_id || null,
-      club_name || null,
+      resolvedActivityId || null,
+      resolvedClubName || null,
       area_id_for_target || null,  // Use resolved dim_areas.id, not production area_id
       day_type_id || null,
       format_id || null,

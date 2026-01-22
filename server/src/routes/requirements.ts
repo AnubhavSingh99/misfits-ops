@@ -1122,11 +1122,11 @@ router.get('/clubs-and-launches', async (req: Request, res: Response) => {
     let areaName: string | null = null;
 
     if (activity_id) {
-      const activityResult = await queryProduction('SELECT name FROM activity WHERE pk = $1', [activity_id]);
+      const activityResult = await queryProduction('SELECT name FROM activity WHERE id = $1', [activity_id]);
       if (activityResult.rows.length > 0) activityName = activityResult.rows[0].name;
     }
     if (city_id) {
-      const cityResult = await queryProduction('SELECT name FROM city WHERE pk = $1', [city_id]);
+      const cityResult = await queryProduction('SELECT name FROM city WHERE id = $1', [city_id]);
       if (cityResult.rows.length > 0) cityName = cityResult.rows[0].name;
     }
     if (area_id) {
@@ -1135,37 +1135,50 @@ router.get('/clubs-and-launches', async (req: Request, res: Response) => {
     }
 
     // Build club query from production database
+    // Use events to determine club location (clubs don't have direct location_id)
     let clubQuery = `
+      WITH club_locations AS (
+        SELECT DISTINCT ON (e.club_id)
+          e.club_id,
+          ci.id as city_id,
+          ci.name as city_name,
+          ar.id as area_id,
+          ar.name as area_name
+        FROM event e
+        JOIN location l ON e.location_id = l.id
+        JOIN city ci ON l.city_id = ci.id
+        LEFT JOIN area ar ON l.area_id = ar.id
+        WHERE e.status = 'CREATED'
+        ORDER BY e.club_id, e.created_at DESC
+      )
       SELECT
         c.pk as id,
         c.name,
         'club' as type,
-        a.pk as activity_id,
+        a.id as activity_id,
         a.name as activity_name,
-        ci.pk as city_id,
-        ci.name as city_name,
-        ar.pk as area_id,
-        ar.name as area_name
+        cl.city_id,
+        cl.city_name,
+        cl.area_id,
+        cl.area_name
       FROM club c
-      JOIN activity a ON c.activity_id = a.pk
-      JOIN location l ON c.location_id = l.pk
-      JOIN city ci ON l.city_id = ci.pk
-      LEFT JOIN area ar ON l.area_id = ar.pk
+      JOIN activity a ON c.activity_id = a.id
+      LEFT JOIN club_locations cl ON c.pk = cl.club_id
       WHERE c.status = 'ACTIVE'
     `;
     const clubParams: any[] = [];
     let clubParamIndex = 1;
 
     if (activity_id) {
-      clubQuery += ` AND a.pk = $${clubParamIndex++}`;
+      clubQuery += ` AND a.id = $${clubParamIndex++}`;
       clubParams.push(activity_id);
     }
     if (city_id) {
-      clubQuery += ` AND ci.pk = $${clubParamIndex++}`;
+      clubQuery += ` AND cl.city_id = $${clubParamIndex++}`;
       clubParams.push(city_id);
     }
     if (area_id) {
-      clubQuery += ` AND ar.pk = $${clubParamIndex++}`;
+      clubQuery += ` AND cl.area_id = $${clubParamIndex++}`;
       clubParams.push(area_id);
     }
     if (search) {
@@ -1212,52 +1225,59 @@ router.get('/clubs-and-launches', async (req: Request, res: Response) => {
     launchQuery += ` ORDER BY activity_name LIMIT 20`;
 
     // Build expansion targets query from local database
-    // Expansion targets are club_dimensional_targets where area differs from club's home area
+    // Expansion targets are club_dimensional_targets - includes both expansions and new targets
+    // Simplified query: just get all targets for the activity/area without complex exclusion logic
     let expansionQuery = `
       SELECT
         cdt.id as target_id,
         cdt.club_id,
         cdt.club_name,
         cdt.activity_id,
-        da.name as area_name,
+        da.area_name,
         cdt.target_meetups,
         'expansion' as type,
-        COALESCE(cdt.club_name, 'Expansion Target') || ' - ' || da.name as name
+        COALESCE(cdt.club_name, 'Expansion Target') || ' - ' || da.area_name as name
       FROM club_dimensional_targets cdt
       JOIN dim_areas da ON cdt.area_id = da.id
-      WHERE cdt.club_id IS NULL OR cdt.club_id NOT IN (
-        SELECT c.pk FROM club c
-        JOIN location l ON c.location_id = l.pk
-        WHERE l.area_id = (
-          SELECT prod_area_id FROM dim_areas WHERE id = cdt.area_id
-        )
-      )
+      WHERE 1=1
     `;
     const expansionParams: any[] = [];
     let expansionParamIndex = 1;
 
-    if (activity_id) {
-      expansionQuery += ` AND cdt.activity_id = $${expansionParamIndex++}`;
-      expansionParams.push(activity_id);
-    }
-    if (areaName) {
-      expansionQuery += ` AND LOWER(da.name) = LOWER($${expansionParamIndex++})`;
-      expansionParams.push(areaName);
+    // Note: activity_id in club_dimensional_targets is often NULL
+    // The activity comes from the club itself, not the target
+    // So we only filter by area_id which is more reliable
+    if (area_id) {
+      expansionQuery += ` AND da.production_area_id = $${expansionParamIndex++}`;
+      expansionParams.push(area_id);
     }
 
     expansionQuery += ` ORDER BY cdt.club_name LIMIT 20`;
 
-    // Execute all queries in parallel
+    // Execute queries independently - don't let one failure block others
+    let clubs: any[] = [];
+    let launches: any[] = [];
+    let expansionTargets: any[] = [];
+
+    // Run queries in parallel but catch errors individually
     const [clubResult, launchResult, expansionResult] = await Promise.all([
-      queryProduction(clubQuery, clubParams),
-      queryLocal(launchQuery, launchParams),
-      queryLocal(expansionQuery, expansionParams)
+      queryProduction(clubQuery, clubParams).catch(err => {
+        console.error('Club query failed:', err.message);
+        return { rows: [] };
+      }),
+      queryLocal(launchQuery, launchParams).catch(err => {
+        console.error('Launch query failed:', err.message);
+        return { rows: [] };
+      }),
+      queryLocal(expansionQuery, expansionParams).catch(err => {
+        console.error('Expansion query failed:', err.message);
+        return { rows: [] };
+      })
     ]);
 
-    // Combine and return
-    const clubs = clubResult.rows;
-    const launches = launchResult.rows;
-    const expansionTargets = expansionResult.rows;
+    clubs = clubResult.rows;
+    launches = launchResult.rows;
+    expansionTargets = expansionResult.rows;
 
     res.json({
       success: true,
