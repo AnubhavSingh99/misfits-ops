@@ -892,7 +892,14 @@ export default function VenueRequirementsDashboard() {
               <div>
                 <span className="text-sm font-medium text-gray-800">{req.name}</span>
                 {req.description && (
-                  <p className="text-xs text-gray-400 truncate max-w-[300px]">{req.description}</p>
+                  <div className="group/desc relative inline-block max-w-[300px]">
+                    <p className="text-xs text-gray-400 truncate cursor-help">{req.description}</p>
+                    {/* Tooltip on hover */}
+                    <div className="absolute z-[100] invisible group-hover/desc:visible opacity-0 group-hover/desc:opacity-100 transition-opacity duration-150 top-full left-0 mt-1.5 px-3 py-2 bg-white text-gray-700 text-xs rounded-lg shadow-lg border border-gray-200 whitespace-normal min-w-[200px] max-w-[350px]">
+                      <div className="absolute -top-1.5 left-4 w-3 h-3 bg-white border-l border-t border-gray-200 rotate-45"></div>
+                      <span className="relative">{req.description}</span>
+                    </div>
+                  </div>
                 )}
               </div>
             </div>
