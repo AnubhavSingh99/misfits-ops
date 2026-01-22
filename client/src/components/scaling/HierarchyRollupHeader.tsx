@@ -131,8 +131,9 @@ function calculateTotals(nodes: HierarchyNode[]) {
     unattributed_meetups: 0
   };
 
-  // Health distribution for rollup
+  // Health distribution for rollup - use Set to avoid counting same club multiple times
   const healthDistribution = { green: 0, yellow: 0, red: 0, gray: 0 };
+  const countedClubIds = new Set<number>();
 
   // Leaders required aggregation
   let totalLeadersRequired = 0;
@@ -165,8 +166,9 @@ function calculateTotals(nodes: HierarchyNode[]) {
         revenueStatuses.push(node.revenue_status);
       }
 
-      // Aggregate health status (exclude launches from health rollup)
-      if (!node.is_launch && node.health_status) {
+      // Aggregate health status (exclude launches from health rollup, dedupe by club_id)
+      if (!node.is_launch && node.health_status && node.club_id && !countedClubIds.has(node.club_id)) {
+        countedClubIds.add(node.club_id);
         healthDistribution[node.health_status as keyof typeof healthDistribution]++;
       }
 
