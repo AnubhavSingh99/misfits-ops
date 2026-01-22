@@ -2741,27 +2741,25 @@ router.get('/v2/hierarchy', async (req, res) => {
               const activityId = activityResult.rows[0]?.id;
 
               if (activityId) {
+                // Transfer launch targets to club targets (simple INSERT, no unique constraint)
                 await queryLocal(`
                   INSERT INTO club_dimensional_targets (
-                    club_id, activity_id, area_id, day_type_id, format_id,
-                    target_meetups, target_revenue, progress
+                    club_id, activity_id, club_name, area_id, day_type_id, format_id,
+                    target_meetups, target_revenue, progress, meetup_cost, meetup_capacity
                   )
-                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-                  ON CONFLICT (club_id, COALESCE(area_id, -1), COALESCE(day_type_id, -1), COALESCE(format_id, -1))
-                  DO UPDATE SET
-                    target_meetups = EXCLUDED.target_meetups,
-                    target_revenue = EXCLUDED.target_revenue,
-                    progress = EXCLUDED.progress,
-                    updated_at = CURRENT_TIMESTAMP
+                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
                 `, [
                   matchedClub.club_id,
                   activityId,
+                  matchedClub.club_name,
                   launchTarget.area_id,
                   launchTarget.day_type_id || null,
                   launchTarget.format_id || null,
                   launchTarget.target_meetups,
                   launchTarget.target_revenue,
-                  launchTarget.progress
+                  launchTarget.progress,
+                  launchTarget.meetup_cost || null,
+                  launchTarget.meetup_capacity || null
                 ]);
               }
             }
