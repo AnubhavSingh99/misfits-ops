@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import {
   ChevronDown,
   ChevronRight,
+  ChevronUp,
   Plus,
   MapPin,
   Loader2,
@@ -241,6 +242,21 @@ export default function VenueRequirementsDashboard() {
   // Delete confirmation state
   const [deleteRequirement, setDeleteRequirement] = useState<VenueRequirement | null>(null);
   const [deleting, setDeleting] = useState(false);
+
+  // Sort state for requirements
+  type SortField = 'created_at' | 'status' | 'day_type' | 'name';
+  type SortDirection = 'asc' | 'desc';
+  const [sortField, setSortField] = useState<SortField>('created_at');
+  const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
+
+  const handleSort = (field: SortField) => {
+    if (sortField === field) {
+      setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortField(field);
+      setSortDirection('desc');
+    }
+  };
 
   // Fetch filter options
   useEffect(() => {
@@ -530,6 +546,10 @@ export default function VenueRequirementsDashboard() {
           <td className="py-3 px-4 text-center">
           </td>
 
+          {/* Amenities (empty for hierarchy rows) */}
+          <td className="py-3 px-4 text-center">
+          </td>
+
           {/* Created (empty for hierarchy rows) */}
           <td className="py-3 px-4 text-center">
           </td>
@@ -561,8 +581,28 @@ export default function VenueRequirementsDashboard() {
           <HierarchyRow key={child.id} node={child} depth={depth + 1} parentContext={nodeContext} />
         ))}
 
-        {/* Requirements (leaf nodes) */}
-        {isExpanded && node.requirements && node.requirements.map(req => (
+        {/* Requirements (leaf nodes) - sorted */}
+        {isExpanded && node.requirements && [...node.requirements]
+          .sort((a, b) => {
+            let comparison = 0;
+            switch (sortField) {
+              case 'created_at':
+                comparison = new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime();
+                break;
+              case 'status':
+                const statusOrder: Record<string, number> = { not_picked: 0, picked: 1, venue_aligned: 2, leader_approval: 3, done: 4, deprioritised: 5 };
+                comparison = (statusOrder[a.status] || 0) - (statusOrder[b.status] || 0);
+                break;
+              case 'day_type':
+                comparison = (a.day_type_name || '').localeCompare(b.day_type_name || '');
+                break;
+              case 'name':
+                comparison = (a.name || '').localeCompare(b.name || '');
+                break;
+            }
+            return sortDirection === 'asc' ? comparison : -comparison;
+          })
+          .map(req => (
           <RequirementRow
             key={req.id}
             requirement={req}
@@ -840,6 +880,20 @@ export default function VenueRequirementsDashboard() {
                   );
                 })}
               </div>
+            ) : (
+              <span className="text-xs text-gray-400">-</span>
+            )}
+          </td>
+
+          {/* Amenities */}
+          <td className="py-2.5 px-4 text-center">
+            {req.amenities_required ? (
+              <span
+                className="text-xs text-gray-600 max-w-[150px] truncate inline-block"
+                title={req.amenities_required}
+              >
+                {req.amenities_required}
+              </span>
             ) : (
               <span className="text-xs text-gray-400">-</span>
             )}
@@ -1446,17 +1500,44 @@ export default function VenueRequirementsDashboard() {
                   <th className="text-left py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">
                     Hierarchy
                   </th>
-                  <th className="text-left py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                    Status
+                  <th
+                    className="text-left py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition-colors"
+                    onClick={() => handleSort('status')}
+                  >
+                    <div className="flex items-center gap-1">
+                      Status
+                      {sortField === 'status' && (
+                        sortDirection === 'asc' ? <ChevronUp size={14} /> : <ChevronDown size={14} />
+                      )}
+                    </div>
                   </th>
-                  <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                    Day Type
+                  <th
+                    className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition-colors"
+                    onClick={() => handleSort('day_type')}
+                  >
+                    <div className="flex items-center justify-center gap-1">
+                      Day Type
+                      {sortField === 'day_type' && (
+                        sortDirection === 'asc' ? <ChevronUp size={14} /> : <ChevronDown size={14} />
+                      )}
+                    </div>
                   </th>
                   <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">
                     Time of Day
                   </th>
                   <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                    Created
+                    Amenities
+                  </th>
+                  <th
+                    className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition-colors"
+                    onClick={() => handleSort('created_at')}
+                  >
+                    <div className="flex items-center justify-center gap-1">
+                      Created
+                      {sortField === 'created_at' && (
+                        sortDirection === 'asc' ? <ChevronUp size={14} /> : <ChevronDown size={14} />
+                      )}
+                    </div>
                   </th>
                   <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">
                     Completed
