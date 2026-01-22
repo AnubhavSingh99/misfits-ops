@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { queryLocal } from '../services/database';
+import { queryLocal, queryProduction } from '../services/database';
 import { getTeamForClub } from '../../../shared/teamConfig';
 import {
   LeaderRequirement,
@@ -1112,9 +1112,6 @@ router.delete('/venues/:id', async (req: Request, res: Response) => {
 router.get('/clubs-and-launches', async (req: Request, res: Response) => {
   try {
     const { activity_id, city_id, area_id, search } = req.query;
-
-    // Import queryProduction for reading from production DB
-    const { queryProduction } = await import('../services/database');
 
     // First, resolve names from IDs for launch filtering
     let activityName: string | null = null;
