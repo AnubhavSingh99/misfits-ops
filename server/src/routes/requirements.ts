@@ -746,10 +746,43 @@ router.get('/venues/search', async (req: Request, res: Response) => {
   }
 });
 
+// Helper function to calculate priority level based on age and SLA
+function calculatePriorityLevel(status: string, ageDays: number, slaDays: number): string {
+  // Done and Deprioritised have their own buckets
+  if (status === 'done') return 'done';
+  if (status === 'deprioritised') return 'deprioritised';
+
+  // Active statuses: calculate based on age
+  if (ageDays > slaDays) return 'critical';      // Breached SLA
+  if (ageDays >= slaDays - 1) return 'high';     // Approaching SLA (within 1 day)
+  return 'normal';                                // Within SLA
+}
+
+// Priority order for sorting (lower number = higher priority)
+const PRIORITY_ORDER: Record<string, number> = {
+  'critical': 1,
+  'high': 2,
+  'normal': 3,
+  'done': 4,
+  'deprioritised': 5
+};
+
+// Priority display config
+const PRIORITY_CONFIG: Record<string, { label: string; icon: string }> = {
+  'critical': { label: 'Critical', icon: '🔴' },
+  'high': { label: 'High', icon: '🟠' },
+  'normal': { label: 'Normal', icon: '🟢' },
+  'done': { label: 'Done', icon: '✅' },
+  'deprioritised': { label: 'Deprioritised', icon: '⏸️' }
+};
+
 // GET /api/requirements/venues/hierarchy - Get hierarchy for dashboard
 router.get('/venues/hierarchy', async (req: Request, res: Response) => {
   try {
     const { team, status, activity_ids, city_ids, area_ids, club_ids, teams } = req.query;
+
+    // SLA target in days (default 4)
+    const slaDays = req.query.sla_days ? parseInt(String(req.query.sla_days)) : 4;
 
     let whereClause = '1=1';
     const params: any[] = [];
@@ -803,15 +836,18 @@ router.get('/venues/hierarchy', async (req: Request, res: Response) => {
     }
 
     // Get hierarchy order from query params (comma-separated, e.g., "activity,city,area" or "city,activity")
+    // Now supports "priority" as a hierarchy level
+    const validLevels = ['activity', 'city', 'area', 'priority'];
     const hierarchyOrder = req.query.hierarchy_order
-      ? String(req.query.hierarchy_order).split(',').filter(l => ['activity', 'city', 'area'].includes(l))
+      ? String(req.query.hierarchy_order).split(',').filter(l => validLevels.includes(l))
       : ['activity', 'city', 'area'];
 
     const query = `
       SELECT vr.*,
         dt.day_type as day_type_name,
         (SELECT COUNT(*) FROM requirement_comments rc
-         WHERE rc.requirement_type = 'venue' AND rc.requirement_id = vr.id) as comments_count
+         WHERE rc.requirement_type = 'venue' AND rc.requirement_id = vr.id) as comments_count,
+        EXTRACT(DAY FROM (CURRENT_TIMESTAMP - vr.created_at))::integer as age_days
       FROM venue_requirements vr
       LEFT JOIN dim_day_types dt ON vr.day_type_id = dt.id
       WHERE ${whereClause.replace(/activity_id/g, 'vr.activity_id').replace(/city_id/g, 'vr.city_id').replace(/area_id/g, 'vr.area_id').replace(/club_name/g, 'vr.club_name').replace(/club_id/g, 'vr.club_id').replace(/team/g, 'vr.team').replace(/status/g, 'vr.status')}
@@ -819,7 +855,12 @@ router.get('/venues/hierarchy', async (req: Request, res: Response) => {
     `;
 
     const result = await queryLocal(query, params);
-    const requirements = result.rows;
+
+    // Add priority_level to each requirement
+    const requirements = result.rows.map((req: any) => ({
+      ...req,
+      priority_level: calculatePriorityLevel(req.status, req.age_days || 0, slaDays)
+    }));
 
     // Helper to get level info from requirement
     const getLevelInfo = (reqData: any, level: string) => {
@@ -828,22 +869,35 @@ router.get('/venues/hierarchy', async (req: Request, res: Response) => {
           return {
             name: reqData.activity_name || 'Unknown Activity',
             id_field: 'activity_id',
-            id_value: reqData.activity_id
+            id_value: reqData.activity_id,
+            sort_order: reqData.activity_name || 'zzz'
           };
         case 'city':
           return {
             name: reqData.city_name || 'Unknown City',
             id_field: 'city_id',
-            id_value: reqData.city_id
+            id_value: reqData.city_id,
+            sort_order: reqData.city_name || 'zzz'
           };
         case 'area':
           return {
             name: reqData.area_name || 'Unknown Area',
             id_field: 'area_id',
-            id_value: reqData.area_id
+            id_value: reqData.area_id,
+            sort_order: reqData.area_name || 'zzz'
+          };
+        case 'priority':
+          const priorityLevel = reqData.priority_level || 'normal';
+          const priorityConfig = PRIORITY_CONFIG[priorityLevel] || PRIORITY_CONFIG.normal;
+          return {
+            name: priorityConfig.label,
+            id_field: 'priority_level',
+            id_value: priorityLevel,
+            sort_order: PRIORITY_ORDER[priorityLevel] || 3,
+            icon: priorityConfig.icon
           };
         default:
-          return { name: 'Unknown', id_field: '', id_value: null };
+          return { name: 'Unknown', id_field: '', id_value: null, sort_order: 999 };
       }
     };
 
@@ -879,8 +933,19 @@ router.get('/venues/hierarchy', async (req: Request, res: Response) => {
               deprioritised: 0
             },
             growth_effort_count: 0,
-            platform_effort_count: 0
+            platform_effort_count: 0,
+            // Priority tracking for this node
+            max_priority_order: 999,  // Will track highest priority (lowest number)
+            max_priority_level: 'normal',
+            priority_icon: '🟢',
+            sort_order: levelInfo.sort_order
           };
+
+          // For priority level nodes, set their own priority info
+          if (level === 'priority') {
+            node.priority_level = levelInfo.id_value;
+            node.priority_icon = levelInfo.icon;
+          }
 
           if (isLastLevel) {
             node.requirements = [];
@@ -902,6 +967,14 @@ router.get('/venues/hierarchy', async (req: Request, res: Response) => {
         if (reqData.growth_team_effort) node.growth_effort_count++;
         if (reqData.platform_team_effort) node.platform_effort_count++;
 
+        // Track the highest priority (lowest order number) requirement in this node
+        const reqPriorityOrder = PRIORITY_ORDER[reqData.priority_level] || 3;
+        if (reqPriorityOrder < node.max_priority_order) {
+          node.max_priority_order = reqPriorityOrder;
+          node.max_priority_level = reqData.priority_level;
+          node.priority_icon = PRIORITY_CONFIG[reqData.priority_level]?.icon || '🟢';
+        }
+
         if (i === hierarchyOrder.length - 1) {
           node.requirements.push({ ...reqData, type: 'venue' });
         } else {
@@ -911,14 +984,98 @@ router.get('/venues/hierarchy', async (req: Request, res: Response) => {
       }
     }
 
+    // Sort function for hierarchy nodes
+    const sortNodes = (nodes: any[]): any[] => {
+      return nodes.sort((a, b) => {
+        // First sort by priority (if tracking priority)
+        if (a.max_priority_order !== b.max_priority_order) {
+          return a.max_priority_order - b.max_priority_order;
+        }
+        // Then by sort_order (alphabetical for non-priority levels)
+        if (typeof a.sort_order === 'number' && typeof b.sort_order === 'number') {
+          return a.sort_order - b.sort_order;
+        }
+        if (typeof a.sort_order === 'string' && typeof b.sort_order === 'string') {
+          return a.sort_order.localeCompare(b.sort_order);
+        }
+        return 0;
+      });
+    };
+
+    // Sort requirements within nodes by age (oldest first)
+    const sortRequirements = (reqs: any[]): any[] => {
+      return reqs.sort((a, b) => (b.age_days || 0) - (a.age_days || 0));
+    };
+
     const convertMapToArray = (node: any): any => {
       if (node.children instanceof Map) {
-        node.children = Array.from(node.children.values()).map(convertMapToArray);
+        node.children = sortNodes(Array.from(node.children.values()).map(convertMapToArray));
+      }
+      if (node.requirements) {
+        node.requirements = sortRequirements(node.requirements);
       }
       return node;
     };
 
-    const hierarchy = Array.from(hierarchyMap.values()).map(convertMapToArray);
+    const hierarchy = sortNodes(Array.from(hierarchyMap.values()).map(convertMapToArray));
+
+    // Calculate priority counts
+    const activeRequirements = requirements.filter((r: any) =>
+      r.status !== 'done' && r.status !== 'deprioritised'
+    );
+
+    // Get unique age values from active requirements (for dynamic SLA dropdown)
+    const uniqueAgeDays = [...new Set(activeRequirements.map((r: any) => r.age_days || 0))]
+      .filter(age => age > 0)
+      .sort((a, b) => a - b);
+
+    // Calculate TAT statistics for completed venues
+    const completedRequirements = requirements.filter((r: any) =>
+      r.status === 'done' && r.created_at && r.completed_at
+    );
+
+    let tatStats = {
+      average_tat: 0,
+      total_completed: completedRequirements.length,
+      within_sla_percent: 0,
+      day_distribution: [] as { day: number; count: number; percent: number }[]
+    };
+
+    if (completedRequirements.length > 0) {
+      // Calculate TAT for each completed requirement
+      const tatValues = completedRequirements.map((r: any) => {
+        const created = new Date(r.created_at);
+        const completed = new Date(r.completed_at);
+        const diffMs = completed.getTime() - created.getTime();
+        return Math.max(1, Math.ceil(diffMs / (1000 * 60 * 60 * 24))); // At least 1 day
+      });
+
+      // Average TAT
+      tatStats.average_tat = Math.round((tatValues.reduce((a, b) => a + b, 0) / tatValues.length) * 10) / 10;
+
+      // Within SLA count
+      const withinSla = tatValues.filter(tat => tat <= slaDays).length;
+      tatStats.within_sla_percent = Math.round((withinSla / tatValues.length) * 100);
+
+      // Day-wise distribution (group by day buckets)
+      const maxDay = Math.max(...tatValues, slaDays + 1);
+      const dayBuckets: Record<number, number> = {};
+
+      tatValues.forEach(tat => {
+        const bucket = tat > slaDays ? slaDays + 1 : tat; // Group all > SLA into one bucket
+        dayBuckets[bucket] = (dayBuckets[bucket] || 0) + 1;
+      });
+
+      // Create distribution array
+      for (let day = 1; day <= slaDays + 1; day++) {
+        const count = dayBuckets[day] || 0;
+        tatStats.day_distribution.push({
+          day: day > slaDays ? -1 : day, // -1 indicates "> SLA days" bucket
+          count,
+          percent: Math.round((count / tatValues.length) * 100)
+        });
+      }
+    }
 
     const summary = {
       total: requirements.length,
@@ -927,7 +1084,16 @@ router.get('/venues/hierarchy', async (req: Request, res: Response) => {
       venue_aligned: requirements.filter((r: any) => r.status === 'venue_aligned').length,
       leader_approval: requirements.filter((r: any) => r.status === 'leader_approval').length,
       done: requirements.filter((r: any) => r.status === 'done').length,
-      deprioritised: requirements.filter((r: any) => r.status === 'deprioritised').length
+      deprioritised: requirements.filter((r: any) => r.status === 'deprioritised').length,
+      // Priority counts
+      overdue: activeRequirements.filter((r: any) => r.priority_level === 'critical').length,
+      due_soon: activeRequirements.filter((r: any) => r.priority_level === 'high').length,
+      on_track: activeRequirements.filter((r: any) => r.priority_level === 'normal').length,
+      sla_days: slaDays,
+      // Dynamic SLA options (unique age values in system)
+      unique_age_days: uniqueAgeDays,
+      // TAT statistics
+      tat_stats: tatStats
     };
 
     res.json({ success: true, hierarchy, summary });
@@ -956,7 +1122,7 @@ router.get('/venues/filter-options', async (req: Request, res: Response) => {
         ORDER BY LOWER(city_name), city_id
       `),
       queryLocal(`
-        SELECT DISTINCT ON (LOWER(area_name)) area_id as id, area_name as name
+        SELECT DISTINCT ON (LOWER(area_name)) area_id as id, area_name as name, city_id
         FROM venue_requirements
         WHERE area_id IS NOT NULL AND area_name IS NOT NULL
         ORDER BY LOWER(area_name), area_id
@@ -981,6 +1147,28 @@ router.get('/venues/filter-options', async (req: Request, res: Response) => {
   } catch (error) {
     console.error('Error fetching venue filter options:', error);
     res.status(500).json({ success: false, error: 'Failed to fetch filter options' });
+  }
+});
+
+// GET /api/requirements/venues/areas-by-city/:cityId - Get areas for a specific city
+// NOTE: This route MUST be before /:id to avoid matching
+router.get('/venues/areas-by-city/:cityId', async (req: Request, res: Response) => {
+  try {
+    const { cityId } = req.params;
+    const result = await queryLocal(`
+      SELECT DISTINCT area_id as id, area_name as name
+      FROM venue_requirements
+      WHERE city_id = $1 AND area_id IS NOT NULL AND area_name IS NOT NULL
+      ORDER BY area_name
+    `, [cityId]);
+
+    res.json({
+      success: true,
+      options: result.rows
+    });
+  } catch (error) {
+    console.error('Error fetching areas by city:', error);
+    res.status(500).json({ success: false, error: 'Failed to fetch areas' });
   }
 });
 
@@ -1053,8 +1241,8 @@ router.post('/venues', async (req: Request, res: Response) => {
         club_id, club_name,
         growth_team_effort, platform_team_effort,
         day_type_id, time_of_day, amenities_required,
-        comments, team, created_by
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+        capacity, comments, team, created_by
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
       RETURNING *`,
       [
         data.name,
@@ -1072,6 +1260,7 @@ router.post('/venues', async (req: Request, res: Response) => {
         data.day_type_id,
         data.time_of_day || null,
         data.amenities_required || null,
+        data.capacity || null,
         data.comments || null,
         team || null,
         'system'
@@ -1164,6 +1353,10 @@ router.put('/venues/:id', async (req: Request, res: Response) => {
       updates.push(`amenities_required = $${paramIndex++}`);
       params.push(data.amenities_required);
     }
+    if (data.capacity !== undefined) {
+      updates.push(`capacity = $${paramIndex++}`);
+      params.push(data.capacity);
+    }
 
     updates.push(`updated_at = CURRENT_TIMESTAMP`);
 
@@ -1253,22 +1446,39 @@ router.get('/clubs-and-launches', async (req: Request, res: Response) => {
 
     // Build club query from production database
     // Use events to determine club location (clubs don't have direct location_id)
+    // Note: location has area_id, city comes through area.city_id
+    // Strategy: Get most recent location per club, but also include historical locations
+    // for filtering purposes (a club that hosted in an area before should still appear)
     let clubQuery = `
       WITH club_locations AS (
+        -- Most recent location per club (priority 1)
         SELECT DISTINCT ON (e.club_id)
           e.club_id,
           ci.id as city_id,
           ci.name as city_name,
           ar.id as area_id,
-          ar.name as area_name
+          ar.name as area_name,
+          1 as priority
         FROM event e
         JOIN location l ON e.location_id = l.id
-        JOIN city ci ON l.city_id = ci.id
         LEFT JOIN area ar ON l.area_id = ar.id
-        WHERE e.status = 'CREATED'
+        LEFT JOIN city ci ON ar.city_id = ci.id
+        WHERE e.state = 'CREATED'
         ORDER BY e.club_id, e.created_at DESC
+      ),
+      club_all_locations AS (
+        -- All unique city/area combinations per club (for filtering)
+        SELECT DISTINCT
+          e.club_id,
+          ci.id as city_id,
+          ar.id as area_id
+        FROM event e
+        JOIN location l ON e.location_id = l.id
+        LEFT JOIN area ar ON l.area_id = ar.id
+        LEFT JOIN city ci ON ar.city_id = ci.id
+        WHERE e.state = 'CREATED'
       )
-      SELECT
+      SELECT DISTINCT
         c.pk as id,
         c.name,
         'club' as type,
@@ -1281,6 +1491,7 @@ router.get('/clubs-and-launches', async (req: Request, res: Response) => {
       FROM club c
       JOIN activity a ON c.activity_id = a.id
       LEFT JOIN club_locations cl ON c.pk = cl.club_id
+      LEFT JOIN club_all_locations cal ON c.pk = cal.club_id
       WHERE c.status = 'ACTIVE'
     `;
     const clubParams: any[] = [];
@@ -1291,11 +1502,13 @@ router.get('/clubs-and-launches', async (req: Request, res: Response) => {
       clubParams.push(activity_id);
     }
     if (city_id) {
-      clubQuery += ` AND cl.city_id = $${clubParamIndex++}`;
+      // Check if club has EVER hosted in this city (using club_all_locations for filtering)
+      clubQuery += ` AND cal.city_id = $${clubParamIndex++}`;
       clubParams.push(city_id);
     }
     if (area_id) {
-      clubQuery += ` AND cl.area_id = $${clubParamIndex++}`;
+      // Check if club has EVER hosted in this area (using club_all_locations for filtering)
+      clubQuery += ` AND cal.area_id = $${clubParamIndex++}`;
       clubParams.push(area_id);
     }
     if (search) {

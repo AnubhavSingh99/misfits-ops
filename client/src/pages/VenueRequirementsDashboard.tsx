@@ -2,8 +2,8 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { createPortal } from 'react-dom';
 import {
   ChevronDown,
-  ChevronRight,
   ChevronUp,
+  ChevronRight,
   Plus,
   MapPin,
   Loader2,
@@ -26,10 +26,12 @@ import {
   CheckCircle,
   UserCheck,
   Calendar,
-  Sun
+  Sun,
+  HelpCircle,
+  Info
 } from 'lucide-react';
-import type { VenueRequirement, VenueRequirementStatus, CreateRequirementRequest, RequirementComment, TimeOfDay } from '../../../shared/types';
-import { TIME_OF_DAY_OPTIONS } from '../../../shared/types';
+import type { VenueRequirement, VenueRequirementStatus, CreateRequirementRequest, RequirementComment, TimeOfDay, CapacityBucket } from '../../../shared/types';
+import { TIME_OF_DAY_OPTIONS, CAPACITY_BUCKET_OPTIONS } from '../../../shared/types';
 import { getTeamForClub, TEAMS, TEAM_KEYS, type TeamKey } from '../../../shared/teamConfig';
 import { MultiSelectDropdown } from '../components/ui/MultiSelectDropdown';
 
@@ -61,8 +63,17 @@ function calculateTAT(createdAt: string | undefined | null, completedAt: string 
   return `${diffDays}d`;
 }
 
-// Hierarchy level types
-type HierarchyLevel = 'activity' | 'city' | 'area';
+// Hierarchy level types (now includes priority)
+type HierarchyLevel = 'activity' | 'city' | 'area' | 'priority';
+
+// Priority configuration - Red (Critical), Yellow (High), Green (Normal)
+const PRIORITY_CONFIG = {
+  critical: { label: 'Critical', color: 'text-red-600', dotColor: 'bg-red-500', bgColor: 'bg-red-50', borderColor: 'border-red-200' },
+  high: { label: 'High', color: 'text-yellow-600', dotColor: 'bg-yellow-400', bgColor: 'bg-yellow-50', borderColor: 'border-yellow-200' },
+  normal: { label: 'Normal', color: 'text-green-600', dotColor: 'bg-green-500', bgColor: 'bg-green-50', borderColor: 'border-green-200' },
+  done: { label: 'Done', color: 'text-emerald-600', dotColor: 'bg-emerald-500', bgColor: 'bg-emerald-50', borderColor: 'border-emerald-200' },
+  deprioritised: { label: 'Deprioritised', color: 'text-gray-500', dotColor: 'bg-gray-400', bgColor: 'bg-gray-50', borderColor: 'border-gray-200' }
+} as const;
 
 // Filter options type
 interface FilterOption {
@@ -160,7 +171,7 @@ type TeamKey = 'blue' | 'green' | 'yellow';
 
 // Hierarchy node from API
 interface HierarchyNode {
-  type: 'activity' | 'city' | 'area';
+  type: 'activity' | 'city' | 'area' | 'priority';
   id: string;
   name: string;
   activity_id?: number;
@@ -170,11 +181,16 @@ interface HierarchyNode {
   status_counts: Record<VenueRequirementStatus, number>;
   growth_effort_count: number;
   platform_effort_count: number;
+  // Priority fields
+  priority_level?: string;
+  priority_icon?: string;
+  max_priority_level?: string;
+  max_priority_order?: number;
   children?: HierarchyNode[];
   requirements?: VenueRequirement[];
 }
 
-// Summary data (6 statuses)
+// Summary data (6 statuses + priority counts)
 interface Summary {
   total: number;
   not_picked: number;
@@ -183,6 +199,20 @@ interface Summary {
   leader_approval: number;
   done: number;
   deprioritised: number;
+  // Priority counts
+  overdue?: number;
+  due_soon?: number;
+  on_track?: number;
+  sla_days?: number;
+  // Dynamic SLA options
+  unique_age_days?: number[];
+  // TAT statistics
+  tat_stats?: {
+    average_tat: number;
+    total_completed: number;
+    within_sla_percent: number;
+    day_distribution: { day: number; count: number; percent: number }[];
+  };
 }
 
 // Context for creating requirement from hierarchy
@@ -224,10 +254,13 @@ export default function VenueRequirementsDashboard() {
     clubs: []
   });
 
-  // Hierarchy level ordering (drag-and-drop)
-  const [hierarchyLevels, setHierarchyLevels] = useState<HierarchyLevel[]>(['city', 'activity', 'area']);
+  // Hierarchy level ordering (drag-and-drop) - now includes priority
+  const [hierarchyLevels, setHierarchyLevels] = useState<HierarchyLevel[]>(['priority', 'city', 'activity', 'area']);
   const [enabledLevels, setEnabledLevels] = useState<Set<HierarchyLevel>>(new Set(['city', 'activity']));
   const [draggingLevel, setDraggingLevel] = useState<HierarchyLevel | null>(null);
+
+  // SLA setting (default 4 days)
+  const [slaDays, setSlaDays] = useState<number>(0); // 0 = All (no SLA filter)
 
   // Expanded state
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
@@ -243,20 +276,11 @@ export default function VenueRequirementsDashboard() {
   const [deleteRequirement, setDeleteRequirement] = useState<VenueRequirement | null>(null);
   const [deleting, setDeleting] = useState(false);
 
-  // Sort state for requirements
-  type SortField = 'created_at' | 'status' | 'day_type' | 'name';
-  type SortDirection = 'asc' | 'desc';
-  const [sortField, setSortField] = useState<SortField>('created_at');
-  const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
+  // Info modal state
+  const [showInfoModal, setShowInfoModal] = useState(false);
 
-  const handleSort = (field: SortField) => {
-    if (sortField === field) {
-      setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
-    } else {
-      setSortField(field);
-      setSortDirection('desc');
-    }
-  };
+  // TAT modal state
+  const [showTatModal, setShowTatModal] = useState(false);
 
   // Fetch filter options
   useEffect(() => {
@@ -294,6 +318,10 @@ export default function VenueRequirementsDashboard() {
         params.append('hierarchy_order', enabledOrder.join(','));
       }
 
+      // Pass SLA days setting (0 = All uses default 4 for priority calculation)
+      // Always pass sla_days so overdue/due_soon/on_track counts are calculated
+      params.append('sla_days', String(slaDays > 0 ? slaDays : 4));
+
       const response = await fetch(`${API_BASE}/requirements/venues/hierarchy?${params}`);
       const data = await response.json();
       if (data.success) {
@@ -306,7 +334,7 @@ export default function VenueRequirementsDashboard() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [filters, statusFilter, hierarchyLevels, enabledLevels]);
+  }, [filters, statusFilter, hierarchyLevels, enabledLevels, slaDays]);
 
   useEffect(() => {
     fetchData();
@@ -472,7 +500,8 @@ export default function VenueRequirementsDashboard() {
 
   // Status categories for splitting the view
   const ACTIVE_STATUSES: VenueRequirementStatus[] = ['not_picked', 'picked', 'venue_aligned', 'leader_approval'];
-  const COMPLETED_STATUSES: VenueRequirementStatus[] = ['done', 'deprioritised'];
+  const DONE_STATUSES: VenueRequirementStatus[] = ['done'];
+  const DEPRIORITISED_STATUSES: VenueRequirementStatus[] = ['deprioritised'];
 
   // Helper function to filter hierarchy by status
   const filterHierarchyByStatus = useCallback((
@@ -505,23 +534,27 @@ export default function VenueRequirementsDashboard() {
     }).filter(node => node.count > 0); // Remove empty nodes
   }, []);
 
-  // Filtered hierarchies for Active and Completed sections
+  // Filtered hierarchies for Active, Done, and Deprioritised sections
   const activeHierarchy = useMemo(() =>
     filterHierarchyByStatus(hierarchy, ACTIVE_STATUSES),
     [hierarchy, filterHierarchyByStatus]
   );
 
-  const completedHierarchy = useMemo(() =>
-    filterHierarchyByStatus(hierarchy, COMPLETED_STATUSES),
+  const doneHierarchy = useMemo(() =>
+    filterHierarchyByStatus(hierarchy, DONE_STATUSES),
     [hierarchy, filterHierarchyByStatus]
   );
 
-  const completedCount = useMemo(() =>
-    (summary?.done || 0) + (summary?.deprioritised || 0),
-    [summary]
+  const deprioritisedHierarchy = useMemo(() =>
+    filterHierarchyByStatus(hierarchy, DEPRIORITISED_STATUSES),
+    [hierarchy, filterHierarchyByStatus]
   );
 
-  // Auto-expand completed section when filtering to completed statuses
+  const doneCount = useMemo(() => summary?.done || 0, [summary]);
+  const deprioritisedCount = useMemo(() => summary?.deprioritised || 0, [summary]);
+  const completedCount = useMemo(() => doneCount + deprioritisedCount, [doneCount, deprioritisedCount]);
+
+  // Auto-expand completed section when filtering to done or deprioritised
   useEffect(() => {
     if (statusFilter === 'done' || statusFilter === 'deprioritised') {
       setCompletedSectionExpanded(true);
@@ -542,18 +575,28 @@ export default function VenueRequirementsDashboard() {
   };
 
   // Hierarchy row component
-  const HierarchyRow = ({ node, depth = 0, parentContext = {} }: { node: HierarchyNode; depth?: number; parentContext?: CreateContext }) => {
-    const isExpanded = expandedNodes.has(node.id);
+  const HierarchyRow = ({ node, depth = 0, parentContext = {}, sectionPrefix = '' }: { node: HierarchyNode; depth?: number; parentContext?: CreateContext; sectionPrefix?: string }) => {
+    const nodeKey = sectionPrefix ? `${sectionPrefix}-${node.id}` : node.id;
+    const isExpanded = expandedNodes.has(nodeKey);
     const hasChildren = (node.children && node.children.length > 0) || (node.requirements && node.requirements.length > 0);
 
     const TypeIcon = node.type === 'activity' ? Activity :
-                     node.type === 'city' ? Building2 : MapPin;
+                     node.type === 'city' ? Building2 :
+                     node.type === 'priority' ? TrendingUp : MapPin;
 
-    const typeColors = {
+    const typeColors: Record<string, string> = {
       activity: 'text-violet-500 bg-violet-50',
       city: 'text-blue-500 bg-blue-50',
-      area: 'text-emerald-500 bg-emerald-50'
+      area: 'text-emerald-500 bg-emerald-50',
+      priority: node.priority_level === 'critical' ? 'text-red-500 bg-red-50' :
+                node.priority_level === 'high' ? 'text-orange-500 bg-orange-50' :
+                node.priority_level === 'done' ? 'text-emerald-500 bg-emerald-50' :
+                node.priority_level === 'deprioritised' ? 'text-amber-500 bg-amber-50' :
+                'text-green-500 bg-green-50'
     };
+
+    // Get priority icon for non-priority nodes (shows max priority of children)
+    const priorityIcon = node.type !== 'priority' && node.priority_icon ? node.priority_icon : '';
 
     // Build context for this node
     const nodeContext = buildNodeContext(node, parentContext);
@@ -563,13 +606,16 @@ export default function VenueRequirementsDashboard() {
         <tr
           className={`group border-b border-gray-100 hover:bg-gray-50/80 transition-colors cursor-pointer
             ${depth === 0 ? 'bg-white' : depth === 1 ? 'bg-gray-50/30' : 'bg-gray-50/50'}`}
-          onClick={() => hasChildren && toggleExpand(node.id)}
+          onClick={(e) => {
+            e.preventDefault();
+            if (hasChildren) toggleExpand(nodeKey);
+          }}
         >
           {/* Expand/Name */}
           <td className="py-3 pr-4" style={{ paddingLeft: `${12 + depth * 24}px` }}>
             <div className="flex items-center gap-2">
               {hasChildren ? (
-                <button className="p-0.5 hover:bg-gray-200 rounded transition-colors">
+                <button type="button" className="p-0.5 hover:bg-gray-200 rounded transition-colors">
                   {isExpanded ? (
                     <ChevronDown className="h-4 w-4 text-gray-400" />
                   ) : (
@@ -579,11 +625,22 @@ export default function VenueRequirementsDashboard() {
               ) : (
                 <span className="w-5" />
               )}
-              <div className={`p-1.5 rounded-md ${typeColors[node.type]}`}>
+              <div className={`p-1.5 rounded-md ${typeColors[node.type] || typeColors.area}`}>
                 <TypeIcon className="h-3.5 w-3.5" />
               </div>
-              <span className="font-medium text-gray-900">{node.name}</span>
+              <span className="font-medium text-gray-900">
+                {node.type === 'priority' && node.priority_icon && (
+                  <span className="mr-1">{node.priority_icon}</span>
+                )}
+                {node.name}
+              </span>
               <span className="text-xs text-gray-400 font-mono">({node.count})</span>
+              {/* Show priority indicator for non-priority nodes */}
+              {priorityIcon && node.type !== 'priority' && (
+                <span className="ml-1 text-sm" title={`Highest priority: ${node.max_priority_level}`}>
+                  {priorityIcon}
+                </span>
+              )}
             </div>
           </td>
 
@@ -603,15 +660,19 @@ export default function VenueRequirementsDashboard() {
           <td className="py-3 px-4 text-center">
           </td>
 
+          {/* Capacity (empty for hierarchy rows) */}
+          <td className="py-3 px-4 text-center">
+          </td>
+
           {/* Time of Day (empty for hierarchy rows) */}
           <td className="py-3 px-4 text-center">
           </td>
 
           {/* Amenities (empty for hierarchy rows) */}
-          <td className="py-3 px-4 text-center max-w-[180px]">
+          <td className="py-3 px-4 text-center">
           </td>
 
-          {/* Created (empty for hierarchy rows) */}
+          {/* Age (empty for hierarchy rows) */}
           <td className="py-3 px-4 text-center">
           </td>
 
@@ -639,31 +700,11 @@ export default function VenueRequirementsDashboard() {
 
         {/* Children */}
         {isExpanded && node.children && node.children.map(child => (
-          <HierarchyRow key={child.id} node={child} depth={depth + 1} parentContext={nodeContext} />
+          <HierarchyRow key={`${sectionPrefix}-${child.id}`} node={child} depth={depth + 1} parentContext={nodeContext} sectionPrefix={sectionPrefix} />
         ))}
 
-        {/* Requirements (leaf nodes) - sorted */}
-        {isExpanded && node.requirements && [...node.requirements]
-          .sort((a, b) => {
-            let comparison = 0;
-            switch (sortField) {
-              case 'created_at':
-                comparison = new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime();
-                break;
-              case 'status':
-                const statusOrder: Record<string, number> = { not_picked: 0, picked: 1, venue_aligned: 2, leader_approval: 3, done: 4, deprioritised: 5 };
-                comparison = (statusOrder[a.status] || 0) - (statusOrder[b.status] || 0);
-                break;
-              case 'day_type':
-                comparison = (a.day_type_name || '').localeCompare(b.day_type_name || '');
-                break;
-              case 'name':
-                comparison = (a.name || '').localeCompare(b.name || '');
-                break;
-            }
-            return sortDirection === 'asc' ? comparison : -comparison;
-          })
-          .map(req => (
+        {/* Requirements (leaf nodes) */}
+        {isExpanded && node.requirements && node.requirements.map(req => (
           <RequirementRow
             key={req.id}
             requirement={req}
@@ -880,27 +921,45 @@ export default function VenueRequirementsDashboard() {
 
     const commentsCount = commentsFetched ? comments.length : ((req as any).comments_count || 0);
 
+    // Display name logic: club_name takes priority over custom name
+    const displayName = req.club_name || req.name;
+    const hasDescription = req.description && req.description.trim().length > 0;
+
     return (
       <>
         <tr className="group border-b border-gray-100 hover:bg-teal-50/30 transition-colors">
-          {/* Name */}
-          <td className="py-2.5 pr-4" style={{ paddingLeft: `${12 + depth * 24 + 20}px` }}>
+          {/* Name with Priority Dot */}
+          <td className="py-2.5 pr-4 max-w-[280px]" style={{ paddingLeft: `${12 + depth * 24 + 20}px` }}>
             <div className="flex items-center gap-2">
-              <div className={`p-1 rounded-full ${statusConfig.color.bg}`}>
+              {/* Priority dot */}
+              {req.status !== 'done' && req.status !== 'deprioritised' && (
+                <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${
+                  req.priority_level === 'critical' ? 'bg-red-500' :
+                  req.priority_level === 'high' ? 'bg-yellow-400' : 'bg-green-500'
+                }`} title={`Priority: ${req.priority_level || 'normal'}`}></span>
+              )}
+              <div className={`p-1 rounded-full flex-shrink-0 ${statusConfig.color.bg}`}>
                 <Home className={`h-3 w-3 ${statusConfig.color.text}`} />
               </div>
-              <div>
-                <span className="text-sm font-medium text-gray-800">{req.name}</span>
-                {req.description && (
-                  <div className="group/desc relative max-w-[300px]">
-                    <p className="text-xs text-gray-400 truncate cursor-help">{req.description}</p>
-                    {/* Tooltip on hover */}
-                    <div className="absolute z-[100] invisible group-hover/desc:visible opacity-0 group-hover/desc:opacity-100 transition-opacity duration-150 top-full left-0 mt-1.5 px-3 py-2 bg-white text-gray-700 text-xs rounded-lg shadow-lg border border-gray-200 whitespace-normal min-w-[200px] max-w-[350px]">
-                      <div className="absolute -top-1.5 left-4 w-3 h-3 bg-white border-l border-t border-gray-200 rotate-45"></div>
-                      <span className="relative">{req.description}</span>
-                    </div>
-                  </div>
+              <div className="relative flex flex-col min-w-0 group/tooltip">
+                <span className="text-sm font-medium text-gray-800 truncate cursor-help">
+                  {displayName}
+                </span>
+                {/* Description shown below name */}
+                {hasDescription && (
+                  <span className="text-xs text-gray-500 mt-0.5 truncate">
+                    {req.description}
+                  </span>
                 )}
+                {/* Custom tooltip on hover */}
+                <div className="absolute left-0 top-full mt-1 z-50 hidden group-hover/tooltip:block">
+                  <div className="bg-gray-900 text-white text-xs rounded-lg px-3 py-2 shadow-lg max-w-[300px] whitespace-normal">
+                    <div className="font-medium">{displayName}</div>
+                    {hasDescription && (
+                      <div className="mt-1 text-gray-300 text-[11px]">{req.description}</div>
+                    )}
+                  </div>
+                </div>
               </div>
             </div>
           </td>
@@ -931,39 +990,45 @@ export default function VenueRequirementsDashboard() {
             )}
           </td>
 
-          {/* Time of Day */}
+          {/* Capacity */}
           <td className="py-2.5 px-4 text-center">
-            {req.time_of_day && req.time_of_day.length > 0 ? (
-              <div className="flex flex-wrap justify-center gap-1">
-                {req.time_of_day.map((slot: TimeOfDay) => {
-                  const option = TIME_OF_DAY_OPTIONS.find(o => o.value === slot);
-                  return (
-                    <span
-                      key={slot}
-                      className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-50 text-amber-700 border border-amber-200"
-                      title={option?.time || slot}
-                    >
-                      {option?.icon} {option?.label.split(' ')[0] || slot}
-                    </span>
-                  );
-                })}
-              </div>
+            {req.capacity ? (
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-sky-50 text-sky-600 border border-sky-200">
+                {req.capacity}
+              </span>
             ) : (
               <span className="text-xs text-gray-400">-</span>
             )}
           </td>
 
-          {/* Amenities */}
-          <td className="py-2.5 px-4 text-center max-w-[180px]">
-            {req.amenities_required ? (
-              <div className="group relative inline-block max-w-full">
-                <span className="text-xs text-gray-600 block truncate cursor-help">
-                  {req.amenities_required}
-                </span>
-                {/* Tooltip on hover - positioned below */}
-                <div className="absolute z-[100] invisible group-hover:visible opacity-0 group-hover:opacity-100 transition-opacity duration-150 top-full left-1/2 -translate-x-1/2 mt-1.5 px-3 py-2 bg-white text-gray-700 text-xs rounded-lg shadow-lg border border-gray-200 whitespace-normal min-w-[150px] max-w-[280px]">
-                  <div className="absolute -top-1.5 left-1/2 -translate-x-1/2 w-3 h-3 bg-white border-l border-t border-gray-200 rotate-45"></div>
-                  <span className="relative">{req.amenities_required}</span>
+          {/* Time of Day */}
+          <td className="py-2.5 px-4 text-center">
+            {req.time_of_day && req.time_of_day.length > 0 ? (
+              <div className="relative group/time cursor-help">
+                <div className="flex flex-wrap justify-center gap-0.5">
+                  {req.time_of_day.slice(0, 2).map((slot: TimeOfDay) => {
+                    const option = TIME_OF_DAY_OPTIONS.find(o => o.value === slot);
+                    return (
+                      <span
+                        key={slot}
+                        className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-50 text-amber-700 border border-amber-200"
+                      >
+                        {option?.icon} {option?.time?.split('-')[0]}
+                      </span>
+                    );
+                  })}
+                  {req.time_of_day.length > 2 && (
+                    <span className="text-[10px] text-amber-600 font-medium">
+                      +{req.time_of_day.length - 2}
+                    </span>
+                  )}
+                </div>
+                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-2 bg-gray-900 text-white text-xs rounded-lg whitespace-nowrap opacity-0 invisible group-hover/time:opacity-100 group-hover/time:visible z-50 shadow-lg">
+                  {req.time_of_day.map((s: TimeOfDay) => {
+                    const opt = TIME_OF_DAY_OPTIONS.find(o => o.value === s);
+                    return opt ? `${opt.icon} ${opt.label} (${opt.time})` : s;
+                  }).join(' • ')}
+                  <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-gray-900"></div>
                 </div>
               </div>
             ) : (
@@ -971,9 +1036,40 @@ export default function VenueRequirementsDashboard() {
             )}
           </td>
 
-          {/* Created */}
+          {/* Amenities */}
+          <td className="py-2.5 px-4 text-center max-w-[120px]">
+            {req.amenities_required ? (
+              <div className="relative group/amenity cursor-help">
+                <span className="text-xs text-gray-600 truncate block max-w-[100px]">
+                  {req.amenities_required.length > 15 ? req.amenities_required.slice(0, 15) + '...' : req.amenities_required}
+                </span>
+                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-2 bg-gray-900 text-white text-xs rounded-lg max-w-[200px] opacity-0 invisible group-hover/amenity:opacity-100 group-hover/amenity:visible z-50 shadow-lg">
+                  {req.amenities_required}
+                  <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-gray-900"></div>
+                </div>
+              </div>
+            ) : (
+              <span className="text-xs text-gray-400">-</span>
+            )}
+          </td>
+
+          {/* Age */}
           <td className="py-2.5 px-4 text-center">
-            <span className="text-xs text-gray-500">{formatDate(req.created_at)}</span>
+            {req.status === 'done' || req.status === 'deprioritised' ? (
+              <span className="text-xs text-gray-400">-</span>
+            ) : (
+              <div className="flex flex-col items-center">
+                <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ${
+                  req.priority_level === 'critical'
+                    ? 'bg-red-100 text-red-700 border border-red-200'
+                    : req.priority_level === 'high'
+                      ? 'bg-yellow-100 text-yellow-700 border border-yellow-300'
+                      : 'bg-green-50 text-green-700 border border-green-200'
+                }`}>
+                  Day {req.age_days ?? 0}
+                </span>
+              </div>
+            )}
           </td>
 
           {/* Completed */}
@@ -1213,7 +1309,7 @@ export default function VenueRequirementsDashboard() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-teal-50/30">
-      <div className="max-w-[1800px] mx-auto px-6 py-8">
+      <div className="max-w-7xl mx-auto px-6 py-8">
         {/* Header */}
         <div className="mb-8">
           <div className="flex items-center justify-between">
@@ -1222,7 +1318,16 @@ export default function VenueRequirementsDashboard() {
                 <MapPin className="h-6 w-6 text-white" />
               </div>
               <div>
-                <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Venue Requirements</h1>
+                <div className="flex items-center gap-2">
+                  <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Venue Requirements</h1>
+                  <button
+                    onClick={() => setShowInfoModal(true)}
+                    className="p-1.5 text-gray-400 hover:text-teal-600 hover:bg-teal-50 rounded-full transition-colors"
+                    title="Status & Priority Guide"
+                  >
+                    <HelpCircle className="h-5 w-5" />
+                  </button>
+                </div>
                 <p className="text-sm text-gray-500 mt-0.5">Track venue sourcing across activities and locations</p>
               </div>
             </div>
@@ -1247,9 +1352,76 @@ export default function VenueRequirementsDashboard() {
           </div>
         </div>
 
+        {/* Priority Alerts & SLA Setting - Always visible */}
+        {summary && (
+          <div className={`flex items-center justify-between rounded-xl border p-4 mb-4 ${
+            (summary.overdue && summary.overdue > 0) || (summary.due_soon && summary.due_soon > 0)
+              ? 'bg-gradient-to-r from-red-50 via-yellow-50 to-green-50 border-red-100'
+              : 'bg-gradient-to-r from-green-50 to-emerald-50 border-green-100'
+          }`}>
+            <div className="flex items-center gap-6">
+              <div className="flex items-center gap-3">
+                <span className={`w-4 h-4 rounded-full ${(summary.overdue || 0) > 0 ? 'bg-red-500' : 'bg-red-200'}`}></span>
+                <div>
+                  <span className={`text-xl font-bold ${(summary.overdue || 0) > 0 ? 'text-red-600' : 'text-gray-400'}`}>
+                    {summary.overdue || 0}
+                  </span>
+                  <span className={`text-sm ml-1 ${(summary.overdue || 0) > 0 ? 'text-red-600' : 'text-gray-400'}`}>
+                    Overdue
+                  </span>
+                </div>
+              </div>
+              <div className="flex items-center gap-3">
+                <span className={`w-4 h-4 rounded-full ${(summary.due_soon || 0) > 0 ? 'bg-yellow-400' : 'bg-yellow-200'}`}></span>
+                <div>
+                  <span className={`text-xl font-bold ${(summary.due_soon || 0) > 0 ? 'text-yellow-600' : 'text-gray-400'}`}>
+                    {summary.due_soon || 0}
+                  </span>
+                  <span className={`text-sm ml-1 ${(summary.due_soon || 0) > 0 ? 'text-yellow-600' : 'text-gray-400'}`}>
+                    Due Soon
+                  </span>
+                </div>
+              </div>
+              <div className="flex items-center gap-3">
+                <span className={`w-4 h-4 rounded-full ${(summary.on_track || 0) > 0 ? 'bg-green-500' : 'bg-green-200'}`}></span>
+                <div>
+                  <span className={`text-xl font-bold ${(summary.on_track || 0) > 0 ? 'text-green-600' : 'text-gray-400'}`}>
+                    {summary.on_track || 0}
+                  </span>
+                  <span className={`text-sm ml-1 ${(summary.on_track || 0) > 0 ? 'text-green-600' : 'text-gray-400'}`}>
+                    On Track
+                  </span>
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 text-sm text-gray-600">
+              <span>⚙️ SLA Target:</span>
+              <select
+                value={slaDays}
+                onChange={(e) => setSlaDays(parseInt(e.target.value))}
+                className="px-2 py-1 rounded border border-gray-300 text-sm font-medium bg-white"
+              >
+                {/* "All" option to see all requirements */}
+                <option value={0}>All</option>
+                {/* Dynamic SLA options from actual age values in system only */}
+                {(() => {
+                  const dynamicDays = summary.unique_age_days || [];
+                  // If no dynamic days, show default range 1-7
+                  const allDays = dynamicDays.length > 0
+                    ? dynamicDays.sort((a: number, b: number) => a - b)
+                    : [1, 2, 3, 4, 5, 6, 7];
+                  return allDays.map((d: number) => (
+                    <option key={d} value={d}>{d} days</option>
+                  ));
+                })()}
+              </select>
+            </div>
+          </div>
+        )}
+
         {/* Summary Tiles */}
         {summary && (
-          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3 mb-6">
+          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3 mb-6">
             <SummaryTile
               label="Total"
               count={summary.total}
@@ -1292,6 +1464,23 @@ export default function VenueRequirementsDashboard() {
               icon={Pause}
               color="amber"
             />
+            {/* TAT Tile - Clickable */}
+            <div
+              onClick={() => setShowTatModal(true)}
+              className="rounded-xl p-4 bg-gradient-to-br from-green-50 to-emerald-50 border border-green-200 cursor-pointer hover:shadow-md hover:-translate-y-0.5 transition-all"
+            >
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-xs font-medium text-green-600 uppercase tracking-wider">Avg TAT</span>
+                <Clock size={16} className="text-green-500" />
+              </div>
+              <div className="flex items-baseline gap-1">
+                <span className="text-2xl font-bold text-green-600">
+                  {summary.tat_stats?.average_tat || 0}
+                </span>
+                <span className="text-sm text-green-600">days</span>
+              </div>
+              <span className="text-[10px] text-green-500">Click for details →</span>
+            </div>
           </div>
         )}
 
@@ -1366,23 +1555,37 @@ export default function VenueRequirementsDashboard() {
 
             <div className="h-6 w-px bg-gray-200" />
 
-            {/* Status Filter */}
+            {/* Status Filter with Tooltips */}
             <div className="flex items-center gap-1">
               {(Object.keys(STATUS_CONFIG) as VenueRequirementStatus[]).map(status => {
                 const config = STATUS_CONFIG[status];
                 const isActive = statusFilter === status;
+                const tooltipText: Record<VenueRequirementStatus, string> = {
+                  not_picked: 'Not Picked — New, not yet assigned',
+                  picked: 'Picked — Being worked on',
+                  venue_aligned: 'Venue Aligned — Venue found, pending confirmation',
+                  leader_approval: 'Leader Approval — Awaiting sign-off',
+                  done: 'Done — Completed successfully',
+                  deprioritised: 'Deprioritised — On hold'
+                };
                 return (
-                  <button
-                    key={status}
-                    onClick={() => setStatusFilter(isActive ? null : status)}
-                    className={`px-2.5 py-1 text-xs font-medium rounded-lg transition-all ${
-                      isActive
-                        ? `${config.color.bg} ${config.color.text}`
-                        : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
-                    }`}
-                  >
-                    {config.shortLabel}
-                  </button>
+                  <div key={status} className="relative group">
+                    <button
+                      onClick={() => setStatusFilter(isActive ? null : status)}
+                      className={`px-2.5 py-1 text-xs font-medium rounded-lg transition-all ${
+                        isActive
+                          ? `${config.color.bg} ${config.color.text}`
+                          : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+                      }`}
+                    >
+                      {config.shortLabel}
+                    </button>
+                    {/* Tooltip */}
+                    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2.5 py-1.5 bg-gray-900 text-white text-xs rounded-lg whitespace-nowrap opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-150 z-50 pointer-events-none">
+                      {tooltipText[status]}
+                      <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-gray-900" />
+                    </div>
+                  </div>
                 );
               })}
             </div>
@@ -1417,16 +1620,17 @@ export default function VenueRequirementsDashboard() {
                 const isEnabled = enabledLevels.has(level);
                 const isDragging = draggingLevel === level;
                 const isDragTarget = draggingLevel && draggingLevel !== level;
-                const levelConfig = {
+                const levelConfig: Record<HierarchyLevel, { icon: any; color: string; label: string }> = {
                   activity: { icon: Activity, color: 'teal', label: 'Activity' },
                   city: { icon: Building2, color: 'blue', label: 'City' },
-                  area: { icon: MapPin, color: 'cyan', label: 'Area' }
+                  area: { icon: MapPin, color: 'cyan', label: 'Area' },
+                  priority: { icon: TrendingUp, color: 'red', label: 'Priority' }
                 };
                 const config = levelConfig[level];
                 const Icon = config.icon;
 
                 // Enhanced color styles
-                const colorStyles = {
+                const colorStyles: Record<string, { enabled: string; disabled: string }> = {
                   teal: {
                     enabled: 'bg-teal-50 text-teal-700 border-teal-200 hover:bg-teal-100 hover:border-teal-300',
                     disabled: 'bg-gray-50 text-gray-400 border-gray-200 hover:bg-gray-100 hover:border-gray-300'
@@ -1437,6 +1641,10 @@ export default function VenueRequirementsDashboard() {
                   },
                   cyan: {
                     enabled: 'bg-cyan-50 text-cyan-700 border-cyan-200 hover:bg-cyan-100 hover:border-cyan-300',
+                    disabled: 'bg-gray-50 text-gray-400 border-gray-200 hover:bg-gray-100 hover:border-gray-300'
+                  },
+                  red: {
+                    enabled: 'bg-red-50 text-red-700 border-red-200 hover:bg-red-100 hover:border-red-300',
                     disabled: 'bg-gray-50 text-gray-400 border-gray-200 hover:bg-gray-100 hover:border-gray-300'
                   }
                 };
@@ -1554,7 +1762,7 @@ export default function VenueRequirementsDashboard() {
         </div>
 
         {/* Active Requirements Section */}
-        <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm">
           {loading ? (
             <div className="flex items-center justify-center py-20">
               <Loader2 className="h-8 w-8 text-teal-500 animate-spin" />
@@ -1572,74 +1780,55 @@ export default function VenueRequirementsDashboard() {
               <p className="text-xs mt-1">All requirements are completed or deprioritised</p>
             </div>
           ) : (
-            <table className="w-full">
-              <thead>
-                <tr className="border-b border-gray-200 bg-gray-50/80">
-                  <th className="text-left py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+            <div className="overflow-x-auto max-h-[60vh] overflow-y-auto">
+            <table className="w-full min-w-[1200px]">
+              <thead className="sticky top-0 z-10">
+                <tr className="border-b border-gray-200 bg-gray-50 shadow-sm">
+                  <th className="text-left py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[200px]">
                     Hierarchy
                   </th>
-                  <th
-                    className="text-left py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition-colors"
-                    onClick={() => handleSort('status')}
-                  >
-                    <div className="flex items-center gap-1">
-                      Status
-                      {sortField === 'status' && (
-                        sortDirection === 'asc' ? <ChevronUp size={14} /> : <ChevronDown size={14} />
-                      )}
-                    </div>
+                  <th className="text-left py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[110px]">
+                    Status
                   </th>
-                  <th
-                    className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition-colors"
-                    onClick={() => handleSort('day_type')}
-                  >
-                    <div className="flex items-center justify-center gap-1">
-                      Day Type
-                      {sortField === 'day_type' && (
-                        sortDirection === 'asc' ? <ChevronUp size={14} /> : <ChevronDown size={14} />
-                      )}
-                    </div>
+                  <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[90px]">
+                    Day Type
                   </th>
-                  <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                    Time of Day
+                  <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[80px]">
+                    Capacity
                   </th>
-                  <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider max-w-[180px]">
+                  <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[100px]">
+                    Time
+                  </th>
+                  <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[120px]">
                     Amenities
                   </th>
-                  <th
-                    className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition-colors"
-                    onClick={() => handleSort('created_at')}
-                  >
-                    <div className="flex items-center justify-center gap-1">
-                      Created
-                      {sortField === 'created_at' && (
-                        sortDirection === 'asc' ? <ChevronUp size={14} /> : <ChevronDown size={14} />
-                      )}
-                    </div>
+                  <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[70px]">
+                    Age
                   </th>
-                  <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                  <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[90px]">
                     Completed
                   </th>
-                  <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                  <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[60px]">
                     TAT
                   </th>
-                  <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                  <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[120px]">
                     Actions
                   </th>
                 </tr>
               </thead>
               <tbody>
                 {activeHierarchy.map(node => (
-                  <HierarchyRow key={node.id} node={node} />
+                  <HierarchyRow key={`active-${node.id}`} node={node} sectionPrefix="active" />
                 ))}
               </tbody>
             </table>
+            </div>
           )}
         </div>
 
-        {/* Completed Requirements Section - Collapsible */}
+        {/* Done & Deprioritised Section - Collapsible */}
         {!loading && completedCount > 0 && (
-          <div className="mt-6 bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+          <div className="mt-6 bg-white rounded-xl border border-gray-200 shadow-sm">
             <button
               onClick={() => setCompletedSectionExpanded(!completedSectionExpanded)}
               className="w-full px-4 py-3 flex items-center justify-between bg-gray-50/80 hover:bg-gray-100 transition-colors"
@@ -1647,75 +1836,122 @@ export default function VenueRequirementsDashboard() {
               <div className="flex items-center gap-2">
                 <CheckCircle className="h-5 w-5 text-emerald-500" />
                 <span className="font-medium text-gray-700">
-                  Completed & Deprioritised ({completedCount})
+                  Done & Deprioritised ({completedCount})
                 </span>
               </div>
               {completedSectionExpanded ? <ChevronUp size={20} className="text-gray-400" /> : <ChevronDown size={20} className="text-gray-400" />}
             </button>
 
-            {completedSectionExpanded && completedHierarchy.length > 0 && (
-              <table className="w-full">
-                <thead>
-                  <tr className="border-b border-gray-200 bg-gray-50/50">
-                    <th className="text-left py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                      Hierarchy
-                    </th>
-                    <th
-                      className="text-left py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition-colors"
-                      onClick={() => handleSort('status')}
-                    >
-                      <div className="flex items-center gap-1">
-                        Status
-                        {sortField === 'status' && (
-                          sortDirection === 'asc' ? <ChevronUp size={14} /> : <ChevronDown size={14} />
-                        )}
+            {completedSectionExpanded && (
+              <div className="divide-y divide-gray-200">
+                {/* Done Sub-section */}
+                {doneCount > 0 && (
+                  <div>
+                    <div className="px-4 py-2 bg-emerald-50/50 border-b border-emerald-100">
+                      <div className="flex items-center gap-2">
+                        <CheckCircle className="h-4 w-4 text-emerald-500" />
+                        <span className="text-sm font-medium text-emerald-700">Done ({doneCount})</span>
                       </div>
-                    </th>
-                    <th
-                      className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition-colors"
-                      onClick={() => handleSort('day_type')}
-                    >
-                      <div className="flex items-center justify-center gap-1">
-                        Day Type
-                        {sortField === 'day_type' && (
-                          sortDirection === 'asc' ? <ChevronUp size={14} /> : <ChevronDown size={14} />
-                        )}
+                    </div>
+                    <div className="overflow-x-auto max-h-[40vh] overflow-y-auto"><table className="w-full min-w-[1200px]">
+                      <thead className="sticky top-0 z-10">
+                        <tr className="border-b border-gray-200 bg-gray-50 shadow-sm">
+                          <th className="text-left py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[200px]">
+                            Hierarchy
+                          </th>
+                          <th className="text-left py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[110px]">
+                            Status
+                          </th>
+                          <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[90px]">
+                            Day Type
+                          </th>
+                          <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[90px]">
+                            Capacity
+                          </th>
+                          <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[90px]">
+                            Time
+                          </th>
+                          <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[110px]">
+                            Amenities
+                          </th>
+                          <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[70px]">
+                            Age
+                          </th>
+                          <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[90px]">
+                            Completed
+                          </th>
+                          <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[60px]">
+                            TAT
+                          </th>
+                          <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[120px]">
+                            Actions
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {doneHierarchy.map(node => (
+                          <HierarchyRow key={`done-${node.id}`} node={node} sectionPrefix="done" />
+                        ))}
+                      </tbody>
+                    </table>
+                    </div>
+                  </div>
+                )}
+
+                {/* Deprioritised Sub-section */}
+                {deprioritisedCount > 0 && (
+                  <div>
+                    <div className="px-4 py-2 bg-gray-100/50 border-b border-gray-200">
+                      <div className="flex items-center gap-2">
+                        <Pause className="h-4 w-4 text-gray-500" />
+                        <span className="text-sm font-medium text-gray-600">Deprioritised ({deprioritisedCount})</span>
                       </div>
-                    </th>
-                    <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                      Time of Day
-                    </th>
-                    <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider max-w-[180px]">
-                      Amenities
-                    </th>
-                    <th
-                      className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition-colors"
-                      onClick={() => handleSort('created_at')}
-                    >
-                      <div className="flex items-center justify-center gap-1">
-                        Created
-                        {sortField === 'created_at' && (
-                          sortDirection === 'asc' ? <ChevronUp size={14} /> : <ChevronDown size={14} />
-                        )}
-                      </div>
-                    </th>
-                    <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                      Completed
-                    </th>
-                    <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                      TAT
-                    </th>
-                    <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                      Actions
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {completedHierarchy.map(node => (
-                    <HierarchyRow key={node.id} node={node} />
-                  ))}
-                </tbody>
-              </table>
+                    </div>
+                    <div className="overflow-x-auto max-h-[40vh] overflow-y-auto"><table className="w-full min-w-[1200px]">
+                      <thead className="sticky top-0 z-10">
+                        <tr className="border-b border-gray-200 bg-gray-50 shadow-sm">
+                          <th className="text-left py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[200px]">
+                            Hierarchy
+                          </th>
+                          <th className="text-left py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[110px]">
+                            Status
+                          </th>
+                          <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[90px]">
+                            Day Type
+                          </th>
+                          <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[90px]">
+                            Capacity
+                          </th>
+                          <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[90px]">
+                            Time
+                          </th>
+                          <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[110px]">
+                            Amenities
+                          </th>
+                          <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[70px]">
+                            Age
+                          </th>
+                          <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[90px]">
+                            Completed
+                          </th>
+                          <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[60px]">
+                            TAT
+                          </th>
+                          <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[120px]">
+                            Actions
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {deprioritisedHierarchy.map(node => (
+                          <HierarchyRow key={`deprioritised-${node.id}`} node={node} sectionPrefix="deprioritised" />
+                        ))}
+                      </tbody>
+                    </table>
+                    </div>
+                  </div>
+                )}
+              </div>
             )}
           </div>
         )}
@@ -1794,6 +2030,253 @@ export default function VenueRequirementsDashboard() {
           onSave={(data) => updateRequirement(editingRequirement.id, data)}
         />
       )}
+
+      {/* Info Modal - Status & Priority Guide */}
+      {showInfoModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/50" onClick={() => setShowInfoModal(false)} />
+          <div className="relative bg-white rounded-xl shadow-2xl w-full max-w-lg mx-4 overflow-hidden">
+            {/* Header */}
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 bg-gradient-to-r from-teal-50 to-cyan-50">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-teal-100 rounded-lg">
+                  <Info size={20} className="text-teal-600" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-gray-900">Status & Priority Guide</h3>
+                  <p className="text-sm text-gray-500">Understanding the venue requirement workflow</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowInfoModal(false)}
+                className="p-1.5 hover:bg-gray-100 rounded-lg transition-colors"
+              >
+                <X size={20} className="text-gray-500" />
+              </button>
+            </div>
+
+            {/* Content */}
+            <div className="px-6 py-5 max-h-[70vh] overflow-y-auto">
+              {/* Statuses Section */}
+              <div className="mb-6">
+                <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">Requirement Statuses</h4>
+                <div className="space-y-2.5">
+                  <div className="flex items-center gap-3">
+                    <span className="inline-flex items-center justify-center w-8 h-6 rounded text-xs font-semibold bg-slate-100 text-slate-600">NP</span>
+                    <div>
+                      <span className="font-medium text-gray-900">Not Picked</span>
+                      <span className="text-gray-500 text-sm ml-2">— New requirement, not yet assigned to anyone</span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className="inline-flex items-center justify-center w-8 h-6 rounded text-xs font-semibold bg-blue-100 text-blue-700">PK</span>
+                    <div>
+                      <span className="font-medium text-gray-900">Picked</span>
+                      <span className="text-gray-500 text-sm ml-2">— Being actively worked on by the team</span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className="inline-flex items-center justify-center w-8 h-6 rounded text-xs font-semibold bg-teal-100 text-teal-700">VA</span>
+                    <div>
+                      <span className="font-medium text-gray-900">Venue Aligned</span>
+                      <span className="text-gray-500 text-sm ml-2">— Venue found, pending final confirmation</span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className="inline-flex items-center justify-center w-8 h-6 rounded text-xs font-semibold bg-purple-100 text-purple-700">LA</span>
+                    <div>
+                      <span className="font-medium text-gray-900">Leader Approval</span>
+                      <span className="text-gray-500 text-sm ml-2">— Awaiting leader sign-off before completion</span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className="inline-flex items-center justify-center w-8 h-6 rounded text-xs font-semibold bg-emerald-100 text-emerald-700">✓</span>
+                    <div>
+                      <span className="font-medium text-gray-900">Done</span>
+                      <span className="text-gray-500 text-sm ml-2">— Completed successfully</span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className="inline-flex items-center justify-center w-8 h-6 rounded text-xs font-semibold bg-amber-100 text-amber-700">DP</span>
+                    <div>
+                      <span className="font-medium text-gray-900">Deprioritised</span>
+                      <span className="text-gray-500 text-sm ml-2">— On hold or no longer needed</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Divider */}
+              <div className="border-t border-gray-200 my-5" />
+
+              {/* Priority Section */}
+              <div className="mb-6">
+                <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">Priority Levels</h4>
+                <div className="space-y-2.5">
+                  <div className="flex items-center gap-3">
+                    <span className="w-4 h-4 rounded-full bg-red-500 flex-shrink-0"></span>
+                    <div>
+                      <span className="font-medium text-red-600">Critical</span>
+                      <span className="text-gray-500 text-sm ml-2">— Exceeded SLA (more than {slaDays || 4} days old)</span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className="w-4 h-4 rounded-full bg-yellow-400 flex-shrink-0"></span>
+                    <div>
+                      <span className="font-medium text-yellow-600">High</span>
+                      <span className="text-gray-500 text-sm ml-2">— Approaching SLA ({(slaDays || 4) - 1}-{slaDays || 4} days old)</span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className="w-4 h-4 rounded-full bg-green-500 flex-shrink-0"></span>
+                    <div>
+                      <span className="font-medium text-green-600">Normal</span>
+                      <span className="text-gray-500 text-sm ml-2">— Within SLA (less than {(slaDays || 4) - 1} days old)</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* SLA Info Box */}
+              <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg p-4 border border-blue-100">
+                <div className="flex items-start gap-3">
+                  <span className="text-xl">💡</span>
+                  <div>
+                    <p className="font-medium text-gray-900 mb-1">How Priority Works</p>
+                    <p className="text-sm text-gray-600">
+                      Priority is calculated automatically based on the age of each requirement.
+                      {slaDays > 0 ? (
+                        <>The current SLA target is <span className="font-semibold text-blue-600">{slaDays} days</span>.</>
+                      ) : (
+                        <>Select an SLA target from the dropdown to filter by priority.</>
+                      )}
+                      {' '}Requirements older than the SLA become <span className="text-red-600 font-medium">Critical</span> priority
+                      and should be addressed first.
+                    </p>
+                    <p className="text-sm text-gray-500 mt-2">
+                      Use the <span className="font-medium">Priority</span> chip in Hierarchy Order to group requirements by urgency.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="px-6 py-4 border-t border-gray-200 bg-gray-50">
+              <button
+                onClick={() => setShowInfoModal(false)}
+                className="w-full px-4 py-2 text-sm font-medium text-white bg-teal-600 rounded-lg hover:bg-teal-700 transition-colors"
+              >
+                Got it
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* TAT Analysis Modal */}
+      {showTatModal && summary?.tat_stats && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/50" onClick={() => setShowTatModal(false)} />
+          <div className="relative bg-white rounded-xl shadow-2xl w-full max-w-lg mx-4 overflow-hidden">
+            {/* Header */}
+            <div className="px-6 py-4 border-b border-gray-200 bg-gradient-to-r from-green-50 to-emerald-50">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-green-100 rounded-lg">
+                    <Clock size={20} className="text-green-600" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-bold text-gray-900">📊 TAT Analysis</h3>
+                    <p className="text-sm text-green-600">Turn Around Time for completed venues</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setShowTatModal(false)}
+                  className="p-1.5 hover:bg-gray-100 rounded-lg transition-colors"
+                >
+                  <X size={20} className="text-gray-500" />
+                </button>
+              </div>
+            </div>
+
+            {/* Content */}
+            <div className="px-6 py-5">
+              {/* Stats Summary */}
+              <div className="grid grid-cols-3 gap-4 mb-6">
+                <div className="bg-gray-50 rounded-lg p-4 text-center border border-gray-100">
+                  <div className="text-2xl font-bold text-green-600">{summary.tat_stats.average_tat}</div>
+                  <div className="text-xs text-gray-500 mt-1">Average TAT (days)</div>
+                </div>
+                <div className="bg-gray-50 rounded-lg p-4 text-center border border-gray-100">
+                  <div className="text-2xl font-bold text-blue-600">{summary.tat_stats.total_completed}</div>
+                  <div className="text-xs text-gray-500 mt-1">Total Completed</div>
+                </div>
+                <div className="bg-gray-50 rounded-lg p-4 text-center border border-gray-100">
+                  <div className="text-2xl font-bold text-emerald-600">{summary.tat_stats.within_sla_percent}%</div>
+                  <div className="text-xs text-gray-500 mt-1">Within {slaDays} Days</div>
+                </div>
+              </div>
+
+              {/* Day-wise Distribution */}
+              <div>
+                <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">Day-wise Completion Distribution</h4>
+                <div className="space-y-2">
+                  {summary.tat_stats.day_distribution.map((item, idx) => {
+                    const barColors = ['bg-green-500', 'bg-emerald-500', 'bg-cyan-500', 'bg-blue-500', 'bg-amber-500', 'bg-orange-500', 'bg-red-500'];
+                    const barColor = item.day === -1 ? 'bg-red-500' : barColors[Math.min(idx, barColors.length - 1)];
+                    return (
+                      <div key={idx} className="flex items-center gap-3">
+                        <span className="w-16 text-xs text-gray-500 text-right">
+                          {item.day === -1 ? `>${slaDays} days` : `Day ${item.day}`}
+                        </span>
+                        <div className="flex-1 h-6 bg-gray-100 rounded overflow-hidden">
+                          <div
+                            className={`h-full ${barColor} flex items-center px-2 transition-all duration-300`}
+                            style={{ width: `${Math.max(item.percent, item.count > 0 ? 15 : 0)}%` }}
+                          >
+                            {item.percent > 10 && (
+                              <span className="text-xs font-semibold text-white">{item.percent}%</span>
+                            )}
+                          </div>
+                        </div>
+                        <span className="w-20 text-xs text-gray-500">
+                          {item.count} venue{item.count !== 1 ? 's' : ''}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Insight Box */}
+              {summary.tat_stats.total_completed > 0 && (
+                <div className="mt-5 p-3 bg-amber-50 rounded-lg border border-amber-100">
+                  <p className="text-sm text-amber-800">
+                    💡 <strong>{summary.tat_stats.within_sla_percent}% of venues</strong> are being closed within {slaDays} days (SLA target)
+                  </p>
+                </div>
+              )}
+
+              {summary.tat_stats.total_completed === 0 && (
+                <div className="mt-5 p-4 bg-gray-50 rounded-lg border border-gray-200 text-center">
+                  <p className="text-sm text-gray-500">No completed venues yet to analyze TAT</p>
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="px-6 py-4 border-t border-gray-200 bg-gray-50">
+              <button
+                onClick={() => setShowTatModal(false)}
+                className="w-full px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 transition-colors"
+              >
+                Got it
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1817,6 +2300,24 @@ function EditRequirementModal({
   const [dayTypeId, setDayTypeId] = useState<number | undefined>(requirement.day_type_id);
   const [selectedTimeSlots, setSelectedTimeSlots] = useState<TimeOfDay[]>(requirement.time_of_day || []);
   const [amenitiesRequired, setAmenitiesRequired] = useState(requirement.amenities_required || '');
+  const [capacity, setCapacity] = useState<CapacityBucket | undefined>(requirement.capacity);
+
+  // Area and Club selection state
+  const [selectedAreaId, setSelectedAreaId] = useState<number | undefined>(requirement.area_id);
+  const [selectedAreaName, setSelectedAreaName] = useState<string | undefined>(requirement.area_name);
+  const [selectedClubId, setSelectedClubId] = useState<number | undefined>(requirement.club_id);
+  const [selectedClubName, setSelectedClubName] = useState<string | undefined>(requirement.club_name);
+  const [selectedLaunchId, setSelectedLaunchId] = useState<number | undefined>(requirement.launch_id);
+  const [selectedTargetId, setSelectedTargetId] = useState<number | undefined>(requirement.target_id);
+
+  // Manual area entry mode (for areas not in DB)
+  const [isManualArea, setIsManualArea] = useState(!requirement.area_id && !!requirement.area_name);
+  const [manualAreaName, setManualAreaName] = useState((!requirement.area_id && requirement.area_name) ? requirement.area_name : '');
+  const effectiveAreaName = isManualArea ? manualAreaName : selectedAreaName;
+
+  // Filter options
+  const [areas, setAreas] = useState<FilterOption[]>([]);
+  const [clubsAndLaunches, setClubsAndLaunches] = useState<Array<{ id: number; name: string; type: 'club' | 'launch' | 'expansion'; targetId?: number }>>([]);
 
   // Fetch day types
   const [dayTypes, setDayTypes] = useState<{ id: number; name: string }[]>([]);
@@ -1832,6 +2333,94 @@ function EditRequirementModal({
     };
     fetchDayTypes();
   }, []);
+
+  // Fetch areas for the city
+  useEffect(() => {
+    if (requirement.city_id) {
+      const fetchAreas = async () => {
+        try {
+          const res = await fetch(`${API_BASE}/requirements/venues/areas-by-city/${requirement.city_id}`);
+          const data = await res.json();
+          if (data.success) setAreas(data.options || []);
+        } catch (err) {
+          console.error('Failed to fetch areas:', err);
+        }
+      };
+      fetchAreas();
+    }
+  }, [requirement.city_id]);
+
+  // Fetch clubs and launches when area changes
+  useEffect(() => {
+    if (requirement.activity_id && requirement.city_id && selectedAreaId) {
+      const fetchClubsAndLaunches = async () => {
+        try {
+          const params = new URLSearchParams();
+          params.append('activity_id', String(requirement.activity_id));
+          params.append('city_id', String(requirement.city_id));
+          params.append('area_id', String(selectedAreaId));
+          const res = await fetch(`${API_BASE}/requirements/clubs-and-launches?${params}`);
+          const data = await res.json();
+          if (data.success) {
+            const items = [
+              ...(data.clubs || []).map((c: any) => ({ id: c.id, name: c.name, type: 'club' as const })),
+              ...(data.launches || []).map((l: any) => ({ id: l.id, name: l.name || `Launch: ${l.activity_name}`, type: 'launch' as const })),
+              ...(data.expansionTargets || []).map((e: any) => ({ id: e.club_id || 0, name: e.name, type: 'expansion' as const, targetId: e.target_id }))
+            ];
+            setClubsAndLaunches(items);
+          }
+        } catch (err) {
+          console.error('Failed to fetch clubs and launches:', err);
+        }
+      };
+      fetchClubsAndLaunches();
+    } else {
+      setClubsAndLaunches([]);
+    }
+  }, [requirement.activity_id, requirement.city_id, selectedAreaId]);
+
+  const handleAreaChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const id = e.target.value ? parseInt(e.target.value) : undefined;
+    const area = areas.find(a => String(a.id) === e.target.value);
+    setSelectedAreaId(id);
+    setSelectedAreaName(area?.name);
+    // Reset club/launch selection when area changes
+    setSelectedClubId(undefined);
+    setSelectedClubName(undefined);
+    setSelectedLaunchId(undefined);
+    setSelectedTargetId(undefined);
+  };
+
+  const handleClubOrLaunchChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const value = e.target.value;
+    if (!value) {
+      setSelectedClubId(undefined);
+      setSelectedClubName(undefined);
+      setSelectedLaunchId(undefined);
+      setSelectedTargetId(undefined);
+      return;
+    }
+    const [type, idStr] = value.split(':');
+    const id = parseInt(idStr);
+    const item = clubsAndLaunches.find(c => c.type === type && (c.type === 'expansion' ? c.targetId === id : c.id === id));
+
+    if (type === 'club') {
+      setSelectedClubId(id);
+      setSelectedClubName(item?.name);
+      setSelectedLaunchId(undefined);
+      setSelectedTargetId(undefined);
+    } else if (type === 'launch') {
+      setSelectedLaunchId(id);
+      setSelectedClubId(undefined);
+      setSelectedClubName(item?.name);
+      setSelectedTargetId(undefined);
+    } else if (type === 'expansion') {
+      setSelectedTargetId(id);
+      setSelectedClubId(item?.id || undefined);
+      setSelectedClubName(item?.name);
+      setSelectedLaunchId(undefined);
+    }
+  };
 
   const toggleTimeSlot = (slot: TimeOfDay) => {
     setSelectedTimeSlots(prev =>
@@ -1850,9 +2439,17 @@ function EditRequirementModal({
       name: name.trim(),
       description: description.trim() || undefined,
       status,
+      // Use dropdown ID if available, otherwise undefined for manual entries
+      area_id: isManualArea ? undefined : selectedAreaId,
+      area_name: effectiveAreaName,
+      club_id: isManualArea ? undefined : selectedClubId,
+      club_name: isManualArea ? undefined : selectedClubName,
+      launch_id: isManualArea ? undefined : selectedLaunchId,
+      target_id: isManualArea ? undefined : selectedTargetId,
       day_type_id: dayTypeId,
       time_of_day: selectedTimeSlots.length > 0 ? selectedTimeSlots : undefined,
-      amenities_required: amenitiesRequired.trim() || undefined
+      amenities_required: amenitiesRequired.trim() || undefined,
+      capacity
     } as any);
     setSubmitting(false);
   };
@@ -1880,6 +2477,113 @@ function EditRequirementModal({
 
           {/* Form */}
           <form onSubmit={handleSubmit} className="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
+            {/* Display Activity and City (read-only) */}
+            <div className="grid grid-cols-2 gap-3 p-3 bg-gray-50 rounded-lg">
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">Activity</label>
+                <div className="text-sm font-medium text-gray-700">{requirement.activity_name || 'N/A'}</div>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">City</label>
+                <div className="text-sm font-medium text-gray-700">{requirement.city_name || 'N/A'}</div>
+              </div>
+            </div>
+
+            {/* Area Selection (Editable with manual entry option) */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                <MapPin className="inline h-4 w-4 mr-1" />
+                Area{isManualArea && <span className="text-amber-600 ml-1 text-xs">(Manual)</span>}
+              </label>
+              {isManualArea ? (
+                <input
+                  type="text"
+                  value={manualAreaName}
+                  onChange={(e) => setManualAreaName(e.target.value)}
+                  placeholder="Enter area name..."
+                  className="w-full px-3 py-2 border border-amber-400 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500 text-sm bg-amber-50"
+                />
+              ) : (
+                <select
+                  value={selectedAreaId || ''}
+                  onChange={handleAreaChange}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-teal-500 text-sm bg-white"
+                >
+                  <option value="">Select Area</option>
+                  {areas.map(a => (
+                    <option key={a.id} value={a.id}>{a.name}</option>
+                  ))}
+                </select>
+              )}
+              <button
+                type="button"
+                onClick={() => {
+                  setIsManualArea(!isManualArea);
+                  if (!isManualArea) {
+                    // Switching to manual - clear dropdown selection
+                    setSelectedAreaId(undefined);
+                    setSelectedAreaName(undefined);
+                    // Clear club/launch since they won't apply to manual area
+                    setSelectedClubId(undefined);
+                    setSelectedClubName(undefined);
+                    setSelectedLaunchId(undefined);
+                    setSelectedTargetId(undefined);
+                  } else {
+                    // Switching to dropdown - clear manual entry
+                    setManualAreaName('');
+                  }
+                }}
+                className="text-[10px] text-teal-600 hover:text-teal-700 mt-0.5"
+              >
+                {isManualArea ? '← Back to dropdown' : "Can't find? Add manually"}
+              </button>
+            </div>
+
+            {/* Club / Launch / Expansion Selection */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                <Building2 className="inline h-4 w-4 mr-1" />
+                Club / Launch / Expansion (Optional)
+              </label>
+              <select
+                value={selectedTargetId ? `expansion:${selectedTargetId}` : selectedClubId ? `club:${selectedClubId}` : selectedLaunchId ? `launch:${selectedLaunchId}` : ''}
+                onChange={handleClubOrLaunchChange}
+                disabled={!selectedAreaId || isManualArea}
+                className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-teal-500 text-sm bg-white disabled:bg-gray-100 disabled:cursor-not-allowed ${selectedAreaId && clubsAndLaunches.length === 0 && !isManualArea ? 'border-amber-300 text-amber-600' : 'border-gray-300'}`}
+              >
+                {isManualArea ? (
+                  <option value="">N/A for manual locations</option>
+                ) : selectedAreaId && clubsAndLaunches.length === 0 ? (
+                  <option value="">No clubs, launches, or targets in this area</option>
+                ) : (
+                  <>
+                    <option value="">Select Club, Launch, or Expansion Target</option>
+                    {clubsAndLaunches.filter(c => c.type === 'club').length > 0 && (
+                      <optgroup label="Clubs">
+                        {clubsAndLaunches.filter(c => c.type === 'club').map(c => (
+                          <option key={`club:${c.id}`} value={`club:${c.id}`}>{c.name}</option>
+                        ))}
+                      </optgroup>
+                    )}
+                    {clubsAndLaunches.filter(c => c.type === 'launch').length > 0 && (
+                      <optgroup label="Launches">
+                        {clubsAndLaunches.filter(c => c.type === 'launch').map(c => (
+                          <option key={`launch:${c.id}`} value={`launch:${c.id}`}>{c.name}</option>
+                        ))}
+                      </optgroup>
+                    )}
+                    {clubsAndLaunches.filter(c => c.type === 'expansion').length > 0 && (
+                      <optgroup label="Expansion Targets">
+                        {clubsAndLaunches.filter(c => c.type === 'expansion').map(c => (
+                          <option key={`expansion:${c.targetId}`} value={`expansion:${c.targetId}`}>{c.name}</option>
+                        ))}
+                      </optgroup>
+                    )}
+                  </>
+                )}
+              </select>
+            </div>
+
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Name *</label>
               <input
@@ -1970,6 +2674,25 @@ function EditRequirementModal({
               />
             </div>
 
+            {/* Capacity */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                <Users className="inline h-4 w-4 mr-1" />
+                Capacity (Optional)
+              </label>
+              <select
+                value={capacity || ''}
+                onChange={(e) => setCapacity(e.target.value as CapacityBucket || undefined)}
+                className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-teal-500 text-sm bg-white
+                  ${!capacity ? 'border-gray-300' : 'border-teal-300'}`}
+              >
+                <option value="">Select capacity...</option>
+                {CAPACITY_BUCKET_OPTIONS.map(opt => (
+                  <option key={opt} value={opt}>{opt}</option>
+                ))}
+              </select>
+            </div>
+
             {/* Actions */}
             <div className="flex gap-3 pt-2">
               <button
@@ -2057,6 +2780,7 @@ function CreateRequirementModal({
   const [dayTypeId, setDayTypeId] = useState<number | undefined>(undefined);
   const [selectedTimeSlots, setSelectedTimeSlots] = useState<TimeOfDay[]>([]);
   const [amenitiesRequired, setAmenitiesRequired] = useState('');
+  const [capacity, setCapacity] = useState<CapacityBucket | undefined>(undefined);
 
   // Day types from API
   const [dayTypes, setDayTypes] = useState<{ id: number; name: string }[]>([]);
@@ -2079,9 +2803,20 @@ function CreateRequirementModal({
   const [clubsAndLaunches, setClubsAndLaunches] = useState<Array<{ id: number; name: string; type: 'club' | 'launch' | 'expansion'; targetId?: number }>>([]);
   const [selectedTargetId, setSelectedTargetId] = useState<number | undefined>(undefined);
 
-  // Calculate team from selection
-  const team = selectedActivityName && selectedCityName
-    ? getTeamForClub(selectedActivityName, selectedCityName)
+  // Manual entry mode states
+  const [isManualActivity, setIsManualActivity] = useState(false);
+  const [isManualCity, setIsManualCity] = useState(false);
+  const [isManualArea, setIsManualArea] = useState(false);
+  const [manualActivityName, setManualActivityName] = useState('');
+  const [manualCityName, setManualCityName] = useState('');
+  const [manualAreaName, setManualAreaName] = useState('');
+
+  // Calculate team from selection (works with both dropdown and manual entries)
+  const effectiveActivityName = isManualActivity ? manualActivityName : selectedActivityName;
+  const effectiveCityName = isManualCity ? manualCityName : selectedCityName;
+  const effectiveAreaName = isManualArea ? manualAreaName : selectedAreaName;
+  const team = effectiveActivityName && effectiveCityName
+    ? getTeamForClub(effectiveActivityName, effectiveCityName)
     : undefined;
 
   // Toggle time slot selection
@@ -2098,41 +2833,53 @@ function CreateRequirementModal({
   const generateName = () => {
     // If a club/launch/expansion is selected, use "ClubName - AreaName" format
     if (selectedClubName) {
-      // Don't append area name if club name already ends with it
-      if (selectedAreaName && !selectedClubName.endsWith(selectedAreaName)) {
-        return `${selectedClubName} - ${selectedAreaName}`;
+      if (effectiveAreaName) {
+        return `${selectedClubName} - ${effectiveAreaName}`;
       }
       return selectedClubName;
     }
 
-    // Otherwise, generate from activity/city/area
+    // Otherwise, generate from activity/city/area (using effective names for manual entries)
     const parts: string[] = [];
-    if (selectedActivityName) {
-      parts.push(selectedActivityName.length > 12 ? selectedActivityName.substring(0, 10) : selectedActivityName);
+    if (effectiveActivityName) {
+      parts.push(effectiveActivityName.length > 12 ? effectiveActivityName.substring(0, 10) : effectiveActivityName);
     }
-    if (selectedCityName) {
+    if (effectiveCityName) {
       const cityAbbrev: Record<string, string> = {
         'Gurgaon': 'GGN', 'Gurugram': 'GGN', 'Noida': 'NOI', 'Delhi': 'DEL',
         'Faridabad': 'FBD', 'Ghaziabad': 'GZB', 'Bangalore': 'BLR', 'Mumbai': 'MUM',
         'Hyderabad': 'HYD', 'Chennai': 'CHN', 'Pune': 'PUN', 'Kolkata': 'KOL'
       };
-      parts.push(cityAbbrev[selectedCityName] || selectedCityName.substring(0, 3).toUpperCase());
+      parts.push(cityAbbrev[effectiveCityName] || effectiveCityName.substring(0, 3).toUpperCase());
     }
-    if (selectedAreaName) {
-      parts.push(selectedAreaName);
+    if (effectiveAreaName) {
+      parts.push(effectiveAreaName);
     }
     return parts.join(' ');
   };
 
-  // Fetch activities and day types on mount
+  // Fetch activities, cities, and day types on mount from production database
   useEffect(() => {
     const fetchActivities = async () => {
       try {
         const res = await fetch(`${API_BASE}/scaling-tasks/filters/activities`);
         const data = await res.json();
-        if (data.success) setActivities(data.options || []);
+        if (data.success) {
+          setActivities(data.options || []);
+        }
       } catch (err) {
         console.error('Failed to fetch activities:', err);
+      }
+    };
+    const fetchCities = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/scaling-tasks/filters/cities`);
+        const data = await res.json();
+        if (data.success) {
+          setCities(data.options || []);
+        }
+      } catch (err) {
+        console.error('Failed to fetch cities:', err);
       }
     };
     const fetchDayTypes = async () => {
@@ -2145,29 +2892,16 @@ function CreateRequirementModal({
       }
     };
     fetchActivities();
+    fetchCities();
     fetchDayTypes();
   }, []);
 
-  // Fetch all cities on mount (no activity filter - show all cities)
-  useEffect(() => {
-    const fetchCities = async () => {
-      try {
-        const res = await fetch(`${API_BASE}/scaling-tasks/filters/cities`);
-        const data = await res.json();
-        if (data.success) setCities(data.options || []);
-      } catch (err) {
-        console.error('Failed to fetch cities:', err);
-      }
-    };
-    fetchCities();
-  }, []);
-
-  // Fetch all areas when city changes (no activity filter - show all areas in city)
+  // Fetch areas when city changes from production database
   useEffect(() => {
     if (selectedCityId) {
       const fetchAreas = async () => {
         try {
-          const res = await fetch(`${API_BASE}/scaling-tasks/filters/areas?city_ids=${selectedCityId}`);
+          const res = await fetch(`${API_BASE}/scaling-tasks/filters/areas?city_id=${selectedCityId}`);
           const data = await res.json();
           if (data.success) setAreas(data.options || []);
         } catch (err) {
@@ -2213,15 +2947,20 @@ function CreateRequirementModal({
   // Track the last auto-generated name to detect manual edits
   const [lastGeneratedName, setLastGeneratedName] = useState('');
 
-  // Update default name when selection changes
+  // Update default name when selection changes (but NOT for manual entries)
   useEffect(() => {
+    // Don't auto-generate name for manual entries - let user type their own
+    if (isManualActivity || isManualCity || isManualArea) {
+      return;
+    }
+
     const newName = generateName();
     // Update name if: empty, or matches last generated name (not manually edited)
     if (!name || name === lastGeneratedName || name === generateDefaultName(context)) {
       setName(newName);
       setLastGeneratedName(newName);
     }
-  }, [selectedActivityName, selectedCityName, selectedAreaName, selectedClubName]);
+  }, [effectiveActivityName, effectiveCityName, effectiveAreaName, selectedClubName, isManualActivity, isManualCity, isManualArea]);
 
   const handleActivityChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const id = e.target.value ? parseInt(e.target.value) : undefined;
@@ -2296,7 +3035,11 @@ function CreateRequirementModal({
     }
   };
 
-  const isValid = name.trim() && selectedActivityId && selectedCityId && selectedAreaId && dayTypeId && selectedTimeSlots.length > 0;
+  // Validation: either dropdown selection OR manual entry for activity/city/area
+  const hasActivity = selectedActivityId || (isManualActivity && manualActivityName.trim());
+  const hasCity = selectedCityId || (isManualCity && manualCityName.trim());
+  const hasArea = selectedAreaId || (isManualArea && manualAreaName.trim());
+  const isValid = name.trim() && hasActivity && hasCity && hasArea && dayTypeId && selectedTimeSlots.length > 0 && capacity;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -2307,12 +3050,13 @@ function CreateRequirementModal({
     const errorMsg = await onCreate({
       name: name.trim(),
       description: description.trim() || undefined,
-      activity_id: selectedActivityId,
-      activity_name: selectedActivityName,
-      city_id: selectedCityId,
-      city_name: selectedCityName,
-      area_id: selectedAreaId,
-      area_name: selectedAreaName,
+      // Use dropdown ID if available, otherwise undefined for manual entries
+      activity_id: isManualActivity ? undefined : selectedActivityId,
+      activity_name: effectiveActivityName,
+      city_id: isManualCity ? undefined : selectedCityId,
+      city_name: effectiveCityName,
+      area_id: isManualArea ? undefined : selectedAreaId,
+      area_name: effectiveAreaName,
       club_id: selectedClubId,
       club_name: selectedClubName,
       launch_id: selectedLaunchId,
@@ -2320,6 +3064,7 @@ function CreateRequirementModal({
       day_type_id: dayTypeId,
       time_of_day: selectedTimeSlots,
       amenities_required: amenitiesRequired.trim() || undefined,
+      capacity,
       team
     });
     if (errorMsg) {
@@ -2359,56 +3104,154 @@ function CreateRequirementModal({
             )}
             {/* Hierarchy Selection */}
             <div className="grid grid-cols-2 gap-3">
+              {/* Activity Field */}
               <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">Activity *</label>
-                <select
-                  value={selectedActivityId || ''}
-                  onChange={handleActivityChange}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-teal-500 text-sm bg-white"
+                <label className="block text-xs font-medium text-gray-600 mb-1">
+                  Activity *{isManualActivity && <span className="text-amber-600 ml-1">(Manual)</span>}
+                </label>
+                {isManualActivity ? (
+                  <input
+                    type="text"
+                    value={manualActivityName}
+                    onChange={(e) => setManualActivityName(e.target.value)}
+                    placeholder="Enter activity name..."
+                    className="w-full px-3 py-2 border border-amber-400 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500 text-sm bg-amber-50"
+                  />
+                ) : (
+                  <select
+                    value={selectedActivityId || ''}
+                    onChange={handleActivityChange}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-teal-500 text-sm bg-white"
+                  >
+                    <option value="">Select Activity</option>
+                    {activities.map(a => (
+                      <option key={a.id} value={a.id}>{a.name}</option>
+                    ))}
+                  </select>
+                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsManualActivity(!isManualActivity);
+                    if (!isManualActivity) {
+                      // Switching to manual - clear dropdown selection
+                      setSelectedActivityId(undefined);
+                      setSelectedActivityName(undefined);
+                    } else {
+                      // Switching to dropdown - clear manual entry
+                      setManualActivityName('');
+                    }
+                  }}
+                  className="text-[10px] text-teal-600 hover:text-teal-700 mt-0.5"
                 >
-                  <option value="">Select Activity</option>
-                  {activities.map(a => (
-                    <option key={a.id} value={a.id}>{a.name}</option>
-                  ))}
-                </select>
+                  {isManualActivity ? '← Back to dropdown' : "Can't find? Add manually"}
+                </button>
               </div>
+
+              {/* City Field */}
               <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">City *</label>
-                <select
-                  value={selectedCityId || ''}
-                  onChange={handleCityChange}
-                  disabled={!selectedActivityId}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-teal-500 text-sm bg-white disabled:bg-gray-100 disabled:cursor-not-allowed"
+                <label className="block text-xs font-medium text-gray-600 mb-1">
+                  City *{isManualCity && <span className="text-amber-600 ml-1">(Manual)</span>}
+                </label>
+                {isManualCity ? (
+                  <input
+                    type="text"
+                    value={manualCityName}
+                    onChange={(e) => setManualCityName(e.target.value)}
+                    placeholder="Enter city name..."
+                    className="w-full px-3 py-2 border border-amber-400 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500 text-sm bg-amber-50"
+                  />
+                ) : (
+                  <select
+                    value={selectedCityId || ''}
+                    onChange={handleCityChange}
+                    disabled={!selectedActivityId && !isManualActivity}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-teal-500 text-sm bg-white disabled:bg-gray-100 disabled:cursor-not-allowed"
+                  >
+                    <option value="">Select City</option>
+                    {cities.map(c => (
+                      <option key={c.id} value={c.id}>{c.name}</option>
+                    ))}
+                  </select>
+                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsManualCity(!isManualCity);
+                    if (!isManualCity) {
+                      setSelectedCityId(undefined);
+                      setSelectedCityName(undefined);
+                      // If city is manual, area should also be manual
+                      setIsManualArea(true);
+                      setSelectedAreaId(undefined);
+                      setSelectedAreaName(undefined);
+                    } else {
+                      setManualCityName('');
+                      setIsManualArea(false);
+                      setManualAreaName('');
+                    }
+                  }}
+                  className="text-[10px] text-teal-600 hover:text-teal-700 mt-0.5"
                 >
-                  <option value="">Select City</option>
-                  {cities.map(c => (
-                    <option key={c.id} value={c.id}>{c.name}</option>
-                  ))}
-                </select>
+                  {isManualCity ? '← Back to dropdown' : "Can't find? Add manually"}
+                </button>
               </div>
+
+              {/* Area Field */}
               <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">Area *</label>
-                <select
-                  value={selectedAreaId || ''}
-                  onChange={handleAreaChange}
-                  disabled={!selectedCityId}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-teal-500 text-sm bg-white disabled:bg-gray-100 disabled:cursor-not-allowed"
-                >
-                  <option value="">Select Area</option>
-                  {areas.map(a => (
-                    <option key={a.id} value={a.id}>{a.name}</option>
-                  ))}
-                </select>
+                <label className="block text-xs font-medium text-gray-600 mb-1">
+                  Area *{isManualArea && <span className="text-amber-600 ml-1">(Manual)</span>}
+                </label>
+                {isManualArea ? (
+                  <input
+                    type="text"
+                    value={manualAreaName}
+                    onChange={(e) => setManualAreaName(e.target.value)}
+                    placeholder="Enter area name..."
+                    className="w-full px-3 py-2 border border-amber-400 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500 text-sm bg-amber-50"
+                  />
+                ) : (
+                  <select
+                    value={selectedAreaId || ''}
+                    onChange={handleAreaChange}
+                    disabled={!selectedCityId && !isManualCity}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-teal-500 text-sm bg-white disabled:bg-gray-100 disabled:cursor-not-allowed"
+                  >
+                    <option value="">Select Area</option>
+                    {areas.map(a => (
+                      <option key={a.id} value={a.id}>{a.name}</option>
+                    ))}
+                  </select>
+                )}
+                {!isManualCity && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsManualArea(!isManualArea);
+                      if (!isManualArea) {
+                        setSelectedAreaId(undefined);
+                        setSelectedAreaName(undefined);
+                      } else {
+                        setManualAreaName('');
+                      }
+                    }}
+                    className="text-[10px] text-teal-600 hover:text-teal-700 mt-0.5"
+                  >
+                    {isManualArea ? '← Back to dropdown' : "Can't find? Add manually"}
+                  </button>
+                )}
               </div>
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1">Club / Launch / Expansion (Optional)</label>
                 <select
                   value={selectedTargetId ? `expansion:${selectedTargetId}` : selectedClubId ? `club:${selectedClubId}` : selectedLaunchId ? `launch:${selectedLaunchId}` : ''}
                   onChange={handleClubOrLaunchChange}
-                  disabled={!selectedAreaId}
-                  className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-teal-500 text-sm bg-white disabled:bg-gray-100 disabled:cursor-not-allowed ${selectedAreaId && clubsAndLaunches.length === 0 ? 'border-amber-300 text-amber-600' : 'border-gray-300'}`}
+                  disabled={!selectedAreaId || isManualArea}
+                  className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-teal-500 text-sm bg-white disabled:bg-gray-100 disabled:cursor-not-allowed ${selectedAreaId && clubsAndLaunches.length === 0 && !isManualArea ? 'border-amber-300 text-amber-600' : 'border-gray-300'}`}
                 >
-                  {selectedAreaId && clubsAndLaunches.length === 0 ? (
+                  {isManualArea ? (
+                    <option value="">N/A for manual locations</option>
+                  ) : selectedAreaId && clubsAndLaunches.length === 0 ? (
                     <option value="">No clubs, launches, or targets in this area</option>
                   ) : (
                     <>
@@ -2532,6 +3375,25 @@ function CreateRequirementModal({
                 placeholder="e.g., Parking, AC, Changing rooms..."
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-teal-500 text-sm resize-none"
               />
+            </div>
+
+            {/* Capacity */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                <Users className="inline h-4 w-4 mr-1" />
+                Capacity (Optional)
+              </label>
+              <select
+                value={capacity || ''}
+                onChange={(e) => setCapacity(e.target.value as CapacityBucket || undefined)}
+                className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-teal-500 text-sm bg-white
+                  ${!capacity ? 'border-gray-300' : 'border-teal-300'}`}
+              >
+                <option value="">Select capacity...</option>
+                {CAPACITY_BUCKET_OPTIONS.map(opt => (
+                  <option key={opt} value={opt}>{opt}</option>
+                ))}
+              </select>
             </div>
 
             {/* Actions */}

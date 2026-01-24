@@ -998,6 +998,14 @@ export interface LeaderRequirement extends BaseRequirement {
   type: 'leader';
 }
 
+// Priority levels for venue requirements
+export type PriorityLevel = 'critical' | 'high' | 'normal' | 'done' | 'deprioritised';
+
+// Capacity bucket options for venue requirements
+export type CapacityBucket = '<10' | '10-20' | '20-30' | '30-50' | '50-100' | '100-200' | '200-500' | '>500';
+
+export const CAPACITY_BUCKET_OPTIONS: CapacityBucket[] = ['<10', '10-20', '20-30', '30-50', '50-100', '100-200', '200-500', '>500'];
+
 export interface VenueRequirement extends BaseRequirement {
   type: 'venue';
   // Override status to use venue-specific statuses
@@ -1007,6 +1015,10 @@ export interface VenueRequirement extends BaseRequirement {
   day_type_name?: string;
   time_of_day?: TimeOfDay[];
   amenities_required?: string;
+  capacity?: CapacityBucket;
+  // Priority fields (calculated based on age and SLA)
+  age_days?: number;
+  priority_level?: PriorityLevel;
 }
 
 // Request types for creating/updating requirements
@@ -1033,6 +1045,7 @@ export interface CreateRequirementRequest {
   day_type_id?: number;
   time_of_day?: TimeOfDay[];
   amenities_required?: string;
+  capacity?: CapacityBucket;
 }
 
 export interface UpdateRequirementRequest extends Partial<CreateRequirementRequest> {
@@ -1054,7 +1067,7 @@ export interface RequirementsListResponse {
 
 // Requirement hierarchy node for dashboards
 export interface RequirementHierarchyNode {
-  type: 'activity' | 'city' | 'area' | 'club' | 'requirement';
+  type: 'activity' | 'city' | 'area' | 'club' | 'requirement' | 'priority';
   id: string;
   name: string;
 
@@ -1081,6 +1094,12 @@ export interface RequirementHierarchyNode {
 
   // Team
   team?: 'blue' | 'green' | 'yellow';
+
+  // Priority fields (for venue requirements hierarchy)
+  priority_level?: PriorityLevel;
+  priority_icon?: string;
+  max_priority_level?: PriorityLevel;
+  max_priority_order?: number;
 
   // Children nodes or requirements
   children?: RequirementHierarchyNode[];
