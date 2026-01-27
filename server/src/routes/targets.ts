@@ -1836,6 +1836,7 @@ function createLevelNode(level: HierarchyLevel, value: { id: number; name: strin
     club_count: 0,
     launch_count: 0,
     last_4w_revenue_total: 0,
+    l4w_counted_clubs: new Set<number>(), // Track club IDs to avoid duplicate L4W revenue counting
     revenue_status_list: [] as RevenueStatus[],
     childrenMap: new Map<string, any>(), // For intermediate levels
     children: [] as any[] // For final level before clubs
@@ -1898,7 +1899,14 @@ function buildDynamicHierarchy(
       node.current_meetups += clubNode.current_meetups;
       node.current_revenue += clubNode.current_revenue;
       node.club_count++;
-      node.last_4w_revenue_total += last4wTotal;
+
+      // Only count L4W revenue once per club (clubs can appear in multiple areas)
+      const clubId = clubNode.club_id;
+      if (!node.l4w_counted_clubs.has(clubId)) {
+        node.l4w_counted_clubs.add(clubId);
+        node.last_4w_revenue_total += last4wTotal;
+      }
+
       if (hasRevenueData) {
         node.revenue_status_list.push(clubRevenueStatus);
       }
@@ -1977,6 +1985,7 @@ function convertDynamicHierarchyToArray(
       node.progress_summary = sumProgress(node.children.map((c: any) => c.progress_summary));
     }
     delete node.childrenMap; // Clean up
+    delete node.l4w_counted_clubs; // Clean up tracking set
 
     // Calculate gaps
     node.gap_meetups = Math.max(0, node.target_meetups - node.current_meetups);
@@ -3608,12 +3617,12 @@ router.get('/v2/hierarchy', async (req, res) => {
       activityNode.target_revenue += targetRevenue;
       activityNode.current_meetups += currentMeetups;
       activityNode.current_revenue += currentRevenue;
-      // MULTI-CITY: Only count unique clubs at activity level
+      // MULTI-CITY: Only count unique clubs at activity level (for club_count and L4W revenue)
       if (!activityNode.unique_club_ids.has(clubId)) {
         activityNode.unique_club_ids.add(clubId);
         activityNode.club_count++;
+        activityNode.last_4w_revenue_total += last4wTotal; // Only add L4W revenue once per club
       }
-      activityNode.last_4w_revenue_total += last4wTotal;
       if (hasRevenueData) {
         activityNode.revenue_status_list.push(clubRevenueStatus);
       }
@@ -3653,8 +3662,12 @@ router.get('/v2/hierarchy', async (req, res) => {
       cityNode.target_revenue += targetRevenue;
       cityNode.current_meetups += currentMeetups;
       cityNode.current_revenue += currentRevenue;
-      cityNode.club_count++;
-      cityNode.last_4w_revenue_total += last4wTotal;
+      // MULTI-AREA: Only count unique clubs at city level (for club_count and L4W revenue)
+      if (!cityNode.unique_club_ids.has(clubId)) {
+        cityNode.unique_club_ids.add(clubId);
+        cityNode.club_count++;
+        cityNode.last_4w_revenue_total += last4wTotal; // Only add L4W revenue once per club
+      }
       if (hasRevenueData) {
         cityNode.revenue_status_list.push(clubRevenueStatus);
       }
