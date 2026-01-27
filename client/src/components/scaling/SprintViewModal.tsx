@@ -74,6 +74,14 @@ export function SprintViewModal({ isOpen, onClose, node, context }: SprintViewMo
   // Week picker state for duplicate
   const [duplicatingTask, setDuplicatingTask] = useState<ScalingTask | null>(null);
 
+  // Older tasks state (tasks scheduled before the sprint window)
+  const [olderTasks, setOlderTasks] = useState<{
+    groupedByWeek: Record<string, ScalingTask[]>;
+    sortedWeeks: string[];
+    totalCount: number;
+  } | null>(null);
+  const [showOlderTasks, setShowOlderTasks] = useState(false);
+
   // Filter state
   const [teamFilter, setTeamFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
@@ -148,46 +156,15 @@ export function SprintViewModal({ isOpen, onClose, node, context }: SprintViewMo
         setClubs(clubOptions);
         if (membersData.success) setMembers(membersData.assignees || []);
 
-        // Initialize filters from context by matching NAME (not ID)
+        // Initialize filters from context using IDs directly (like TaskListTooltip does)
+        // This ensures consistency with summary counts which use the same IDs
         if (context) {
-          const newActivityFilters: number[] = [];
-          const newCityFilters: number[] = [];
-          const newAreaFilters: number[] = [];
-          const newClubFilters: number[] = [];
-
-          if (context.activity_name) {
-            const matchedActivity = actOptions.find(
-              (a: FilterOption) => a.name?.toLowerCase() === context.activity_name?.toLowerCase()
-            );
-            if (matchedActivity?.id) newActivityFilters.push(matchedActivity.id);
-          }
-
-          if (context.city_name) {
-            const matchedCity = cityOptions.find(
-              (c: FilterOption) => c.name?.toLowerCase() === context.city_name?.toLowerCase()
-            );
-            if (matchedCity?.id) newCityFilters.push(matchedCity.id);
-          }
-
-          if (context.area_name) {
-            const matchedArea = areaOptions.find(
-              (a: FilterOption) => a.name?.toLowerCase() === context.area_name?.toLowerCase()
-            );
-            if (matchedArea?.id) newAreaFilters.push(matchedArea.id);
-          }
-
-          if (context.club_name) {
-            const matchedClub = clubOptions.find(
-              (c: FilterOption) => c.name?.toLowerCase() === context.club_name?.toLowerCase()
-            );
-            if (matchedClub?.id) newClubFilters.push(matchedClub.id);
-          }
-
-          // Batch filter updates
-          if (newActivityFilters.length > 0) setActivityFilters(newActivityFilters);
-          if (newCityFilters.length > 0) setCityFilters(newCityFilters);
-          if (newAreaFilters.length > 0) setAreaFilters(newAreaFilters);
-          if (newClubFilters.length > 0) setClubFilters(newClubFilters);
+          // Use IDs directly from context - this is the correct approach
+          // Previously we matched by name which could fail for tasks with mismatched IDs
+          if (context.activity_id) setActivityFilters([context.activity_id]);
+          if (context.city_id) setCityFilters([context.city_id]);
+          if (context.area_id) setAreaFilters([context.area_id]);
+          if (context.club_id) setClubFilters([context.club_id]);
         }
 
         setInitialFetchDone(true);
@@ -315,6 +292,12 @@ export function SprintViewModal({ isOpen, onClose, node, context }: SprintViewMo
 
       if (data.success) {
         setWeeks(data.weeks);
+        // Set older tasks if present
+        if (data.olderTasks) {
+          setOlderTasks(data.olderTasks);
+        } else {
+          setOlderTasks(null);
+        }
         // Auto-expand current week
         const currentWeek = data.weeks.find((w: SprintWeek) => w.is_current);
         if (currentWeek) {
@@ -549,7 +532,20 @@ export function SprintViewModal({ isOpen, onClose, node, context }: SprintViewMo
         {/* Header */}
         <div className="px-6 py-4 border-b border-gray-200 bg-gradient-to-r from-blue-50 to-purple-50">
           <div className="flex items-center justify-between">
-            <h2 className="text-xl font-bold text-gray-900">Sprint Tasks</h2>
+            <div className="flex items-center gap-3">
+              <h2 className="text-xl font-bold text-gray-900">Sprint Tasks</h2>
+              {/* Total count including older tasks */}
+              {weeks.length > 0 && (
+                <span className="px-3 py-1 text-sm font-medium bg-blue-100 text-blue-700 rounded-full">
+                  {weeks.reduce((sum, w) => sum + w.tasks.length, 0) + (olderTasks?.totalCount || 0)} total
+                </span>
+              )}
+              {olderTasks && olderTasks.totalCount > 0 && (
+                <span className="px-2 py-1 text-xs font-medium bg-orange-100 text-orange-700 rounded-full">
+                  {olderTasks.totalCount} overdue
+                </span>
+              )}
+            </div>
             <div className="flex items-center gap-2">
               <button
                 onClick={() => setShowCreateModal(true)}
@@ -720,6 +716,81 @@ export function SprintViewModal({ isOpen, onClose, node, context }: SprintViewMo
           ) : (
             <DragDropContext onDragEnd={handleDragEnd}>
               <div className="space-y-4">
+                {/* Older Tasks Section - tasks scheduled before the sprint window */}
+                {olderTasks && olderTasks.totalCount > 0 && (
+                  <div className="border border-orange-300 rounded-xl overflow-hidden bg-orange-50">
+                    <button
+                      onClick={() => setShowOlderTasks(!showOlderTasks)}
+                      className="w-full flex items-center justify-between px-4 py-3 bg-orange-100 hover:bg-orange-150 transition-colors"
+                    >
+                      <div className="flex items-center gap-3">
+                        {showOlderTasks ? (
+                          <ChevronDown className="h-5 w-5 text-orange-600" />
+                        ) : (
+                          <ChevronRight className="h-5 w-5 text-orange-600" />
+                        )}
+                        <span className="font-semibold text-orange-800">
+                          Older Tasks
+                        </span>
+                        <span className="px-2 py-0.5 text-xs font-medium bg-orange-200 text-orange-800 rounded-full">
+                          {olderTasks.totalCount} overdue
+                        </span>
+                      </div>
+                      <span className="text-xs text-orange-600">
+                        Tasks from past weeks that are still open
+                      </span>
+                    </button>
+
+                    {showOlderTasks && (
+                      <div className="p-4 space-y-4">
+                        {olderTasks.sortedWeeks.map((weekStart) => {
+                          const weekTasks = olderTasks.groupedByWeek[weekStart] || [];
+                          // Filter by team/status/member if filters are active
+                          const filteredTasks = weekTasks.filter((task: ScalingTask) => {
+                            if (teamFilter !== 'all' && task.assigned_team_lead !== teamFilter) return false;
+                            if (statusFilter !== 'all' && task.status !== statusFilter) return false;
+                            if (memberFilter && task.assigned_to_name !== memberFilter) return false;
+                            return true;
+                          });
+                          if (filteredTasks.length === 0) return null;
+
+                          // Format week label
+                          const weekDate = new Date(weekStart + 'T00:00:00');
+                          const weekEnd = new Date(weekDate);
+                          weekEnd.setDate(weekEnd.getDate() + 6);
+                          const weekLabel = `${weekDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${weekEnd.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
+
+                          return (
+                            <div key={weekStart} className="border border-orange-200 rounded-lg bg-white">
+                              <div className="px-3 py-2 bg-orange-50 border-b border-orange-200">
+                                <span className="text-sm font-medium text-orange-700">
+                                  {weekLabel}
+                                </span>
+                                <span className="ml-2 text-xs text-orange-500">
+                                  ({filteredTasks.length} task{filteredTasks.length !== 1 ? 's' : ''})
+                                </span>
+                              </div>
+                              <div className="p-2 space-y-2">
+                                {filteredTasks.map((task: ScalingTask) => (
+                                  <ScalingTaskTileV2
+                                    key={task.id}
+                                    task={task}
+                                    onClick={() => setEditingTask(task)}
+                                    onOpenComments={() => {
+                                      setSelectedTask(task);
+                                      setShowCommentsPanel(true);
+                                    }}
+                                  />
+                                ))}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {filteredWeeks.map((week) => (
                   <div
                     key={week.week_start}

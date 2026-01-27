@@ -292,8 +292,30 @@ router.get('/sprints', async (req, res) => {
 
     const tasksResult = await queryLocal(tasksQuery, params);
 
-    // Get all task IDs to fetch linked requirements
-    const taskIds = tasksResult.rows.map((t: any) => t.id);
+    // Query for older tasks (before the sprint window, still open)
+    const olderTasksQuery = `
+      SELECT
+        st.*,
+        stw.week_start,
+        stw.position as week_position,
+        (SELECT COUNT(*) FROM scaling_task_comments stc WHERE stc.task_id = st.id) as comments_count
+      FROM scaling_tasks st
+      JOIN scaling_task_weeks stw ON st.id = stw.task_id
+      WHERE stw.week_start < $1
+        AND st.status IN ('not_started', 'in_progress')
+        ${hierarchyFilter.replace(/\$(\d+)/g, (_, n) => `$${parseInt(n) + 1}`)}
+      ORDER BY stw.week_start DESC, st.created_at DESC
+    `;
+
+    // Build params for older tasks query (firstWeek + hierarchy filter params)
+    const olderParams = [firstWeek, ...params.slice(0, params.length - 2)];
+    const olderTasksResult = await queryLocal(olderTasksQuery, olderParams);
+
+    // Get all task IDs to fetch linked requirements (include older tasks)
+    const taskIds = [
+      ...tasksResult.rows.map((t: any) => t.id),
+      ...olderTasksResult.rows.map((t: any) => t.id)
+    ];
 
     // Fetch linked requirements for all tasks at once (if there are tasks)
     let leaderReqsByTask: Record<number, any[]> = {};
@@ -356,10 +378,40 @@ router.get('/sprints', async (req, res) => {
       }
     }
 
+    // Group older tasks by week
+    const olderTasksByWeek: Record<string, any[]> = {};
+    for (const task of olderTasksResult.rows) {
+      let taskWeekStart: string;
+      if (task.week_start instanceof Date) {
+        const d = task.week_start;
+        taskWeekStart = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      } else {
+        taskWeekStart = String(task.week_start).split('T')[0];
+      }
+
+      if (!olderTasksByWeek[taskWeekStart]) {
+        olderTasksByWeek[taskWeekStart] = [];
+      }
+      olderTasksByWeek[taskWeekStart].push({
+        ...task,
+        team_color: getTeamColor(task.assigned_team_lead),
+        linked_leader_requirements: leaderReqsByTask[task.id] || [],
+        linked_venue_requirements: venueReqsByTask[task.id] || []
+      });
+    }
+
+    // Sort older weeks (most recent first)
+    const sortedOlderWeeks = Object.keys(olderTasksByWeek).sort().reverse();
+
     res.json({
       success: true,
       weeks,
-      current_week: currentMonday
+      current_week: currentMonday,
+      olderTasks: {
+        groupedByWeek: olderTasksByWeek,
+        sortedWeeks: sortedOlderWeeks,
+        totalCount: olderTasksResult.rows.length
+      }
     });
   } catch (error) {
     logger.error('Failed to fetch sprints:', error);
@@ -633,6 +685,31 @@ router.post('/', async (req, res) => {
       });
     }
 
+    // Validate activity - reject fake activity names and auto-resolve IDs
+    let validatedActivityId = activity_id;
+    if (activity_name) {
+      // Block fake activity names (UI rollup labels, not real activities)
+      if (['all data', 'filtered data'].includes(activity_name.toLowerCase())) {
+        return res.status(400).json({
+          success: false,
+          error: 'Invalid activity name. Please select a specific activity.'
+        });
+      }
+
+      // Auto-resolve activity_id if we have name but no ID
+      if (!validatedActivityId) {
+        const activityResult = await queryProduction(
+          'SELECT id FROM activity WHERE LOWER(name) = LOWER($1)',
+          [activity_name]
+        );
+        if (activityResult.rows.length > 0) {
+          validatedActivityId = activityResult.rows[0].id;
+        }
+        // If activity not found, we still allow the task but log a warning
+        // This handles edge cases like new activities not yet in the main DB
+      }
+    }
+
     // Insert task
     const insertQuery = `
       INSERT INTO scaling_tasks (
@@ -653,7 +730,7 @@ router.post('/', async (req, res) => {
 
     const taskResult = await queryLocal(insertQuery, [
       task_scope,
-      activity_id || null,
+      validatedActivityId || null,
       activity_name || null,
       city_id || null,
       city_name || null,

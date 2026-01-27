@@ -129,6 +129,20 @@ export function ScalingTaskCreateModal({
     }
   }, [isOpen, prelinkedLeaderRequirement]);
 
+  // Auto-sync activity dropdown with context name when context has name but no ID
+  // This prevents tasks from being created with activity_name but no activity_id
+  useEffect(() => {
+    if (isOpen && context.activity_name && !selectedActivityId && activities.length > 0) {
+      const matched = activities.find(
+        a => a.name?.toLowerCase() === context.activity_name?.toLowerCase()
+      );
+      if (matched?.id) {
+        setSelectedActivityId(matched.id);
+        setSelectedActivityName(matched.name);
+      }
+    }
+  }, [isOpen, context.activity_name, selectedActivityId, activities]);
+
   // SINGLE SOURCE OF TRUTH for week dates
   // Week starts on Monday (0 = Monday, 6 = Sunday)
   const WEEK_START_DAY = 1; // Monday (using JS getDay() where 0=Sunday, 1=Monday)
@@ -454,17 +468,43 @@ export function ScalingTaskCreateModal({
     setLoading(true);
     console.log('Starting task creation...');
     try {
+      // Validate activity selection - prevent tasks with invalid activity names
+      const finalActivityName = selectedActivityName || context.activity_name;
+      let finalActivityId = selectedActivityId || context.activity_id;
+
+      // Block fake activity names (UI rollup labels, not real activities)
+      if (finalActivityName?.toLowerCase() === 'all data' ||
+          finalActivityName?.toLowerCase() === 'filtered data') {
+        alert('Please select a specific activity. "All Data" is not a valid activity for tasks.');
+        setLoading(false);
+        return;
+      }
+
+      // Auto-resolve activity_id if we have name but no ID
+      if (finalActivityName && !finalActivityId) {
+        const matched = activities.find(
+          a => a.name?.toLowerCase() === finalActivityName?.toLowerCase()
+        );
+        if (matched?.id) {
+          finalActivityId = matched.id;
+        } else {
+          alert('Please select a valid activity from the dropdown.');
+          setLoading(false);
+          return;
+        }
+      }
+
       // Determine task scope based on most specific selection
       let taskScope: TaskScope = context.task_scope;
       if (selectedClubId) taskScope = 'club';
       else if (selectedAreaId) taskScope = 'area';
       else if (selectedCityId) taskScope = 'city';
-      else if (selectedActivityId) taskScope = 'activity';
+      else if (finalActivityId) taskScope = 'activity';
 
       const payload: CreateScalingTaskRequest = {
         task_scope: taskScope,
-        activity_id: selectedActivityId || context.activity_id,
-        activity_name: selectedActivityName || context.activity_name,
+        activity_id: finalActivityId,
+        activity_name: finalActivityName,
         city_id: selectedCityId || context.city_id,
         city_name: selectedCityName || context.city_name,
         area_id: selectedAreaId || context.area_id,
