@@ -1837,6 +1837,9 @@ function createLevelNode(level: HierarchyLevel, value: { id: number; name: strin
     launch_count: 0,
     last_4w_revenue_total: 0,
     l4w_counted_clubs: new Set<number>(), // Track club IDs to avoid duplicate L4W revenue counting
+    leaders_required_total: 0,
+    leader_requirements_summary: { total_requirements: 0, not_picked: 0, deprioritised: 0, in_progress: 0, done: 0 },
+    leader_counted_clubs: new Set<number>(), // Track club IDs to avoid duplicate leader requirements counting
     revenue_status_list: [] as RevenueStatus[],
     childrenMap: new Map<string, any>(), // For intermediate levels
     children: [] as any[] // For final level before clubs
@@ -1905,6 +1908,23 @@ function buildDynamicHierarchy(
       if (!node.l4w_counted_clubs.has(clubId)) {
         node.l4w_counted_clubs.add(clubId);
         node.last_4w_revenue_total += last4wTotal;
+      }
+
+      // Only count leader requirements once per club (clubs can appear in multiple areas)
+      if (!node.leader_counted_clubs.has(clubId)) {
+        node.leader_counted_clubs.add(clubId);
+        const leaderReq = clubNode.leaders_required_total || 0;
+        const leaderSummary = clubNode.leader_requirements_summary;
+        if (leaderReq > 0 || leaderSummary) {
+          node.leaders_required_total += leaderReq;
+          if (leaderSummary) {
+            node.leader_requirements_summary.total_requirements += leaderSummary.total_requirements || 0;
+            node.leader_requirements_summary.not_picked += leaderSummary.not_picked || 0;
+            node.leader_requirements_summary.deprioritised += leaderSummary.deprioritised || 0;
+            node.leader_requirements_summary.in_progress += leaderSummary.in_progress || 0;
+            node.leader_requirements_summary.done += leaderSummary.done || 0;
+          }
+        }
       }
 
       if (hasRevenueData) {
@@ -1986,6 +2006,7 @@ function convertDynamicHierarchyToArray(
     }
     delete node.childrenMap; // Clean up
     delete node.l4w_counted_clubs; // Clean up tracking set
+    delete node.leader_counted_clubs; // Clean up tracking set
 
     // Calculate gaps
     node.gap_meetups = Math.max(0, node.target_meetups - node.current_meetups);
@@ -3864,13 +3885,17 @@ router.get('/v2/hierarchy', async (req, res) => {
         areaNode.leader_requirements_summary.in_progress += clubLeaderReq.in_progress || 0;
         areaNode.leader_requirements_summary.done += clubLeaderReq.done || 0;
 
-        // City rollup - each club appears once per city
-        cityNode.leaders_required_total += clubLeaderReq.leaders_required_total || 0;
-        cityNode.leader_requirements_summary.total_requirements += clubLeaderReq.total_requirements || 0;
-        cityNode.leader_requirements_summary.not_picked += clubLeaderReq.not_picked || 0;
-        cityNode.leader_requirements_summary.deprioritised += clubLeaderReq.deprioritised || 0;
-        cityNode.leader_requirements_summary.in_progress += clubLeaderReq.in_progress || 0;
-        cityNode.leader_requirements_summary.done += clubLeaderReq.done || 0;
+        // City rollup - MULTI-AREA: Only count unique clubs to avoid double-counting
+        // (same pattern as activity level - use rolled_up_leader_club_ids to deduplicate)
+        if (!cityNode.rolled_up_leader_club_ids.has(clubId)) {
+          cityNode.rolled_up_leader_club_ids.add(clubId);
+          cityNode.leaders_required_total += clubLeaderReq.leaders_required_total || 0;
+          cityNode.leader_requirements_summary.total_requirements += clubLeaderReq.total_requirements || 0;
+          cityNode.leader_requirements_summary.not_picked += clubLeaderReq.not_picked || 0;
+          cityNode.leader_requirements_summary.deprioritised += clubLeaderReq.deprioritised || 0;
+          cityNode.leader_requirements_summary.in_progress += clubLeaderReq.in_progress || 0;
+          cityNode.leader_requirements_summary.done += clubLeaderReq.done || 0;
+        }
 
         // Activity rollup - MULTI-CITY: Only count unique clubs to avoid double-counting
         if (!activityNode.rolled_up_leader_club_ids.has(clubId)) {
