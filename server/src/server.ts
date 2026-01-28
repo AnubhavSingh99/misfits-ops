@@ -27,11 +27,14 @@ import scalingTasksRoutes from './routes/scalingTasks';
 import requirementsRoutes from './routes/requirements';
 import configRoutes from './routes/config';
 import feedbackRoutes from './routes/feedback';
+import customerServiceRoutes from './routes/customerService';
 
 // Import services
-import { initializeDatabase } from './services/database';
+import { initializeDatabase, getLocalPool } from './services/database';
 import { initializeRedis } from './services/redis';
 import { initializeDimensions } from './services/dimensionSync';
+import { initCSPolling, startPolling } from './services/csPollingService';
+import { initSlackService, checkSLABreaches } from './services/slackService';
 import { logger } from './utils/logger';
 import { errorHandler } from './middleware/errorHandler';
 
@@ -57,7 +60,7 @@ app.use(cors({
     'http://127.0.0.1:3002'
   ],
   credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Cache-Control', 'Pragma', 'Expires'],
   optionsSuccessStatus: 200,
   preflightContinue: false
@@ -75,7 +78,7 @@ app.options('*', cors({
     'http://127.0.0.1:3002'
   ],
   credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Cache-Control', 'Pragma', 'Expires'],
 }));
 
@@ -141,6 +144,7 @@ app.use('/api/scaling-tasks', scalingTasksRoutes);
 app.use('/api/requirements', requirementsRoutes);
 app.use('/api/config', configRoutes);
 app.use('/api/feedback', feedbackRoutes);
+app.use('/api/cs', customerServiceRoutes);
 app.use('/api', revenueRoutes); // Also handle direct /api/revenue-growth
 
 // Teams endpoints (simple fallback)
@@ -187,6 +191,25 @@ async function startServer() {
       // Initialize dimension tables (sync from production)
       await initializeDimensions();
       logger.info('Dimension tables initialized');
+
+      // Initialize CS polling service
+      const localPool = getLocalPool();
+      initCSPolling(localPool);
+      startPolling();
+      logger.info('CS polling service started (every 30 seconds)');
+
+      // Initialize Slack service
+      initSlackService(localPool);
+      logger.info('Slack service initialized');
+
+      // Check SLA breaches every hour
+      setInterval(async () => {
+        try {
+          await checkSLABreaches();
+        } catch (error) {
+          logger.error('SLA breach check failed:', error);
+        }
+      }, 60 * 60 * 1000); // 1 hour
     } catch (dbError) {
       logger.warn('Database initialization failed, continuing without database:', dbError.message);
     }
@@ -224,6 +247,11 @@ async function startServer() {
     // Graceful shutdown
     const shutdown = async (signal: string) => {
       logger.info(`${signal} received, shutting down gracefully`);
+
+      // Stop CS polling
+      const { stopPolling: stopCSPolling } = await import('./services/csPollingService');
+      stopCSPolling();
+      logger.info('CS polling stopped');
 
       // Close HTTP server
       server.close(() => {

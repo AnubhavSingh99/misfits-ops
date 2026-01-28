@@ -66,6 +66,10 @@ export async function getClient(): Promise<PoolClient> {
   return pool.connect();
 }
 
+export function getLocalPool(): Pool {
+  return pool;
+}
+
 // Query local operations database (for POC, tasks, etc.)
 export async function queryLocal(text: string, params?: any[]) {
   const client = await getClient();

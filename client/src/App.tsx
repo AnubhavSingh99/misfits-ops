@@ -14,6 +14,7 @@ import ScalingTargets from './components/ScalingTargets'
 import ScalingPlannerV2 from './pages/ScalingPlannerV2'
 import LeaderRequirementsDashboard from './pages/LeaderRequirementsDashboard'
 import VenueRequirementsDashboard from './pages/VenueRequirementsDashboard'
+import CustomerServiceDashboard from './pages/CustomerServiceDashboard'
 
 function App() {
   return (
@@ -33,6 +34,7 @@ function App() {
         <Route path="/scaling-planner-v2" element={<ScalingPlannerV2 />} />
         <Route path="/leader-requirements" element={<LeaderRequirementsDashboard />} />
         <Route path="/venue-requirements" element={<VenueRequirementsDashboard />} />
+        <Route path="/customer-service" element={<CustomerServiceDashboard />} />
       </Routes>
     </Layout>
   )

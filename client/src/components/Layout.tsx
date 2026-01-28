@@ -12,7 +12,8 @@ import {
   Layers,
   Rocket,
   MapPin,
-  ChevronRight
+  ChevronRight,
+  Headphones
 } from 'lucide-react'
 import clsx from 'clsx'
 
@@ -28,6 +29,7 @@ const allNavigation = [
   { id: 'scaling-targets', name: 'Scaling Targets', href: '/scaling-targets', icon: Target },
   { id: 'leader-requirements', name: 'Leader Requirements', href: '/leader-requirements', icon: Users },
   { id: 'venue-requirements', name: 'Venue Requirements', href: '/venue-requirements', icon: MapPin },
+  { id: 'customer-service', name: 'Customer Service', href: '/customer-service', icon: Headphones },
   { id: 'dimensional-dashboard', name: 'Dimensional Dashboard', href: '/dimensional-dashboard', icon: Layers },
   { id: 'poc-management', name: 'POC Management', href: '/poc-management', icon: Users },
   { id: 'health-dashboard', name: 'Health Dashboard', href: '/health-dashboard', icon: Activity },
