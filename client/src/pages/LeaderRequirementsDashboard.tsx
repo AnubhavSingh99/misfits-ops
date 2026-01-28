@@ -319,6 +319,22 @@ export default function LeaderRequirementsDashboard() {
     }
   };
 
+  // Update requirement closed_by (triggers Slack notification)
+  const updateRequirementClosedBy = async (id: number, closedBy: 'growth_team' | 'platform_team' | null) => {
+    try {
+      const response = await fetch(`${API_BASE}/requirements/leaders/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ closed_by: closedBy })
+      });
+      if (response.ok) {
+        fetchData(true);
+      }
+    } catch (err) {
+      console.error('Failed to update closed_by:', err);
+    }
+  };
+
   // Delete requirement
   const handleConfirmDelete = async () => {
     if (!deleteRequirement) return;
@@ -535,6 +551,10 @@ export default function LeaderRequirementsDashboard() {
           <td className="py-3 px-4 text-center">
           </td>
 
+          {/* Closed By (empty for hierarchy rows) */}
+          <td className="py-3 px-4 text-center">
+          </td>
+
           {/* Actions */}
           <td className="py-3 px-4 text-center">
             <button
@@ -561,6 +581,7 @@ export default function LeaderRequirementsDashboard() {
             requirement={req}
             depth={depth + 1}
             onStatusChange={updateRequirementStatus}
+            onClosedByChange={updateRequirementClosedBy}
             onEdit={setEditingRequirement}
             onDelete={setDeleteRequirement}
           />
@@ -574,12 +595,14 @@ export default function LeaderRequirementsDashboard() {
     requirement: req,
     depth,
     onStatusChange,
+    onClosedByChange,
     onEdit,
     onDelete
   }: {
     requirement: LeaderRequirement;
     depth: number;
     onStatusChange: (id: number, status: RequirementStatus) => void;
+    onClosedByChange: (id: number, closedBy: 'growth_team' | 'platform_team' | null) => void;
     onEdit: (req: LeaderRequirement) => void;
     onDelete: (req: LeaderRequirement) => void;
   }) => {
@@ -865,6 +888,30 @@ export default function LeaderRequirementsDashboard() {
             ) : (
               <span className="text-xs text-gray-400">-</span>
             )}
+          </td>
+
+          {/* Closed By */}
+          <td className="py-2.5 px-4 text-center">
+            <select
+              value={req.closed_by || ''}
+              onChange={(e) => {
+                e.stopPropagation();
+                const value = e.target.value as 'growth_team' | 'platform_team' | '';
+                onClosedByChange(req.id, value || null);
+              }}
+              onClick={(e) => e.stopPropagation()}
+              className={`px-2 py-1 text-xs font-medium rounded-md border cursor-pointer
+                ${req.closed_by === 'growth_team'
+                  ? 'bg-violet-50 text-violet-700 border-violet-200'
+                  : req.closed_by === 'platform_team'
+                    ? 'bg-cyan-50 text-cyan-700 border-cyan-200'
+                    : 'bg-gray-50 text-gray-600 border-gray-200'
+                } focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500`}
+            >
+              <option value="">-</option>
+              <option value="growth_team">Growth Team</option>
+              <option value="platform_team">Platform Team</option>
+            </select>
           </td>
 
           {/* Actions */}
@@ -1456,6 +1503,9 @@ export default function LeaderRequirementsDashboard() {
                   </th>
                   <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">
                     TAT
+                  </th>
+                  <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                    Closed By
                   </th>
                   <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">
                     Actions

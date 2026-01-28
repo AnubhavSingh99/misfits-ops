@@ -149,10 +149,15 @@ export function RequirementSelector({
 
   const getStatusBadge = (status: string) => {
     const styles: Record<string, string> = {
-      'not_picked': 'bg-gray-100 text-gray-600',
-      'deprioritised': 'bg-orange-100 text-orange-600',
-      'in_progress': 'bg-blue-100 text-blue-600',
-      'done': 'bg-green-100 text-green-600'
+      // Venue requirement statuses (matching VenueRequirementsDashboard)
+      'not_picked': 'bg-slate-50 text-slate-600',
+      'picked': 'bg-blue-50 text-blue-700',
+      'venue_aligned': 'bg-teal-50 text-teal-700',
+      'leader_approval': 'bg-purple-50 text-purple-700',
+      'done': 'bg-emerald-50 text-emerald-700',
+      'deprioritised': 'bg-amber-50 text-amber-700',
+      // Leader requirement statuses
+      'in_progress': 'bg-blue-50 text-blue-700'
     };
     return styles[status] || styles['not_picked'];
   };

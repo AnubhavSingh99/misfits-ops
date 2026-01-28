@@ -996,6 +996,8 @@ export interface BaseRequirement {
 
 export interface LeaderRequirement extends BaseRequirement {
   type: 'leader';
+  // Who closed/completed this requirement - triggers Slack notification
+  closed_by?: 'growth_team' | 'platform_team';
 }
 
 // Priority levels for venue requirements

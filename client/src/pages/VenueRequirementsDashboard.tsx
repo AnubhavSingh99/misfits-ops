@@ -199,13 +199,6 @@ interface Summary {
   leader_approval: number;
   done: number;
   deprioritised: number;
-  // Priority counts
-  overdue?: number;
-  due_soon?: number;
-  on_track?: number;
-  sla_days?: number;
-  // Dynamic SLA options
-  unique_age_days?: number[];
   // TAT statistics
   tat_stats?: {
     average_tat: number;
@@ -258,9 +251,6 @@ export default function VenueRequirementsDashboard() {
   const [hierarchyLevels, setHierarchyLevels] = useState<HierarchyLevel[]>(['priority', 'city', 'activity', 'area']);
   const [enabledLevels, setEnabledLevels] = useState<Set<HierarchyLevel>>(new Set(['city', 'activity']));
   const [draggingLevel, setDraggingLevel] = useState<HierarchyLevel | null>(null);
-
-  // SLA setting (default 4 days)
-  const [slaDays, setSlaDays] = useState<number>(0); // 0 = All (no SLA filter)
 
   // Expanded state
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
@@ -318,10 +308,6 @@ export default function VenueRequirementsDashboard() {
         params.append('hierarchy_order', enabledOrder.join(','));
       }
 
-      // Pass SLA days setting (0 = All uses default 4 for priority calculation)
-      // Always pass sla_days so overdue/due_soon/on_track counts are calculated
-      params.append('sla_days', String(slaDays > 0 ? slaDays : 4));
-
       const response = await fetch(`${API_BASE}/requirements/venues/hierarchy?${params}`);
       const data = await response.json();
       if (data.success) {
@@ -334,7 +320,7 @@ export default function VenueRequirementsDashboard() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [filters, statusFilter, hierarchyLevels, enabledLevels, slaDays]);
+  }, [filters, statusFilter, hierarchyLevels, enabledLevels]);
 
   useEffect(() => {
     fetchData();
@@ -608,6 +594,7 @@ export default function VenueRequirementsDashboard() {
             ${depth === 0 ? 'bg-white' : depth === 1 ? 'bg-gray-50/30' : 'bg-gray-50/50'}`}
           onClick={(e) => {
             e.preventDefault();
+            e.stopPropagation();
             if (hasChildren) toggleExpand(nodeKey);
           }}
         >
@@ -615,7 +602,12 @@ export default function VenueRequirementsDashboard() {
           <td className="py-3 pr-4" style={{ paddingLeft: `${12 + depth * 24}px` }}>
             <div className="flex items-center gap-2">
               {hasChildren ? (
-                <button type="button" className="p-0.5 hover:bg-gray-200 rounded transition-colors">
+                <button
+                  type="button"
+                  tabIndex={-1}
+                  className="p-0.5 hover:bg-gray-200 rounded transition-colors"
+                  onClick={(e) => e.stopPropagation()}
+                >
                   {isExpanded ? (
                     <ChevronDown className="h-4 w-4 text-gray-400" />
                   ) : (
@@ -1352,73 +1344,6 @@ export default function VenueRequirementsDashboard() {
           </div>
         </div>
 
-        {/* Priority Alerts & SLA Setting - Always visible */}
-        {summary && (
-          <div className={`flex items-center justify-between rounded-xl border p-4 mb-4 ${
-            (summary.overdue && summary.overdue > 0) || (summary.due_soon && summary.due_soon > 0)
-              ? 'bg-gradient-to-r from-red-50 via-yellow-50 to-green-50 border-red-100'
-              : 'bg-gradient-to-r from-green-50 to-emerald-50 border-green-100'
-          }`}>
-            <div className="flex items-center gap-6">
-              <div className="flex items-center gap-3">
-                <span className={`w-4 h-4 rounded-full ${(summary.overdue || 0) > 0 ? 'bg-red-500' : 'bg-red-200'}`}></span>
-                <div>
-                  <span className={`text-xl font-bold ${(summary.overdue || 0) > 0 ? 'text-red-600' : 'text-gray-400'}`}>
-                    {summary.overdue || 0}
-                  </span>
-                  <span className={`text-sm ml-1 ${(summary.overdue || 0) > 0 ? 'text-red-600' : 'text-gray-400'}`}>
-                    Overdue
-                  </span>
-                </div>
-              </div>
-              <div className="flex items-center gap-3">
-                <span className={`w-4 h-4 rounded-full ${(summary.due_soon || 0) > 0 ? 'bg-yellow-400' : 'bg-yellow-200'}`}></span>
-                <div>
-                  <span className={`text-xl font-bold ${(summary.due_soon || 0) > 0 ? 'text-yellow-600' : 'text-gray-400'}`}>
-                    {summary.due_soon || 0}
-                  </span>
-                  <span className={`text-sm ml-1 ${(summary.due_soon || 0) > 0 ? 'text-yellow-600' : 'text-gray-400'}`}>
-                    Due Soon
-                  </span>
-                </div>
-              </div>
-              <div className="flex items-center gap-3">
-                <span className={`w-4 h-4 rounded-full ${(summary.on_track || 0) > 0 ? 'bg-green-500' : 'bg-green-200'}`}></span>
-                <div>
-                  <span className={`text-xl font-bold ${(summary.on_track || 0) > 0 ? 'text-green-600' : 'text-gray-400'}`}>
-                    {summary.on_track || 0}
-                  </span>
-                  <span className={`text-sm ml-1 ${(summary.on_track || 0) > 0 ? 'text-green-600' : 'text-gray-400'}`}>
-                    On Track
-                  </span>
-                </div>
-              </div>
-            </div>
-            <div className="flex items-center gap-2 text-sm text-gray-600">
-              <span>⚙️ SLA Target:</span>
-              <select
-                value={slaDays}
-                onChange={(e) => setSlaDays(parseInt(e.target.value))}
-                className="px-2 py-1 rounded border border-gray-300 text-sm font-medium bg-white"
-              >
-                {/* "All" option to see all requirements */}
-                <option value={0}>All</option>
-                {/* Dynamic SLA options from actual age values in system only */}
-                {(() => {
-                  const dynamicDays = summary.unique_age_days || [];
-                  // If no dynamic days, show default range 1-7
-                  const allDays = dynamicDays.length > 0
-                    ? dynamicDays.sort((a: number, b: number) => a - b)
-                    : [1, 2, 3, 4, 5, 6, 7];
-                  return allDays.map((d: number) => (
-                    <option key={d} value={d}>{d} days</option>
-                  ));
-                })()}
-              </select>
-            </div>
-          </div>
-        )}
-
         {/* Summary Tiles */}
         {summary && (
           <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3 mb-6">
@@ -2117,21 +2042,21 @@ export default function VenueRequirementsDashboard() {
                     <span className="w-4 h-4 rounded-full bg-red-500 flex-shrink-0"></span>
                     <div>
                       <span className="font-medium text-red-600">Critical</span>
-                      <span className="text-gray-500 text-sm ml-2">— Exceeded SLA (more than {slaDays || 4} days old)</span>
+                      <span className="text-gray-500 text-sm ml-2">— Exceeded SLA (more than {4} days old)</span>
                     </div>
                   </div>
                   <div className="flex items-center gap-3">
                     <span className="w-4 h-4 rounded-full bg-yellow-400 flex-shrink-0"></span>
                     <div>
                       <span className="font-medium text-yellow-600">High</span>
-                      <span className="text-gray-500 text-sm ml-2">— Approaching SLA ({(slaDays || 4) - 1}-{slaDays || 4} days old)</span>
+                      <span className="text-gray-500 text-sm ml-2">— Approaching SLA ({(4) - 1}-{4} days old)</span>
                     </div>
                   </div>
                   <div className="flex items-center gap-3">
                     <span className="w-4 h-4 rounded-full bg-green-500 flex-shrink-0"></span>
                     <div>
                       <span className="font-medium text-green-600">Normal</span>
-                      <span className="text-gray-500 text-sm ml-2">— Within SLA (less than {(slaDays || 4) - 1} days old)</span>
+                      <span className="text-gray-500 text-sm ml-2">— Within SLA (less than {(4) - 1} days old)</span>
                     </div>
                   </div>
                 </div>
@@ -2145,11 +2070,7 @@ export default function VenueRequirementsDashboard() {
                     <p className="font-medium text-gray-900 mb-1">How Priority Works</p>
                     <p className="text-sm text-gray-600">
                       Priority is calculated automatically based on the age of each requirement.
-                      {slaDays > 0 ? (
-                        <>The current SLA target is <span className="font-semibold text-blue-600">{slaDays} days</span>.</>
-                      ) : (
-                        <>Select an SLA target from the dropdown to filter by priority.</>
-                      )}
+                      The SLA target is <span className="font-semibold text-blue-600">4 days</span>.
                       {' '}Requirements older than the SLA become <span className="text-red-600 font-medium">Critical</span> priority
                       and should be addressed first.
                     </p>
@@ -2214,7 +2135,7 @@ export default function VenueRequirementsDashboard() {
                 </div>
                 <div className="bg-gray-50 rounded-lg p-4 text-center border border-gray-100">
                   <div className="text-2xl font-bold text-emerald-600">{summary.tat_stats.within_sla_percent}%</div>
-                  <div className="text-xs text-gray-500 mt-1">Within {slaDays} Days</div>
+                  <div className="text-xs text-gray-500 mt-1">Within {4} Days</div>
                 </div>
               </div>
 
@@ -2228,7 +2149,7 @@ export default function VenueRequirementsDashboard() {
                     return (
                       <div key={idx} className="flex items-center gap-3">
                         <span className="w-16 text-xs text-gray-500 text-right">
-                          {item.day === -1 ? `>${slaDays} days` : `Day ${item.day}`}
+                          {item.day === -1 ? `>${4} days` : `Day ${item.day}`}
                         </span>
                         <div className="flex-1 h-6 bg-gray-100 rounded overflow-hidden">
                           <div
@@ -2253,7 +2174,7 @@ export default function VenueRequirementsDashboard() {
               {summary.tat_stats.total_completed > 0 && (
                 <div className="mt-5 p-3 bg-amber-50 rounded-lg border border-amber-100">
                   <p className="text-sm text-amber-800">
-                    💡 <strong>{summary.tat_stats.within_sla_percent}% of venues</strong> are being closed within {slaDays} days (SLA target)
+                    💡 <strong>{summary.tat_stats.within_sla_percent}% of venues</strong> are being closed within {4} days (SLA target)
                   </p>
                 </div>
               )}

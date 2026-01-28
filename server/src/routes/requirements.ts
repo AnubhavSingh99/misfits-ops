@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { queryLocal, queryProduction } from '../services/database';
 import { getTeamForClub } from '../../../shared/teamConfig';
+import { sendLeaderRequirementClosureNotification } from '../services/slackService';
 import {
   LeaderRequirement,
   VenueRequirement,
@@ -546,6 +547,10 @@ router.put('/leaders/:id', async (req: Request, res: Response) => {
       updates.push(`comments = $${paramIndex++}`);
       params.push(data.comments);
     }
+    if ((data as any).closed_by !== undefined) {
+      updates.push(`closed_by = $${paramIndex++}`);
+      params.push((data as any).closed_by);
+    }
 
     // Always update timestamp
     updates.push(`updated_at = CURRENT_TIMESTAMP`);
@@ -564,9 +569,27 @@ router.put('/leaders/:id', async (req: Request, res: Response) => {
       return res.status(404).json({ success: false, error: 'Requirement not found' });
     }
 
+    const updatedRequirement = result.rows[0];
+
+    // Send Slack notification if closed_by was just set
+    if ((data as any).closed_by && ((data as any).closed_by === 'growth_team' || (data as any).closed_by === 'platform_team')) {
+      // Fire and forget - don't wait for Slack response
+      sendLeaderRequirementClosureNotification(
+        {
+          id: updatedRequirement.id,
+          name: updatedRequirement.name,
+          activity_name: updatedRequirement.activity_name,
+          city_name: updatedRequirement.city_name,
+          area_name: updatedRequirement.area_name,
+          team: updatedRequirement.team
+        },
+        (data as any).closed_by
+      ).catch(err => console.error('Slack notification failed:', err));
+    }
+
     res.json({
       success: true,
-      requirement: { ...result.rows[0], type: 'leader' }
+      requirement: { ...updatedRequirement, type: 'leader' }
     });
   } catch (error) {
     console.error('Error updating leader requirement:', error);
@@ -781,9 +804,6 @@ router.get('/venues/hierarchy', async (req: Request, res: Response) => {
   try {
     const { team, status, activity_ids, city_ids, area_ids, club_ids, teams } = req.query;
 
-    // SLA target in days (default 4)
-    const slaDays = req.query.sla_days ? parseInt(String(req.query.sla_days)) : 4;
-
     let whereClause = '1=1';
     const params: any[] = [];
     let paramIndex = 1;
@@ -856,10 +876,11 @@ router.get('/venues/hierarchy', async (req: Request, res: Response) => {
 
     const result = await queryLocal(query, params);
 
-    // Add priority_level to each requirement
+    // Add priority_level to each requirement (using fixed 4-day SLA)
+    const DEFAULT_SLA_DAYS = 4;
     const requirements = result.rows.map((req: any) => ({
       ...req,
-      priority_level: calculatePriorityLevel(req.status, req.age_days || 0, slaDays)
+      priority_level: calculatePriorityLevel(req.status, req.age_days || 0, DEFAULT_SLA_DAYS)
     }));
 
     // Helper to get level info from requirement
@@ -1019,16 +1040,6 @@ router.get('/venues/hierarchy', async (req: Request, res: Response) => {
 
     const hierarchy = sortNodes(Array.from(hierarchyMap.values()).map(convertMapToArray));
 
-    // Calculate priority counts
-    const activeRequirements = requirements.filter((r: any) =>
-      r.status !== 'done' && r.status !== 'deprioritised'
-    );
-
-    // Get unique age values from active requirements (for dynamic SLA dropdown)
-    const uniqueAgeDays = [...new Set(activeRequirements.map((r: any) => r.age_days || 0))]
-      .filter(age => age > 0)
-      .sort((a, b) => a - b);
-
     // Calculate TAT statistics for completed venues
     const completedRequirements = requirements.filter((r: any) =>
       r.status === 'done' && r.created_at && r.completed_at
@@ -1053,24 +1064,24 @@ router.get('/venues/hierarchy', async (req: Request, res: Response) => {
       // Average TAT
       tatStats.average_tat = Math.round((tatValues.reduce((a, b) => a + b, 0) / tatValues.length) * 10) / 10;
 
-      // Within SLA count
-      const withinSla = tatValues.filter(tat => tat <= slaDays).length;
+      // Within SLA count (using fixed 4-day SLA)
+      const withinSla = tatValues.filter(tat => tat <= DEFAULT_SLA_DAYS).length;
       tatStats.within_sla_percent = Math.round((withinSla / tatValues.length) * 100);
 
       // Day-wise distribution (group by day buckets)
-      const maxDay = Math.max(...tatValues, slaDays + 1);
+      const maxDay = Math.max(...tatValues, DEFAULT_SLA_DAYS + 1);
       const dayBuckets: Record<number, number> = {};
 
       tatValues.forEach(tat => {
-        const bucket = tat > slaDays ? slaDays + 1 : tat; // Group all > SLA into one bucket
+        const bucket = tat > DEFAULT_SLA_DAYS ? DEFAULT_SLA_DAYS + 1 : tat; // Group all > SLA into one bucket
         dayBuckets[bucket] = (dayBuckets[bucket] || 0) + 1;
       });
 
       // Create distribution array
-      for (let day = 1; day <= slaDays + 1; day++) {
+      for (let day = 1; day <= DEFAULT_SLA_DAYS + 1; day++) {
         const count = dayBuckets[day] || 0;
         tatStats.day_distribution.push({
-          day: day > slaDays ? -1 : day, // -1 indicates "> SLA days" bucket
+          day: day > DEFAULT_SLA_DAYS ? -1 : day, // -1 indicates "> SLA days" bucket
           count,
           percent: Math.round((count / tatValues.length) * 100)
         });
@@ -1085,13 +1096,6 @@ router.get('/venues/hierarchy', async (req: Request, res: Response) => {
       leader_approval: requirements.filter((r: any) => r.status === 'leader_approval').length,
       done: requirements.filter((r: any) => r.status === 'done').length,
       deprioritised: requirements.filter((r: any) => r.status === 'deprioritised').length,
-      // Priority counts
-      overdue: activeRequirements.filter((r: any) => r.priority_level === 'critical').length,
-      due_soon: activeRequirements.filter((r: any) => r.priority_level === 'high').length,
-      on_track: activeRequirements.filter((r: any) => r.priority_level === 'normal').length,
-      sla_days: slaDays,
-      // Dynamic SLA options (unique age values in system)
-      unique_age_days: uniqueAgeDays,
       // TAT statistics
       tat_stats: tatStats
     };

@@ -1,7 +1,8 @@
 import { Pool } from 'pg';
 import { logger } from '../utils/logger';
 
-const SLACK_BOT_TOKEN = process.env.SLACK_BOT_TOKEN || '';
+// Get token lazily to ensure dotenv has loaded
+const getSlackBotToken = () => process.env.SLACK_BOT_TOKEN || '';
 const SLACK_API_URL = 'https://slack.com/api';
 
 // User IDs to tag on SLA breach
@@ -44,7 +45,7 @@ async function postMessage(channel: string, text: string, blocks?: any[]): Promi
     const response = await fetch(`${SLACK_API_URL}/chat.postMessage`, {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${SLACK_BOT_TOKEN}`,
+        'Authorization': `Bearer ${getSlackBotToken()}`,
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
@@ -75,7 +76,7 @@ async function postThreadReply(channel: string, threadTs: string, text: string):
     const response = await fetch(`${SLACK_API_URL}/chat.postMessage`, {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${SLACK_BOT_TOKEN}`,
+        'Authorization': `Bearer ${getSlackBotToken()}`,
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
@@ -88,6 +89,59 @@ async function postThreadReply(channel: string, threadTs: string, text: string):
     return await response.json() as SlackResponse;
   } catch (error) {
     logger.error('Failed to post thread reply:', error);
+    return { ok: false, error: 'Network error' };
+  }
+}
+
+/**
+ * Send a direct message to a user
+ * Opens a DM conversation first, then sends the message
+ */
+async function sendDirectMessage(userId: string, text: string): Promise<SlackResponse> {
+  try {
+    // First, open a DM conversation with the user
+    const openResponse = await fetch(`${SLACK_API_URL}/conversations.open`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${getSlackBotToken()}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        users: userId
+      })
+    });
+
+    const openData = await openResponse.json() as { ok: boolean; channel?: { id: string }; error?: string };
+
+    if (!openData.ok || !openData.channel) {
+      logger.error(`Failed to open DM conversation: ${openData.error}`);
+      return { ok: false, error: openData.error || 'Failed to open DM' };
+    }
+
+    const dmChannelId = openData.channel.id;
+
+    // Now send the message to the DM channel
+    const response = await fetch(`${SLACK_API_URL}/chat.postMessage`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${getSlackBotToken()}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        channel: dmChannelId,
+        text
+      })
+    });
+
+    const data = await response.json() as SlackResponse;
+
+    if (!data.ok) {
+      logger.error(`Slack DM API error: ${data.error}`);
+    }
+
+    return data;
+  } catch (error) {
+    logger.error('Failed to send DM:', error);
     return { ok: false, error: 'Network error' };
   }
 }
@@ -485,5 +539,96 @@ export async function checkSLABreaches(): Promise<{ checked: number; notified: n
   } catch (error) {
     logger.error('Error checking SLA breaches:', error);
     return { checked: 0, notified: 0 };
+  }
+}
+
+/**
+ * Slack user IDs for leader requirement closure notifications
+ */
+const LEADER_REQ_SLACK_USERS = {
+  // Growth team closure notification
+  growth_team: 'U09PA2G5V6C', // Saumya
+
+  // Platform team closure notifications by team
+  platform_blue: 'U0979N4LYHG', // Shashwat
+  platform_yellow: 'U0974R1UMMH', // Kriti
+
+  // Green team - split by activity
+  platform_green_riya: 'U096UE9DNK1', // Riya (Music, Basketball, Dance, Pickleball)
+  platform_green_tanya: 'U09S8TM73TJ', // Tanya (Other activities in green)
+};
+
+// Activities that go to Riya in green team
+const RIYA_ACTIVITIES = ['Music', 'Basketball', 'Dance', 'Pickleball'];
+
+/**
+ * Send notification when a leader requirement is closed
+ *
+ * @param requirement - The leader requirement that was closed
+ * @param closedBy - 'growth_team' or 'platform_team'
+ */
+export async function sendLeaderRequirementClosureNotification(
+  requirement: {
+    id: number;
+    name: string;
+    activity_name?: string;
+    city_name?: string;
+    area_name?: string;
+    team?: string;
+  },
+  closedBy: 'growth_team' | 'platform_team'
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    let slackUserId: string;
+    let recipientName: string;
+
+    if (closedBy === 'growth_team') {
+      slackUserId = LEADER_REQ_SLACK_USERS.growth_team;
+      recipientName = 'Saumya';
+    } else {
+      // Platform team - determine by team color and activity
+      const team = requirement.team?.toLowerCase();
+
+      if (team === 'blue') {
+        slackUserId = LEADER_REQ_SLACK_USERS.platform_blue;
+        recipientName = 'Shashwat';
+      } else if (team === 'yellow') {
+        slackUserId = LEADER_REQ_SLACK_USERS.platform_yellow;
+        recipientName = 'Kriti';
+      } else {
+        // Green team - check activity
+        const activityName = requirement.activity_name || '';
+        if (RIYA_ACTIVITIES.some(a => activityName.toLowerCase().includes(a.toLowerCase()))) {
+          slackUserId = LEADER_REQ_SLACK_USERS.platform_green_riya;
+          recipientName = 'Riya';
+        } else {
+          slackUserId = LEADER_REQ_SLACK_USERS.platform_green_tanya;
+          recipientName = 'Tanya';
+        }
+      }
+    }
+
+    // Build location string
+    const location = [requirement.activity_name, requirement.city_name, requirement.area_name]
+      .filter(Boolean)
+      .join(' > ');
+
+    const closedByLabel = closedBy === 'growth_team' ? 'Growth Team' : 'Platform Team';
+
+    const text = `Leader requirement closed by ${closedByLabel}:\n*${requirement.name}*\n${location ? `📍 ${location}` : ''}`;
+
+    // Send DM to the user
+    const response = await sendDirectMessage(slackUserId, text);
+
+    if (response.ok) {
+      logger.info(`Leader requirement closure notification sent to ${recipientName} for requirement ${requirement.id}`);
+      return { success: true };
+    } else {
+      logger.error(`Failed to send leader requirement closure notification: ${response.error}`);
+      return { success: false, error: response.error };
+    }
+  } catch (error) {
+    logger.error('Error sending leader requirement closure notification:', error);
+    return { success: false, error: 'Internal error' };
   }
 }
