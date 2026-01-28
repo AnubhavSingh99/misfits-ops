@@ -509,6 +509,44 @@ export async function updateQueryStatus(
 }
 
 /**
+ * Update query details (description, attachments)
+ */
+export async function updateQueryDetails(
+  id: number,
+  updates: { description?: string; attachments?: string[] }
+): Promise<CSQuery | null> {
+  const setClauses: string[] = [];
+  const params: (string | number | string[])[] = [id];
+  let paramIndex = 2;
+
+  if (updates.description !== undefined) {
+    setClauses.push(`description = $${paramIndex++}`);
+    params.push(updates.description);
+  }
+
+  if (updates.attachments !== undefined) {
+    setClauses.push(`attachments = $${paramIndex++}`);
+    params.push(updates.attachments);
+  }
+
+  if (setClauses.length === 0) {
+    // Nothing to update, return current query
+    const result = await pool.query('SELECT * FROM cs_queries WHERE id = $1', [id]);
+    return result.rows[0] || null;
+  }
+
+  const query = `
+    UPDATE cs_queries
+    SET ${setClauses.join(', ')}
+    WHERE id = $1
+    RETURNING *
+  `;
+
+  const result = await pool.query(query, params);
+  return result.rows[0] || null;
+}
+
+/**
  * Get dashboard stats
  * Status workflow: created → in_progress → ticket_communicated → resolved → resolution_communicated
  */

@@ -26,7 +26,12 @@ import {
   TrendingUp,
   MoreVertical,
   Send,
-  PhoneOff
+  PhoneOff,
+  Pencil,
+  Save,
+  Trash2,
+  Link,
+  Loader2
 } from 'lucide-react';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5001';
@@ -985,6 +990,13 @@ export default function CustomerServiceDashboard() {
   const [attachmentUrl, setAttachmentUrl] = useState('');
   const [clubs, setClubs] = useState<Club[]>([]);
   const [hosts, setHosts] = useState<Host[]>([]);
+
+  // Edit mode state for detail modal
+  const [isEditingDetails, setIsEditingDetails] = useState(false);
+  const [editedDescription, setEditedDescription] = useState('');
+  const [editedAttachments, setEditedAttachments] = useState<string[]>([]);
+  const [newAttachmentUrl, setNewAttachmentUrl] = useState('');
+  const [savingEdit, setSavingEdit] = useState(false);
   const [clubSearch, setClubSearch] = useState('');
   const [loadingClubs, setLoadingClubs] = useState(false);
   const [loadingHosts, setLoadingHosts] = useState(false);
@@ -1134,6 +1146,68 @@ export default function CustomerServiceDashboard() {
     } catch (error) {
       console.error('Status update failed:', error);
     }
+  };
+
+  // Save query details (description, attachments)
+  const saveQueryDetails = async () => {
+    if (!selectedQuery) return;
+    setSavingEdit(true);
+    try {
+      const response = await fetch(`${API_BASE}/api/cs/queries/${selectedQuery.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          description: editedDescription,
+          attachments: editedAttachments
+        })
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        // Update selected query with new data
+        setSelectedQuery(data.query);
+        setIsEditingDetails(false);
+        await fetchData();
+      } else {
+        alert('Failed to save changes');
+      }
+    } catch (error) {
+      console.error('Save failed:', error);
+      alert('Failed to save changes');
+    } finally {
+      setSavingEdit(false);
+    }
+  };
+
+  // Start editing details
+  const startEditingDetails = () => {
+    if (selectedQuery) {
+      setEditedDescription(selectedQuery.description || selectedQuery.subject || '');
+      setEditedAttachments(selectedQuery.attachments || []);
+      setNewAttachmentUrl('');
+      setIsEditingDetails(true);
+    }
+  };
+
+  // Cancel editing
+  const cancelEditingDetails = () => {
+    setIsEditingDetails(false);
+    setEditedDescription('');
+    setEditedAttachments([]);
+    setNewAttachmentUrl('');
+  };
+
+  // Add attachment URL
+  const addEditAttachment = () => {
+    if (newAttachmentUrl.trim()) {
+      setEditedAttachments([...editedAttachments, newAttachmentUrl.trim()]);
+      setNewAttachmentUrl('');
+    }
+  };
+
+  // Remove attachment
+  const removeEditAttachment = (index: number) => {
+    setEditedAttachments(editedAttachments.filter((_, i) => i !== index));
   };
 
   // Send ticket to Slack
@@ -1701,11 +1775,11 @@ export default function CustomerServiceDashboard() {
       {/* Query Detail Modal */}
       {showDetailModal && selectedQuery && (
         <div className="fixed inset-0 z-50 overflow-y-auto">
-          <div className="fixed inset-0 bg-black/30 backdrop-blur-sm" onClick={() => setShowDetailModal(false)} />
+          <div className="fixed inset-0 bg-black/30 backdrop-blur-sm" onClick={() => { setShowDetailModal(false); cancelEditingDetails(); }} />
           <div className="flex min-h-full items-center justify-center p-4">
             <div className="relative bg-white rounded-2xl shadow-xl w-full max-w-2xl p-6 max-h-[90vh] overflow-y-auto">
               <button
-                onClick={() => setShowDetailModal(false)}
+                onClick={() => { setShowDetailModal(false); cancelEditingDetails(); }}
                 className="absolute top-4 right-4 p-1 hover:bg-gray-100 rounded-lg"
               >
                 <X className="h-5 w-5 text-gray-500" />
@@ -1780,71 +1854,162 @@ export default function CustomerServiceDashboard() {
 
               {/* Description */}
               <div className="mb-6">
-                <p className="text-sm text-gray-500 mb-1">Description</p>
-                <div className="p-4 bg-gray-50 rounded-lg">
-                  <p className="text-gray-700 whitespace-pre-wrap">
-                    {selectedQuery.description || selectedQuery.subject || 'No description provided'}
-                  </p>
+                <div className="flex items-center justify-between mb-1">
+                  <p className="text-sm text-gray-500">Description</p>
+                  {!isEditingDetails && (
+                    <button
+                      onClick={startEditingDetails}
+                      className="flex items-center gap-1 text-xs text-indigo-600 hover:text-indigo-800"
+                    >
+                      <Pencil className="h-3 w-3" />
+                      Edit
+                    </button>
+                  )}
                 </div>
+                {isEditingDetails ? (
+                  <textarea
+                    value={editedDescription}
+                    onChange={(e) => setEditedDescription(e.target.value)}
+                    className="w-full p-4 bg-white border border-gray-300 rounded-lg text-gray-700 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                    rows={5}
+                    placeholder="Enter description..."
+                  />
+                ) : (
+                  <div className="p-4 bg-gray-50 rounded-lg">
+                    <p className="text-gray-700 whitespace-pre-wrap">
+                      {selectedQuery.description || selectedQuery.subject || 'No description provided'}
+                    </p>
+                  </div>
+                )}
               </div>
 
               {/* Attachments */}
-              {selectedQuery.attachments && selectedQuery.attachments.length > 0 && (
-                <div className="mb-6">
-                  <p className="text-sm text-gray-500 mb-2">Attachments ({selectedQuery.attachments.length})</p>
-                  <div className="flex flex-wrap gap-3">
-                    {selectedQuery.attachments.map((url: string, idx: number) => {
-                      const isImage = /\.(jpg|jpeg|png|gif|webp|svg)$/i.test(url) || url.includes('image');
-                      const isPdf = /\.pdf$/i.test(url);
+              <div className="mb-6">
+                <p className="text-sm text-gray-500 mb-2">
+                  Attachments ({isEditingDetails ? editedAttachments.length : (selectedQuery.attachments?.length || 0)})
+                </p>
 
-                      if (isImage) {
-                        return (
-                          <a
-                            key={idx}
-                            href={url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="block"
-                          >
-                            <img
-                              src={url}
-                              alt={`Attachment ${idx + 1}`}
-                              className="h-24 w-24 object-cover rounded-lg border hover:border-indigo-400 transition-colors cursor-pointer"
-                            />
-                          </a>
-                        );
-                      }
+                {isEditingDetails ? (
+                  <div className="space-y-3">
+                    {/* Add new attachment */}
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={newAttachmentUrl}
+                        onChange={(e) => setNewAttachmentUrl(e.target.value)}
+                        placeholder="Paste image/file URL..."
+                        className="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                        onKeyDown={(e) => e.key === 'Enter' && addEditAttachment()}
+                      />
+                      <button
+                        onClick={addEditAttachment}
+                        disabled={!newAttachmentUrl.trim()}
+                        className="px-3 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        <Link className="h-4 w-4" />
+                      </button>
+                    </div>
 
-                      if (isPdf) {
-                        return (
-                          <a
-                            key={idx}
-                            href={url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="flex items-center gap-2 px-4 py-3 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100 transition-colors"
-                          >
-                            <FileText className="h-6 w-6 text-red-600" />
-                            <span className="text-sm text-red-700 font-medium">PDF {idx + 1}</span>
-                          </a>
-                        );
-                      }
-
-                      // Generic link
-                      return (
-                        <a
-                          key={idx}
-                          href={url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="flex items-center gap-2 px-4 py-3 bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100 transition-colors max-w-xs"
-                        >
-                          <MessageSquare className="h-5 w-5 text-blue-600 flex-shrink-0" />
-                          <span className="text-sm text-blue-700 truncate">{url.length > 40 ? url.slice(0, 40) + '...' : url}</span>
-                        </a>
-                      );
-                    })}
+                    {/* List of attachments */}
+                    {editedAttachments.length > 0 && (
+                      <div className="flex flex-wrap gap-2">
+                        {editedAttachments.map((url, idx) => (
+                          <div key={idx} className="flex items-center gap-2 px-3 py-2 bg-gray-100 rounded-lg text-sm">
+                            <span className="truncate max-w-[200px]">{url}</span>
+                            <button
+                              onClick={() => removeEditAttachment(idx)}
+                              className="text-red-500 hover:text-red-700"
+                            >
+                              <X className="h-4 w-4" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
+                ) : (
+                  selectedQuery.attachments && selectedQuery.attachments.length > 0 ? (
+                    <div className="flex flex-wrap gap-3">
+                      {selectedQuery.attachments.map((url: string, idx: number) => {
+                        const isImage = /\.(jpg|jpeg|png|gif|webp|svg)$/i.test(url) || url.includes('image');
+                        const isPdf = /\.pdf$/i.test(url);
+
+                        if (isImage) {
+                          return (
+                            <a
+                              key={idx}
+                              href={url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="block"
+                            >
+                              <img
+                                src={url}
+                                alt={`Attachment ${idx + 1}`}
+                                className="h-24 w-24 object-cover rounded-lg border hover:border-indigo-400 transition-colors cursor-pointer"
+                              />
+                            </a>
+                          );
+                        }
+
+                        if (isPdf) {
+                          return (
+                            <a
+                              key={idx}
+                              href={url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="flex items-center gap-2 px-4 py-3 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100 transition-colors"
+                            >
+                              <FileText className="h-6 w-6 text-red-600" />
+                              <span className="text-sm text-red-700 font-medium">PDF {idx + 1}</span>
+                            </a>
+                          );
+                        }
+
+                        // Generic link
+                        return (
+                          <a
+                            key={idx}
+                            href={url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="flex items-center gap-2 px-4 py-3 bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100 transition-colors max-w-xs"
+                          >
+                            <MessageSquare className="h-5 w-5 text-blue-600 flex-shrink-0" />
+                            <span className="text-sm text-blue-700 truncate">{url.length > 40 ? url.slice(0, 40) + '...' : url}</span>
+                          </a>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-gray-400">No attachments</p>
+                  )
+                )}
+              </div>
+
+              {/* Edit Save/Cancel Buttons */}
+              {isEditingDetails && (
+                <div className="flex gap-3 mb-6">
+                  <button
+                    onClick={saveQueryDetails}
+                    disabled={savingEdit}
+                    className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-indigo-600 text-white rounded-lg font-medium hover:bg-indigo-700 disabled:opacity-50"
+                  >
+                    {savingEdit ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Save className="h-4 w-4" />
+                    )}
+                    {savingEdit ? 'Saving...' : 'Save Changes'}
+                  </button>
+                  <button
+                    onClick={cancelEditingDetails}
+                    disabled={savingEdit}
+                    className="px-4 py-2.5 border border-gray-300 text-gray-700 rounded-lg font-medium hover:bg-gray-50 disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
                 </div>
               )}
 

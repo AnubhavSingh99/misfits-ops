@@ -4,6 +4,7 @@ import {
   getQueries,
   getQueryTypes,
   updateQueryStatus,
+  updateQueryDetails,
   getDashboardStats,
   getOrCreateQueryType
 } from '../services/csService';
@@ -227,6 +228,28 @@ router.patch('/queries/:id/assign', async (req: Request, res: Response) => {
   } catch (error) {
     logger.error('Error assigning query:', error);
     res.status(500).json({ error: 'Failed to assign query' });
+  }
+});
+
+/**
+ * PATCH /api/cs/queries/:id
+ * Update query details (description, attachments)
+ */
+router.patch('/queries/:id', async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { description, attachments } = req.body;
+
+    const query = await updateQueryDetails(parseInt(id), { description, attachments });
+
+    if (!query) {
+      return res.status(404).json({ error: 'Query not found' });
+    }
+
+    res.json({ success: true, query });
+  } catch (error) {
+    logger.error('Error updating query details:', error);
+    res.status(500).json({ error: 'Failed to update query details' });
   }
 });
 
