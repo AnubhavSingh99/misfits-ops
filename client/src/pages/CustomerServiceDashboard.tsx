@@ -320,27 +320,27 @@ function TicketRow({
       </td>
       <td className="py-2.5 px-3 text-right" onClick={e => e.stopPropagation()}>
         <div className="flex items-center gap-1.5 justify-end">
-          {/* Send to Slack dropdown */}
-          {!query.slack_channel ? (
-            <select
-              defaultValue=""
-              onChange={handleSlackSend}
-              disabled={sendingToSlack}
-              className="text-xs px-1.5 py-1 border rounded bg-purple-50 hover:bg-purple-100 cursor-pointer focus:outline-none focus:ring-1 focus:ring-purple-400 text-purple-700 disabled:opacity-50 w-20"
-              title="Send to Slack"
-            >
-              <option value="" disabled>{sendingToSlack ? '...' : '📤 Slack'}</option>
-              {slackChannelOptions.map(opt => (
-                <option key={opt.value} value={opt.value}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
-          ) : (
-            <span className="text-[10px] text-purple-500 px-1.5 py-1 bg-purple-50 rounded" title={`Sent to ${query.slack_channel_name}`}>
-              ✓ Slack
-            </span>
-          )}
+          {/* Send to Slack dropdown - always show to allow re-sending */}
+          <select
+            defaultValue=""
+            onChange={handleSlackSend}
+            disabled={sendingToSlack}
+            className={`text-xs px-1.5 py-1 border rounded cursor-pointer focus:outline-none focus:ring-1 focus:ring-purple-400 disabled:opacity-50 w-24 ${
+              query.slack_channel
+                ? 'bg-green-50 hover:bg-green-100 text-green-700'
+                : 'bg-purple-50 hover:bg-purple-100 text-purple-700'
+            }`}
+            title={query.slack_channel ? `Sent to ${query.slack_channel_name}. Click to resend.` : 'Send to Slack'}
+          >
+            <option value="" disabled>
+              {sendingToSlack ? '...' : query.slack_channel ? `✓ ${query.slack_channel_name}` : '📤 Slack'}
+            </option>
+            {slackChannelOptions.map(opt => (
+              <option key={opt.value} value={opt.value}>
+                {query.slack_channel === opt.value ? `↻ ${opt.label}` : opt.label}
+              </option>
+            ))}
+          </select>
 
           {/* Status dropdown */}
           <select
@@ -954,13 +954,13 @@ export default function CustomerServiceDashboard() {
 
   // UI State
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
-    'user': true,
+    'user': false,
     'user-open': true,
     'user-closed': false,
-    'leader': true,
+    'leader': false,
     'leader-open': true,
     'leader-closed': false,
-    'venue': true,
+    'venue': false,
     'venue-open': true,
     'venue-closed': false,
   });
