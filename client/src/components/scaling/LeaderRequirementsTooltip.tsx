@@ -658,6 +658,8 @@ export function LeaderRequirementsTooltip({
   const [requirements, setRequirements] = useState<(LeaderRequirement & { leaders_required?: number; existing_leader_effort?: boolean; linked_tasks?: ScalingTask[] })[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // "Who closed it" modal state
+  const [closedByModal, setClosedByModal] = useState<{ req: LeaderRequirement; originalStatus: RequirementStatus } | null>(null);
   const [triggerRect, setTriggerRect] = useState<DOMRect | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const tooltipRef = useRef<HTMLDivElement>(null);
@@ -748,8 +750,20 @@ export function LeaderRequirementsTooltip({
     }
   }, [node, shouldShowTooltip]);
 
-  // Handle status change
+  // Handle status change - show modal if marking as done
   const handleStatusChange = async (req: LeaderRequirement, newStatus: RequirementStatus) => {
+    if (newStatus === 'done') {
+      // Show modal to ask who closed it
+      setClosedByModal({ req, originalStatus: req.status });
+      return;
+    }
+
+    // Direct update for other statuses
+    await updateRequirementStatus(req, newStatus);
+  };
+
+  // Actual status update function
+  const updateRequirementStatus = async (req: LeaderRequirement, newStatus: RequirementStatus, closedBy?: 'growth_team' | 'platform_team') => {
     const originalStatus = req.status;
 
     // Optimistically update UI
@@ -758,10 +772,15 @@ export function LeaderRequirementsTooltip({
     ));
 
     try {
+      const body: { status: RequirementStatus; closed_by?: string } = { status: newStatus };
+      if (closedBy) {
+        body.closed_by = closedBy;
+      }
+
       const response = await fetch(`${API_BASE}/requirements/leaders/${req.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: newStatus })
+        body: JSON.stringify(body)
       });
 
       const data = await response.json();
@@ -780,6 +799,14 @@ export function LeaderRequirementsTooltip({
       setRequirements(prev => prev.map(r =>
         r.id === req.id ? { ...r, status: originalStatus } : r
       ));
+    }
+  };
+
+  // Handle "who closed it" modal submission
+  const handleClosedBySubmit = (closedBy: 'growth_team' | 'platform_team') => {
+    if (closedByModal) {
+      updateRequirementStatus(closedByModal.req, 'done', closedBy);
+      setClosedByModal(null);
     }
   };
 
@@ -1050,6 +1077,49 @@ export function LeaderRequirementsTooltip({
             className={`absolute border-8 border-transparent ${showAbove ? 'bottom-0 translate-y-full border-t-white' : 'top-0 -translate-y-full border-b-white'}`}
             style={{ left: getArrowLeft() }}
           />
+        </div>,
+        document.body
+      )}
+
+      {/* Who Closed It Modal */}
+      {closedByModal && createPortal(
+        <div className="fixed inset-0 z-[99999] flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/50" onClick={() => setClosedByModal(null)} />
+          <div className="relative bg-white rounded-xl shadow-2xl w-full max-w-sm mx-4 overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+            {/* Modal Header */}
+            <div className="px-5 py-4 border-b border-gray-100 bg-gradient-to-r from-indigo-50 to-violet-50">
+              <h3 className="text-base font-bold text-gray-800">Who closed this requirement?</h3>
+              <p className="text-xs text-gray-500 mt-1">{closedByModal.req.name}</p>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-5 space-y-3">
+              <button
+                onClick={() => handleClosedBySubmit('growth_team')}
+                className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-lg text-sm font-semibold transition-all bg-violet-100 text-violet-700 hover:bg-violet-200 border border-violet-200"
+              >
+                <Zap className="h-4 w-4" />
+                Growth Team
+              </button>
+              <button
+                onClick={() => handleClosedBySubmit('platform_team')}
+                className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-lg text-sm font-semibold transition-all bg-sky-100 text-sky-700 hover:bg-sky-200 border border-sky-200"
+              >
+                <Settings className="h-4 w-4" />
+                Platform Team
+              </button>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="px-5 py-3 border-t border-gray-100 bg-gray-50">
+              <button
+                onClick={() => setClosedByModal(null)}
+                className="w-full px-4 py-2 text-sm font-medium text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-lg transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
         </div>,
         document.body
       )}
