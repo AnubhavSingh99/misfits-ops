@@ -26,7 +26,12 @@ import {
   TrendingUp,
   MoreVertical,
   Send,
-  PhoneOff
+  PhoneOff,
+  Pencil,
+  Save,
+  Trash2,
+  Link,
+  Loader2
 } from 'lucide-react';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5001';
@@ -982,9 +987,17 @@ export default function CustomerServiceDashboard() {
     club_name: '',
     attachments: [] as string[]
   });
+  const [createError, setCreateError] = useState<string | null>(null);
   const [attachmentUrl, setAttachmentUrl] = useState('');
   const [clubs, setClubs] = useState<Club[]>([]);
   const [hosts, setHosts] = useState<Host[]>([]);
+
+  // Edit mode state for detail modal
+  const [isEditingDetails, setIsEditingDetails] = useState(false);
+  const [editedDescription, setEditedDescription] = useState('');
+  const [editedAttachments, setEditedAttachments] = useState<string[]>([]);
+  const [newAttachmentUrl, setNewAttachmentUrl] = useState('');
+  const [savingEdit, setSavingEdit] = useState(false);
   const [clubSearch, setClubSearch] = useState('');
   const [loadingClubs, setLoadingClubs] = useState(false);
   const [loadingHosts, setLoadingHosts] = useState(false);
@@ -1136,6 +1149,68 @@ export default function CustomerServiceDashboard() {
     }
   };
 
+  // Save query details (description, attachments)
+  const saveQueryDetails = async () => {
+    if (!selectedQuery) return;
+    setSavingEdit(true);
+    try {
+      const response = await fetch(`${API_BASE}/api/cs/queries/${selectedQuery.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          description: editedDescription,
+          attachments: editedAttachments
+        })
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        // Update selected query with new data
+        setSelectedQuery(data.query);
+        setIsEditingDetails(false);
+        await fetchData();
+      } else {
+        alert('Failed to save changes');
+      }
+    } catch (error) {
+      console.error('Save failed:', error);
+      alert('Failed to save changes');
+    } finally {
+      setSavingEdit(false);
+    }
+  };
+
+  // Start editing details
+  const startEditingDetails = () => {
+    if (selectedQuery) {
+      setEditedDescription(selectedQuery.description || selectedQuery.subject || '');
+      setEditedAttachments(selectedQuery.attachments || []);
+      setNewAttachmentUrl('');
+      setIsEditingDetails(true);
+    }
+  };
+
+  // Cancel editing
+  const cancelEditingDetails = () => {
+    setIsEditingDetails(false);
+    setEditedDescription('');
+    setEditedAttachments([]);
+    setNewAttachmentUrl('');
+  };
+
+  // Add attachment URL
+  const addEditAttachment = () => {
+    if (newAttachmentUrl.trim()) {
+      setEditedAttachments([...editedAttachments, newAttachmentUrl.trim()]);
+      setNewAttachmentUrl('');
+    }
+  };
+
+  // Remove attachment
+  const removeEditAttachment = (index: number) => {
+    setEditedAttachments(editedAttachments.filter((_, i) => i !== index));
+  };
+
   // Send ticket to Slack
   const sendToSlack = async (id: number, channelType: string) => {
     try {
@@ -1168,6 +1243,7 @@ export default function CustomerServiceDashboard() {
 
   // Create query
   const createQuery = async () => {
+    setCreateError(null);
     try {
       const response = await fetch(`${API_BASE}/api/cs/queries`, {
         method: 'POST',
@@ -1202,9 +1278,13 @@ export default function CustomerServiceDashboard() {
         setClubs([]);
         setHosts([]);
         await fetchData();
+      } else {
+        const data = await response.json().catch(() => null);
+        setCreateError(data?.error || `Failed to create query (${response.status})`);
       }
     } catch (error) {
       console.error('Create query failed:', error);
+      setCreateError('Failed to connect to server. Please try again.');
     }
   };
 
@@ -1387,8 +1467,8 @@ export default function CustomerServiceDashboard() {
       {/* Create Query Modal */}
       {showCreateModal && (
         <div className="fixed inset-0 z-50 overflow-y-auto">
-          <div className="fixed inset-0 bg-black/30 backdrop-blur-sm" onClick={() => setShowCreateModal(false)} />
-          <div className="flex min-h-full items-center justify-center p-4">
+          <div className="fixed inset-0 bg-black/30 backdrop-blur-sm" onClick={() => { setShowCreateModal(false); setCreateError(null); }} />
+          <div className="flex min-h-full items-center justify-center p-4 relative z-10">
             <div className="relative bg-white rounded-2xl shadow-xl w-full max-w-lg p-6">
               <button
                 onClick={() => setShowCreateModal(false)}
@@ -1489,122 +1569,74 @@ export default function CustomerServiceDashboard() {
 
                 {/* Club Selection - Only for Leaders */}
                 {createForm.stakeholder_type === 'leader' && (
-                  <>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Club Name *</label>
-                      <div className="relative">
-                        <input
-                          type="text"
-                          value={clubSearch}
-                          onChange={e => {
-                            setClubSearch(e.target.value);
-                            setCreateForm(f => ({ ...f, club_id: '', club_name: '' }));
-                          }}
-                          className="w-full px-3 py-2 border rounded-lg text-sm"
-                          placeholder="Search for club..."
-                        />
-                        {loadingClubs && (
-                          <div className="absolute right-3 top-1/2 -translate-y-1/2">
-                            <RefreshCw className="h-4 w-4 animate-spin text-gray-400" />
-                          </div>
-                        )}
-                      </div>
-                      {clubs.length > 0 && !createForm.club_id && clubSearch && (
-                        <div className="mt-1 border rounded-lg max-h-40 overflow-y-auto bg-white shadow-lg">
-                          {clubs.map(club => (
-                            <button
-                              key={club.id}
-                              type="button"
-                              onClick={() => {
-                                setCreateForm(f => ({
-                                  ...f,
-                                  club_id: club.id.toString(),
-                                  club_name: club.name,
-                                  user_name: '',
-                                  user_contact: ''
-                                }));
-                                setClubSearch(club.name);
-                              }}
-                              className="w-full text-left px-3 py-2 hover:bg-gray-50 text-sm border-b last:border-b-0"
-                            >
-                              <span className="font-medium">{club.name}</span>
-                              {club.activity && (
-                                <span className="text-gray-500 ml-2 text-xs">({club.activity})</span>
-                              )}
-                            </button>
-                          ))}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Club Name</label>
+                    <div className="relative">
+                      <input
+                        type="text"
+                        value={clubSearch}
+                        onChange={e => {
+                          setClubSearch(e.target.value);
+                          setCreateForm(f => ({ ...f, club_id: '', club_name: '' }));
+                        }}
+                        className="w-full px-3 py-2 border rounded-lg text-sm"
+                        placeholder="Search for club..."
+                      />
+                      {loadingClubs && (
+                        <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                          <RefreshCw className="h-4 w-4 animate-spin text-gray-400" />
                         </div>
                       )}
-                      {createForm.club_name && (
-                        <p className="text-xs text-green-600 mt-1">Selected: {createForm.club_name}</p>
-                      )}
                     </div>
-
-                    {/* Host Selection - Only when club is selected */}
-                    {createForm.club_id && (
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Select Host (Leader) *</label>
-                        {loadingHosts ? (
-                          <div className="flex items-center gap-2 text-gray-500 text-sm py-2">
-                            <RefreshCw className="h-4 w-4 animate-spin" />
-                            Loading hosts...
-                          </div>
-                        ) : hosts.length > 0 ? (
-                          <select
-                            value={createForm.user_name}
-                            onChange={e => {
-                              const selectedHost = hosts.find(h => h.name === e.target.value);
+                    {clubs.length > 0 && !createForm.club_id && clubSearch && (
+                      <div className="mt-1 border rounded-lg max-h-40 overflow-y-auto bg-white shadow-lg">
+                        {clubs.map(club => (
+                          <button
+                            key={club.id}
+                            type="button"
+                            onClick={() => {
                               setCreateForm(f => ({
                                 ...f,
-                                user_name: selectedHost?.name || '',
-                                user_contact: selectedHost?.phone || ''
+                                club_id: club.id.toString(),
+                                club_name: club.name
                               }));
+                              setClubSearch(club.name);
                             }}
-                            className="w-full px-3 py-2 border rounded-lg text-sm"
+                            className="w-full text-left px-3 py-2 hover:bg-gray-50 text-sm border-b last:border-b-0"
                           >
-                            <option value="">Select a host</option>
-                            {hosts.map(host => (
-                              <option key={host.id} value={host.name}>
-                                {host.name} {host.phone ? `(${host.phone})` : ''} - {host.type}
-                              </option>
-                            ))}
-                          </select>
-                        ) : (
-                          <p className="text-sm text-gray-500 py-2">No hosts found for this club</p>
-                        )}
+                            <span className="font-medium">{club.name}</span>
+                            {club.activity && (
+                              <span className="text-gray-500 ml-2 text-xs">({club.activity})</span>
+                            )}
+                          </button>
+                        ))}
                       </div>
                     )}
-                  </>
+                    {createForm.club_name && (
+                      <p className="text-xs text-green-600 mt-1">Selected: {createForm.club_name}</p>
+                    )}
+                  </div>
                 )}
 
-                {/* User Details - Show for non-leader or after host selection */}
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      {createForm.stakeholder_type === 'leader' ? 'Host Name' : 'Name'}
-                      {createForm.stakeholder_type === 'leader' && ' (Auto-filled)'}
-                    </label>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>
                     <input
                       type="text"
                       value={createForm.user_name}
                       onChange={e => setCreateForm(f => ({ ...f, user_name: e.target.value }))}
                       className="w-full px-3 py-2 border rounded-lg text-sm"
-                      placeholder={createForm.stakeholder_type === 'leader' ? 'Select host above' : 'User name'}
-                      readOnly={createForm.stakeholder_type === 'leader' && !!createForm.club_id}
+                      placeholder="Name"
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Phone *
-                      {createForm.stakeholder_type === 'leader' && ' (Auto-filled)'}
-                    </label>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Phone *</label>
                     <input
                       type="text"
                       value={createForm.user_contact}
                       onChange={e => setCreateForm(f => ({ ...f, user_contact: e.target.value }))}
                       className="w-full px-3 py-2 border rounded-lg text-sm"
                       placeholder="Phone number"
-                      readOnly={createForm.stakeholder_type === 'leader' && !!createForm.club_id}
                     />
                   </div>
                 </div>
@@ -1678,9 +1710,15 @@ export default function CustomerServiceDashboard() {
                 </div>
               </div>
 
+              {createError && (
+                <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+                  {createError}
+                </div>
+              )}
+
               <div className="flex justify-end gap-3 mt-6">
                 <button
-                  onClick={() => setShowCreateModal(false)}
+                  onClick={() => { setShowCreateModal(false); setCreateError(null); }}
                   className="px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg"
                 >
                   Cancel
@@ -1701,11 +1739,11 @@ export default function CustomerServiceDashboard() {
       {/* Query Detail Modal */}
       {showDetailModal && selectedQuery && (
         <div className="fixed inset-0 z-50 overflow-y-auto">
-          <div className="fixed inset-0 bg-black/30 backdrop-blur-sm" onClick={() => setShowDetailModal(false)} />
+          <div className="fixed inset-0 bg-black/30 backdrop-blur-sm" onClick={() => { setShowDetailModal(false); cancelEditingDetails(); }} />
           <div className="flex min-h-full items-center justify-center p-4">
             <div className="relative bg-white rounded-2xl shadow-xl w-full max-w-2xl p-6 max-h-[90vh] overflow-y-auto">
               <button
-                onClick={() => setShowDetailModal(false)}
+                onClick={() => { setShowDetailModal(false); cancelEditingDetails(); }}
                 className="absolute top-4 right-4 p-1 hover:bg-gray-100 rounded-lg"
               >
                 <X className="h-5 w-5 text-gray-500" />
@@ -1780,71 +1818,162 @@ export default function CustomerServiceDashboard() {
 
               {/* Description */}
               <div className="mb-6">
-                <p className="text-sm text-gray-500 mb-1">Description</p>
-                <div className="p-4 bg-gray-50 rounded-lg">
-                  <p className="text-gray-700 whitespace-pre-wrap">
-                    {selectedQuery.description || selectedQuery.subject || 'No description provided'}
-                  </p>
+                <div className="flex items-center justify-between mb-1">
+                  <p className="text-sm text-gray-500">Description</p>
+                  {!isEditingDetails && (
+                    <button
+                      onClick={startEditingDetails}
+                      className="flex items-center gap-1 text-xs text-indigo-600 hover:text-indigo-800"
+                    >
+                      <Pencil className="h-3 w-3" />
+                      Edit
+                    </button>
+                  )}
                 </div>
+                {isEditingDetails ? (
+                  <textarea
+                    value={editedDescription}
+                    onChange={(e) => setEditedDescription(e.target.value)}
+                    className="w-full p-4 bg-white border border-gray-300 rounded-lg text-gray-700 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                    rows={5}
+                    placeholder="Enter description..."
+                  />
+                ) : (
+                  <div className="p-4 bg-gray-50 rounded-lg">
+                    <p className="text-gray-700 whitespace-pre-wrap">
+                      {selectedQuery.description || selectedQuery.subject || 'No description provided'}
+                    </p>
+                  </div>
+                )}
               </div>
 
               {/* Attachments */}
-              {selectedQuery.attachments && selectedQuery.attachments.length > 0 && (
-                <div className="mb-6">
-                  <p className="text-sm text-gray-500 mb-2">Attachments ({selectedQuery.attachments.length})</p>
-                  <div className="flex flex-wrap gap-3">
-                    {selectedQuery.attachments.map((url: string, idx: number) => {
-                      const isImage = /\.(jpg|jpeg|png|gif|webp|svg)$/i.test(url) || url.includes('image');
-                      const isPdf = /\.pdf$/i.test(url);
+              <div className="mb-6">
+                <p className="text-sm text-gray-500 mb-2">
+                  Attachments ({isEditingDetails ? editedAttachments.length : (selectedQuery.attachments?.length || 0)})
+                </p>
 
-                      if (isImage) {
-                        return (
-                          <a
-                            key={idx}
-                            href={url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="block"
-                          >
-                            <img
-                              src={url}
-                              alt={`Attachment ${idx + 1}`}
-                              className="h-24 w-24 object-cover rounded-lg border hover:border-indigo-400 transition-colors cursor-pointer"
-                            />
-                          </a>
-                        );
-                      }
+                {isEditingDetails ? (
+                  <div className="space-y-3">
+                    {/* Add new attachment */}
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={newAttachmentUrl}
+                        onChange={(e) => setNewAttachmentUrl(e.target.value)}
+                        placeholder="Paste image/file URL..."
+                        className="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                        onKeyDown={(e) => e.key === 'Enter' && addEditAttachment()}
+                      />
+                      <button
+                        onClick={addEditAttachment}
+                        disabled={!newAttachmentUrl.trim()}
+                        className="px-3 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        <Link className="h-4 w-4" />
+                      </button>
+                    </div>
 
-                      if (isPdf) {
-                        return (
-                          <a
-                            key={idx}
-                            href={url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="flex items-center gap-2 px-4 py-3 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100 transition-colors"
-                          >
-                            <FileText className="h-6 w-6 text-red-600" />
-                            <span className="text-sm text-red-700 font-medium">PDF {idx + 1}</span>
-                          </a>
-                        );
-                      }
-
-                      // Generic link
-                      return (
-                        <a
-                          key={idx}
-                          href={url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="flex items-center gap-2 px-4 py-3 bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100 transition-colors max-w-xs"
-                        >
-                          <MessageSquare className="h-5 w-5 text-blue-600 flex-shrink-0" />
-                          <span className="text-sm text-blue-700 truncate">{url.length > 40 ? url.slice(0, 40) + '...' : url}</span>
-                        </a>
-                      );
-                    })}
+                    {/* List of attachments */}
+                    {editedAttachments.length > 0 && (
+                      <div className="flex flex-wrap gap-2">
+                        {editedAttachments.map((url, idx) => (
+                          <div key={idx} className="flex items-center gap-2 px-3 py-2 bg-gray-100 rounded-lg text-sm">
+                            <span className="truncate max-w-[200px]">{url}</span>
+                            <button
+                              onClick={() => removeEditAttachment(idx)}
+                              className="text-red-500 hover:text-red-700"
+                            >
+                              <X className="h-4 w-4" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
+                ) : (
+                  selectedQuery.attachments && selectedQuery.attachments.length > 0 ? (
+                    <div className="flex flex-wrap gap-3">
+                      {selectedQuery.attachments.map((url: string, idx: number) => {
+                        const isImage = /\.(jpg|jpeg|png|gif|webp|svg)$/i.test(url) || url.includes('image');
+                        const isPdf = /\.pdf$/i.test(url);
+
+                        if (isImage) {
+                          return (
+                            <a
+                              key={idx}
+                              href={url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="block"
+                            >
+                              <img
+                                src={url}
+                                alt={`Attachment ${idx + 1}`}
+                                className="h-24 w-24 object-cover rounded-lg border hover:border-indigo-400 transition-colors cursor-pointer"
+                              />
+                            </a>
+                          );
+                        }
+
+                        if (isPdf) {
+                          return (
+                            <a
+                              key={idx}
+                              href={url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="flex items-center gap-2 px-4 py-3 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100 transition-colors"
+                            >
+                              <FileText className="h-6 w-6 text-red-600" />
+                              <span className="text-sm text-red-700 font-medium">PDF {idx + 1}</span>
+                            </a>
+                          );
+                        }
+
+                        // Generic link
+                        return (
+                          <a
+                            key={idx}
+                            href={url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="flex items-center gap-2 px-4 py-3 bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100 transition-colors max-w-xs"
+                          >
+                            <MessageSquare className="h-5 w-5 text-blue-600 flex-shrink-0" />
+                            <span className="text-sm text-blue-700 truncate">{url.length > 40 ? url.slice(0, 40) + '...' : url}</span>
+                          </a>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-gray-400">No attachments</p>
+                  )
+                )}
+              </div>
+
+              {/* Edit Save/Cancel Buttons */}
+              {isEditingDetails && (
+                <div className="flex gap-3 mb-6">
+                  <button
+                    onClick={saveQueryDetails}
+                    disabled={savingEdit}
+                    className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-indigo-600 text-white rounded-lg font-medium hover:bg-indigo-700 disabled:opacity-50"
+                  >
+                    {savingEdit ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Save className="h-4 w-4" />
+                    )}
+                    {savingEdit ? 'Saving...' : 'Save Changes'}
+                  </button>
+                  <button
+                    onClick={cancelEditingDetails}
+                    disabled={savingEdit}
+                    className="px-4 py-2.5 border border-gray-300 text-gray-700 rounded-lg font-medium hover:bg-gray-50 disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
                 </div>
               )}
 

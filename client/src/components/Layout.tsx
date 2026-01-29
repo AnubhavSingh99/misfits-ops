@@ -23,17 +23,11 @@ interface LayoutProps {
 
 // All available navigation items with their config IDs
 const allNavigation = [
-  { id: 'dashboard', name: 'Dashboard', href: '/', icon: LayoutDashboard },
   { id: 'scaling-planner-v2', name: 'Scaling Planner V2', href: '/scaling-planner-v2', icon: Rocket },
-  { id: 'scaling-planner', name: 'Scaling Planner', href: '/scaling-planner', icon: TrendingUp },
-  { id: 'scaling-targets', name: 'Scaling Targets', href: '/scaling-targets', icon: Target },
-  { id: 'leader-requirements', name: 'Leader Requirements', href: '/leader-requirements', icon: Users },
-  { id: 'venue-requirements', name: 'Venue Requirements', href: '/venue-requirements', icon: MapPin },
-  { id: 'customer-service', name: 'Customer Service', href: '/customer-service', icon: Headphones },
-  { id: 'dimensional-dashboard', name: 'Dimensional Dashboard', href: '/dimensional-dashboard', icon: Layers },
-  { id: 'poc-management', name: 'POC Management', href: '/poc-management', icon: Users },
   { id: 'health-dashboard', name: 'Health Dashboard', href: '/health-dashboard', icon: Activity },
-  { id: 'workspace', name: 'Task Tracker', href: '/workspace', icon: CheckSquare },
+  { id: 'venue-requirements', name: 'Venue Requirements', href: '/venue-requirements', icon: MapPin },
+  { id: 'leader-requirements', name: 'Leader Requirements', href: '/leader-requirements', icon: Users },
+  { id: 'customer-service', name: 'Customer Service', href: '/customer-service', icon: Headphones },
 ]
 
 const API_BASE = import.meta.env.VITE_API_URL

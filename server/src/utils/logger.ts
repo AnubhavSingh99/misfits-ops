@@ -9,8 +9,17 @@ export const logger = winston.createLogger({
   ),
   defaultMeta: { service: 'misfits-operations' },
   transports: [
-    new winston.transports.File({ filename: 'error.log', level: 'error' }),
-    new winston.transports.File({ filename: 'combined.log' }),
+    new winston.transports.File({
+      filename: 'error.log',
+      level: 'error',
+      maxsize: 5 * 1024 * 1024, // 5MB per file
+      maxFiles: 3,              // Keep 3 rotated files max (15MB total)
+    }),
+    new winston.transports.File({
+      filename: 'combined.log',
+      maxsize: 10 * 1024 * 1024, // 10MB per file
+      maxFiles: 3,               // Keep 3 rotated files max (30MB total)
+    }),
   ],
 });
 

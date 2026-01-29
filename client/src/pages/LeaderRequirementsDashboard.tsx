@@ -218,6 +218,9 @@ export default function LeaderRequirementsDashboard() {
   const [deleteRequirement, setDeleteRequirement] = useState<LeaderRequirement | null>(null);
   const [deleting, setDeleting] = useState(false);
 
+  // "Who closed it" modal state (shown when marking as done)
+  const [closedByModal, setClosedByModal] = useState<{ id: number; name: string } | null>(null);
+
   // Fetch filter options
   useEffect(() => {
     const fetchFilterOptions = async () => {
@@ -303,13 +306,17 @@ export default function LeaderRequirementsDashboard() {
     setExpandedNodes(new Set());
   };
 
-  // Update requirement status
-  const updateRequirementStatus = async (id: number, status: RequirementStatus) => {
+  // Update requirement status (with optional closed_by)
+  const updateRequirementStatus = async (id: number, status: RequirementStatus, closedBy?: 'growth_team' | 'platform_team') => {
     try {
+      const body: { status: RequirementStatus; closed_by?: string } = { status };
+      if (closedBy) {
+        body.closed_by = closedBy;
+      }
       const response = await fetch(`${API_BASE}/requirements/leaders/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status })
+        body: JSON.stringify(body)
       });
       if (response.ok) {
         fetchData(true);
@@ -319,19 +326,22 @@ export default function LeaderRequirementsDashboard() {
     }
   };
 
-  // Update requirement closed_by (triggers Slack notification)
-  const updateRequirementClosedBy = async (id: number, closedBy: 'growth_team' | 'platform_team' | null) => {
-    try {
-      const response = await fetch(`${API_BASE}/requirements/leaders/${id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ closed_by: closedBy })
-      });
-      if (response.ok) {
-        fetchData(true);
-      }
-    } catch (err) {
-      console.error('Failed to update closed_by:', err);
+  // Handle status change - show modal if marking as done
+  const handleStatusChange = (id: number, newStatus: RequirementStatus, reqName: string) => {
+    if (newStatus === 'done') {
+      // Show modal to ask who closed it
+      setClosedByModal({ id, name: reqName });
+    } else {
+      // Direct update for other statuses
+      updateRequirementStatus(id, newStatus);
+    }
+  };
+
+  // Handle "who closed it" modal submission
+  const handleClosedBySubmit = (closedBy: 'growth_team' | 'platform_team') => {
+    if (closedByModal) {
+      updateRequirementStatus(closedByModal.id, 'done', closedBy);
+      setClosedByModal(null);
     }
   };
 
@@ -551,10 +561,6 @@ export default function LeaderRequirementsDashboard() {
           <td className="py-3 px-4 text-center">
           </td>
 
-          {/* Closed By (empty for hierarchy rows) */}
-          <td className="py-3 px-4 text-center">
-          </td>
-
           {/* Actions */}
           <td className="py-3 px-4 text-center">
             <button
@@ -580,8 +586,7 @@ export default function LeaderRequirementsDashboard() {
             key={req.id}
             requirement={req}
             depth={depth + 1}
-            onStatusChange={updateRequirementStatus}
-            onClosedByChange={updateRequirementClosedBy}
+            onStatusChange={handleStatusChange}
             onEdit={setEditingRequirement}
             onDelete={setDeleteRequirement}
           />
@@ -595,14 +600,12 @@ export default function LeaderRequirementsDashboard() {
     requirement: req,
     depth,
     onStatusChange,
-    onClosedByChange,
     onEdit,
     onDelete
   }: {
     requirement: LeaderRequirement;
     depth: number;
-    onStatusChange: (id: number, status: RequirementStatus) => void;
-    onClosedByChange: (id: number, closedBy: 'growth_team' | 'platform_team' | null) => void;
+    onStatusChange: (id: number, status: RequirementStatus, reqName: string) => void;
     onEdit: (req: LeaderRequirement) => void;
     onDelete: (req: LeaderRequirement) => void;
   }) => {
@@ -818,7 +821,7 @@ export default function LeaderRequirementsDashboard() {
           <td className="py-2.5 px-4">
             <select
               value={req.status}
-              onChange={(e) => onStatusChange(req.id, e.target.value as RequirementStatus)}
+              onChange={(e) => onStatusChange(req.id, e.target.value as RequirementStatus, req.name)}
               onClick={(e) => e.stopPropagation()}
               className={`px-2.5 py-1 text-xs font-medium rounded-md border cursor-pointer
                 ${statusConfig.color.badge} focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500`}
@@ -888,30 +891,6 @@ export default function LeaderRequirementsDashboard() {
             ) : (
               <span className="text-xs text-gray-400">-</span>
             )}
-          </td>
-
-          {/* Closed By */}
-          <td className="py-2.5 px-4 text-center">
-            <select
-              value={req.closed_by || ''}
-              onChange={(e) => {
-                e.stopPropagation();
-                const value = e.target.value as 'growth_team' | 'platform_team' | '';
-                onClosedByChange(req.id, value || null);
-              }}
-              onClick={(e) => e.stopPropagation()}
-              className={`px-2 py-1 text-xs font-medium rounded-md border cursor-pointer
-                ${req.closed_by === 'growth_team'
-                  ? 'bg-violet-50 text-violet-700 border-violet-200'
-                  : req.closed_by === 'platform_team'
-                    ? 'bg-cyan-50 text-cyan-700 border-cyan-200'
-                    : 'bg-gray-50 text-gray-600 border-gray-200'
-                } focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500`}
-            >
-              <option value="">-</option>
-              <option value="growth_team">Growth Team</option>
-              <option value="platform_team">Platform Team</option>
-            </select>
           </td>
 
           {/* Actions */}
@@ -1505,9 +1484,6 @@ export default function LeaderRequirementsDashboard() {
                     TAT
                   </th>
                   <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                    Closed By
-                  </th>
-                  <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">
                     Actions
                   </th>
                 </tr>
@@ -1581,6 +1557,48 @@ export default function LeaderRequirementsDashboard() {
                     Delete
                   </>
                 )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Who Closed It Modal */}
+      {closedByModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/50" onClick={() => setClosedByModal(null)} />
+          <div className="relative bg-white rounded-xl shadow-2xl w-full max-w-sm mx-4 overflow-hidden">
+            {/* Modal Header */}
+            <div className="px-6 py-4 border-b border-gray-200 bg-gradient-to-r from-indigo-50 to-violet-50">
+              <h3 className="text-lg font-bold text-gray-900">Who closed this requirement?</h3>
+              <p className="text-sm text-gray-500 mt-1">{closedByModal.name}</p>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-6 space-y-3">
+              <button
+                onClick={() => handleClosedBySubmit('growth_team')}
+                className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-lg text-sm font-semibold transition-all bg-violet-100 text-violet-700 hover:bg-violet-200 border border-violet-200"
+              >
+                <Zap className="h-4 w-4" />
+                Growth Team
+              </button>
+              <button
+                onClick={() => handleClosedBySubmit('platform_team')}
+                className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-lg text-sm font-semibold transition-all bg-cyan-100 text-cyan-700 hover:bg-cyan-200 border border-cyan-200"
+              >
+                <Settings className="h-4 w-4" />
+                Platform Team
+              </button>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="px-6 py-4 border-t border-gray-200 bg-gray-50">
+              <button
+                onClick={() => setClosedByModal(null)}
+                className="w-full px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+              >
+                Cancel
               </button>
             </div>
           </div>

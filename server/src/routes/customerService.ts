@@ -4,6 +4,7 @@ import {
   getQueries,
   getQueryTypes,
   updateQueryStatus,
+  updateQueryDetails,
   getDashboardStats,
   getOrCreateQueryType
 } from '../services/csService';
@@ -230,6 +231,28 @@ router.patch('/queries/:id/assign', async (req: Request, res: Response) => {
   }
 });
 
+/**
+ * PATCH /api/cs/queries/:id
+ * Update query details (description, attachments)
+ */
+router.patch('/queries/:id', async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { description, attachments } = req.body;
+
+    const query = await updateQueryDetails(parseInt(id), { description, attachments });
+
+    if (!query) {
+      return res.status(404).json({ error: 'Query not found' });
+    }
+
+    res.json({ success: true, query });
+  } catch (error) {
+    logger.error('Error updating query details:', error);
+    res.status(500).json({ error: 'Failed to update query details' });
+  }
+});
+
 // ============================================
 // QUERY TYPES
 // ============================================
@@ -410,7 +433,7 @@ router.get('/clubs/:clubId/hosts', async (req: Request, res: Response) => {
     const { clubId } = req.params;
 
     // Query to get all hosts associated with the club
-    // Hosts could be the club leader or event hosts
+    // Includes: club leader, co-leaders, and all event hosts
     const hostsQuery = `
       SELECT DISTINCT
         u.pk as user_id,
@@ -436,9 +459,8 @@ router.get('/clubs/:clubId/hosts', async (req: Request, res: Response) => {
       JOIN event_host eh ON e.pk = eh.event_id
       JOIN "user" u ON eh.user_id = u.pk
       WHERE e.club_id = $1
-        AND e.state = 'CREATED'
 
-      ORDER BY user_name ASC
+      ORDER BY host_type ASC, user_name ASC
       LIMIT 50
     `;
 
