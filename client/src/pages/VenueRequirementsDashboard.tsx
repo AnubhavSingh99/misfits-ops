@@ -272,6 +272,37 @@ export default function VenueRequirementsDashboard() {
   // TAT modal state
   const [showTatModal, setShowTatModal] = useState(false);
 
+  // Supply-demand state
+  const [showSupplyDemandModal, setShowSupplyDemandModal] = useState(false);
+  const [supplyDemandData, setSupplyDemandData] = useState<{
+    summary: { total_demand: number; supply_done: number; supply_in_progress: number; gap: number };
+    hierarchy: Array<{
+      name: string; demand: number; supply_done: number; supply_in_progress: number; gap: number;
+      cities: Array<{
+        name: string; demand: number; supply_done: number; supply_in_progress: number; gap: number;
+        areas: Array<{
+          name: string; demand: number; demand_launches: number; demand_zero_meetups: number;
+          supply_done: number; supply_in_progress: number; gap: number;
+        }>;
+      }>;
+    }>;
+  } | null>(null);
+  const [expandedSD, setExpandedSD] = useState<Record<string, boolean>>({});
+
+  // Fetch supply-demand data
+  useEffect(() => {
+    const fetchSupplyDemand = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/requirements/venues/supply-demand`);
+        const data = await res.json();
+        if (data.success) setSupplyDemandData(data);
+      } catch (err) {
+        console.error('Failed to fetch supply-demand:', err);
+      }
+    };
+    fetchSupplyDemand();
+  }, []);
+
   // Fetch filter options
   useEffect(() => {
     const fetchFilterOptions = async () => {
@@ -1406,6 +1437,27 @@ export default function VenueRequirementsDashboard() {
               </div>
               <span className="text-[10px] text-green-500">Click for details →</span>
             </div>
+            {/* Supply-Demand Tile - Clickable */}
+            {supplyDemandData && (
+              <div
+                onClick={() => setShowSupplyDemandModal(true)}
+                className="rounded-xl p-4 bg-gradient-to-br from-orange-50 to-amber-50 border border-orange-200 cursor-pointer hover:shadow-md hover:-translate-y-0.5 transition-all"
+              >
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs font-medium text-orange-600 uppercase tracking-wider">Venue Gap</span>
+                  <TrendingUp size={16} className="text-orange-500" />
+                </div>
+                <div className="flex items-baseline gap-1">
+                  <span className="text-2xl font-bold text-orange-600">
+                    {supplyDemandData.summary.gap}
+                  </span>
+                  <span className="text-sm text-orange-600">needed</span>
+                </div>
+                <span className="text-[10px] text-orange-500">
+                  {supplyDemandData.summary.total_demand} demand, {supplyDemandData.summary.supply_done} supplied
+                </span>
+              </div>
+            )}
           </div>
         )}
 
@@ -2193,6 +2245,160 @@ export default function VenueRequirementsDashboard() {
                 className="w-full px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 transition-colors"
               >
                 Got it
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Supply-Demand Modal */}
+      {showSupplyDemandModal && supplyDemandData && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/50" onClick={() => setShowSupplyDemandModal(false)} />
+          <div className="relative z-10 bg-white rounded-xl shadow-2xl w-full max-w-2xl mx-4 max-h-[80vh] flex flex-col overflow-hidden">
+            {/* Header */}
+            <div className="px-6 py-4 border-b border-gray-200 bg-gradient-to-r from-orange-50 to-amber-50">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-orange-100 rounded-lg">
+                    <TrendingUp size={20} className="text-orange-600" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-bold text-gray-900">Supply-Demand Analysis</h3>
+                    <p className="text-sm text-orange-600">Venue gap by activity, city & area</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setShowSupplyDemandModal(false)}
+                  className="p-1.5 hover:bg-gray-100 rounded-lg transition-colors"
+                >
+                  <X size={20} className="text-gray-500" />
+                </button>
+              </div>
+            </div>
+
+            {/* Summary Stats */}
+            <div className="px-6 py-4 border-b border-gray-100">
+              <div className="grid grid-cols-4 gap-3">
+                <div className="bg-red-50 rounded-lg p-3 text-center border border-red-100">
+                  <div className="text-xl font-bold text-red-600">{supplyDemandData.summary.total_demand}</div>
+                  <div className="text-[10px] text-red-500 mt-0.5">Total Demand</div>
+                </div>
+                <div className="bg-green-50 rounded-lg p-3 text-center border border-green-100">
+                  <div className="text-xl font-bold text-green-600">{supplyDemandData.summary.supply_done}</div>
+                  <div className="text-[10px] text-green-500 mt-0.5">Supplied (Done)</div>
+                </div>
+                <div className="bg-blue-50 rounded-lg p-3 text-center border border-blue-100">
+                  <div className="text-xl font-bold text-blue-600">{supplyDemandData.summary.supply_in_progress}</div>
+                  <div className="text-[10px] text-blue-500 mt-0.5">In Progress</div>
+                </div>
+                <div className="bg-orange-50 rounded-lg p-3 text-center border border-orange-100">
+                  <div className="text-xl font-bold text-orange-600">{supplyDemandData.summary.gap}</div>
+                  <div className="text-[10px] text-orange-500 mt-0.5">Gap</div>
+                </div>
+              </div>
+            </div>
+
+            {/* Hierarchy Table */}
+            <div className="flex-1 overflow-y-auto px-6 py-4">
+              {/* Table Header */}
+              <div className="grid grid-cols-[1fr_60px_60px_60px_60px] gap-2 text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2 px-2">
+                <span>Activity / City / Area</span>
+                <span className="text-center">Demand</span>
+                <span className="text-center">Done</span>
+                <span className="text-center">WIP</span>
+                <span className="text-center">Gap</span>
+              </div>
+
+              <div className="space-y-1">
+                {supplyDemandData.hierarchy.map((activity) => {
+                  const actKey = activity.name;
+                  const actExpanded = expandedSD[actKey] ?? false;
+                  return (
+                    <div key={actKey}>
+                      {/* Activity Row */}
+                      <div
+                        onClick={() => setExpandedSD(prev => ({ ...prev, [actKey]: !actExpanded }))}
+                        className="grid grid-cols-[1fr_60px_60px_60px_60px] gap-2 items-center px-2 py-2 rounded-lg bg-orange-50 border border-orange-100 cursor-pointer hover:bg-orange-100 transition-colors"
+                      >
+                        <div className="flex items-center gap-2 font-semibold text-sm text-gray-800">
+                          {actExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                          {activity.name}
+                        </div>
+                        <span className="text-center text-sm font-medium text-red-600">{activity.demand}</span>
+                        <span className="text-center text-sm font-medium text-green-600">{activity.supply_done}</span>
+                        <span className="text-center text-sm font-medium text-blue-600">{activity.supply_in_progress}</span>
+                        <span className="text-center text-sm font-bold text-orange-600">{activity.gap}</span>
+                      </div>
+
+                      {/* Cities */}
+                      {actExpanded && activity.cities.map((city) => {
+                        const cityKey = `${actKey}>${city.name}`;
+                        const cityExpanded = expandedSD[cityKey] ?? false;
+                        return (
+                          <div key={cityKey} className="ml-5">
+                            {/* City Row */}
+                            <div
+                              onClick={() => setExpandedSD(prev => ({ ...prev, [cityKey]: !cityExpanded }))}
+                              className="grid grid-cols-[1fr_60px_60px_60px_60px] gap-2 items-center px-2 py-1.5 rounded-lg hover:bg-gray-50 cursor-pointer transition-colors"
+                            >
+                              <div className="flex items-center gap-2 text-sm text-gray-700">
+                                {cityExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                                <Building2 size={12} className="text-gray-400" />
+                                {city.name}
+                              </div>
+                              <span className="text-center text-sm text-red-500">{city.demand}</span>
+                              <span className="text-center text-sm text-green-500">{city.supply_done}</span>
+                              <span className="text-center text-sm text-blue-500">{city.supply_in_progress}</span>
+                              <span className="text-center text-sm font-semibold text-orange-500">{city.gap}</span>
+                            </div>
+
+                            {/* Areas */}
+                            {cityExpanded && city.areas.map((area) => (
+                              <div
+                                key={area.name}
+                                className="grid grid-cols-[1fr_60px_60px_60px_60px] gap-2 items-center ml-5 px-2 py-1 text-xs text-gray-600"
+                              >
+                                <div className="flex items-center gap-2">
+                                  <MapPin size={10} className="text-gray-300" />
+                                  {area.name}
+                                  {area.demand_launches > 0 && (
+                                    <span className="text-[9px] bg-purple-100 text-purple-600 px-1 rounded">+{area.demand_launches} new</span>
+                                  )}
+                                  {area.demand_zero_meetups > 0 && (
+                                    <span className="text-[9px] bg-yellow-100 text-yellow-600 px-1 rounded">{area.demand_zero_meetups} scale</span>
+                                  )}
+                                </div>
+                                <span className="text-center text-red-400">{area.demand}</span>
+                                <span className="text-center text-green-400">{area.supply_done}</span>
+                                <span className="text-center text-blue-400">{area.supply_in_progress}</span>
+                                <span className="text-center font-semibold text-orange-500">{area.gap}</span>
+                              </div>
+                            ))}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })}
+              </div>
+
+              {supplyDemandData.hierarchy.length === 0 && (
+                <div className="text-center py-8 text-gray-400 text-sm">No supply-demand data available</div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="px-6 py-3 border-t border-gray-200 bg-gray-50 flex items-center justify-between">
+              <span className="text-[10px] text-gray-400">
+                <span className="bg-purple-100 text-purple-600 px-1 rounded mr-1">new</span> = new club launches
+                <span className="bg-yellow-100 text-yellow-600 px-1 rounded mx-1">scale</span> = clubs with 0 meetups
+              </span>
+              <button
+                onClick={() => setShowSupplyDemandModal(false)}
+                className="px-4 py-1.5 text-sm font-medium text-white bg-orange-600 rounded-lg hover:bg-orange-700 transition-colors"
+              >
+                Close
               </button>
             </div>
           </div>

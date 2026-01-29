@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { logger } from '../utils/logger';
+import { queryLocal } from '../services/database';
 import {
   getQueries,
   getQueryTypes,
@@ -90,12 +91,8 @@ router.post('/queries', async (req: Request, res: Response) => {
       });
     }
 
-    // Import pool for direct insert
-    const { getLocalPool } = await import('../services/database');
-    const pool = getLocalPool();
-
     // Get SLA hours from query type
-    const typeResult = await pool.query(
+    const typeResult = await queryLocal(
       'SELECT default_sla_hours FROM cs_query_types WHERE id = $1',
       [query_type_id]
     );
@@ -140,7 +137,7 @@ router.post('/queries', async (req: Request, res: Response) => {
       club_name || null
     ];
 
-    const result = await pool.query(insertQuery, params);
+    const result = await queryLocal(insertQuery, params);
     logger.info(`Created manual CS query: ${result.rows[0].ticket_number}`);
 
     res.status(201).json(result.rows[0]);
