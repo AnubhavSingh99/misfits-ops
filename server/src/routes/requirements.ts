@@ -648,6 +648,9 @@ router.get('/venues/day-types', async (req: Request, res: Response) => {
 // GET /api/requirements/venues/supply-demand - Supply vs demand analysis
 router.get('/venues/supply-demand', async (req: Request, res: Response) => {
   try {
+    // Sports activities are handled separately - exclude from supply-demand
+    const SPORTS_ACTIVITIES = ['Badminton', 'Basketball', 'Box Cricket', 'Football', 'Pickleball', 'Table Tennis', 'Volleyball', 'Cycling', 'Running'];
+
     // 1. DEMAND: New club launches (planned/in_progress)
     const launchesResult = await queryLocal(`
       SELECT
@@ -657,8 +660,9 @@ router.get('/venues/supply-demand', async (req: Request, res: Response) => {
         COUNT(*) as count
       FROM new_club_launches
       WHERE launch_status IN ('planned', 'in_progress', 'not_picked')
+        AND activity_name NOT IN (${SPORTS_ACTIVITIES.map((_, i) => `$${i + 1}`).join(',')})
       GROUP BY activity_name, city_name, area_name
-    `);
+    `, SPORTS_ACTIVITIES);
 
     // 2. DEMAND: Existing clubs with 0 meetups from production DB
     const zeroMeetupResult = await queryProduction(`
@@ -683,10 +687,11 @@ router.get('/venues/supply-demand', async (req: Request, res: Response) => {
       LEFT JOIN city ci ON ar.city_id = ci.id
       WHERE c.status = 'ACTIVE'
         AND c.is_private = false
+        AND a.name NOT IN (${SPORTS_ACTIVITIES.map((_, i) => `$${i + 1}`).join(',')})
         AND a.name != 'Test'
       GROUP BY a.name, ci.name, ar.name
       HAVING COUNT(DISTINCT e.pk) = 0
-    `);
+    `, SPORTS_ACTIVITIES);
 
     // 3. SUPPLY: Venue requirements grouped by status
     const supplyResult = await queryLocal(`
