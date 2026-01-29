@@ -645,6 +645,207 @@ router.get('/venues/day-types', async (req: Request, res: Response) => {
   }
 });
 
+// GET /api/requirements/venues/supply-demand - Supply vs demand analysis
+router.get('/venues/supply-demand', async (req: Request, res: Response) => {
+  try {
+    // 1. DEMAND: New club launches (planned/in_progress)
+    const launchesResult = await queryLocal(`
+      SELECT
+        activity_name,
+        COALESCE(planned_city, '') as city_name,
+        COALESCE(planned_area, '') as area_name,
+        COUNT(*) as count
+      FROM new_club_launches
+      WHERE launch_status IN ('planned', 'in_progress', 'not_picked')
+      GROUP BY activity_name, city_name, area_name
+    `);
+
+    // 2. DEMAND: Existing clubs with 0 meetups from production DB
+    const zeroMeetupResult = await queryProduction(`
+      SELECT
+        a.name as activity_name,
+        ci.name as city_name,
+        ar.name as area_name,
+        COUNT(DISTINCT c.pk) as count
+      FROM club c
+      JOIN activity a ON c.activity_id = a.id
+      LEFT JOIN event e ON c.pk = e.club_id
+      LEFT JOIN (
+        SELECT DISTINCT ON (e2.club_id)
+          e2.club_id,
+          l.area_id
+        FROM event e2
+        JOIN location l ON e2.location_id = l.id
+        WHERE l.area_id IS NOT NULL
+        ORDER BY e2.club_id, e2.start_time DESC
+      ) latest_loc ON c.pk = latest_loc.club_id
+      LEFT JOIN area ar ON latest_loc.area_id = ar.id
+      LEFT JOIN city ci ON ar.city_id = ci.id
+      WHERE c.status = 'ACTIVE'
+        AND c.is_private = false
+        AND a.name != 'Test'
+      GROUP BY a.name, ci.name, ar.name
+      HAVING COUNT(DISTINCT e.pk) = 0
+    `);
+
+    // 3. SUPPLY: Venue requirements grouped by status
+    const supplyResult = await queryLocal(`
+      SELECT
+        COALESCE(activity_name, '') as activity_name,
+        COALESCE(city_name, '') as city_name,
+        COALESCE(area_name, '') as area_name,
+        COUNT(*) FILTER (WHERE status = 'done') as done_count,
+        COUNT(*) FILTER (WHERE status IN ('not_picked', 'picked', 'venue_aligned', 'leader_approval')) as in_progress_count
+      FROM venue_requirements
+      WHERE status != 'deprioritised'
+      GROUP BY activity_name, city_name, area_name
+    `);
+
+    // Build combined map: key = activity|city|area
+    const map = new Map<string, {
+      activity: string;
+      city: string;
+      area: string;
+      demand_launches: number;
+      demand_zero_meetups: number;
+      supply_done: number;
+      supply_in_progress: number;
+    }>();
+
+    const getKey = (activity: string, city: string, area: string) =>
+      `${activity || ''}|${city || ''}|${area || ''}`;
+
+    const getOrCreate = (activity: string, city: string, area: string) => {
+      const key = getKey(activity, city, area);
+      if (!map.has(key)) {
+        map.set(key, {
+          activity: activity || 'Unknown',
+          city: city || 'Unknown',
+          area: area || 'Unknown',
+          demand_launches: 0,
+          demand_zero_meetups: 0,
+          supply_done: 0,
+          supply_in_progress: 0,
+        });
+      }
+      return map.get(key)!;
+    };
+
+    // Add launch demand
+    for (const row of launchesResult.rows) {
+      const entry = getOrCreate(row.activity_name, row.city_name, row.area_name);
+      entry.demand_launches += parseInt(row.count);
+    }
+
+    // Add zero meetup demand
+    for (const row of zeroMeetupResult.rows) {
+      const entry = getOrCreate(row.activity_name, row.city_name, row.area_name);
+      entry.demand_zero_meetups += parseInt(row.count);
+    }
+
+    // Add supply
+    for (const row of supplyResult.rows) {
+      const entry = getOrCreate(row.activity_name, row.city_name, row.area_name);
+      entry.supply_done += parseInt(row.done_count);
+      entry.supply_in_progress += parseInt(row.in_progress_count);
+    }
+
+    // Build hierarchy: activity → city → area
+    const activities = new Map<string, {
+      name: string;
+      demand: number;
+      supply_done: number;
+      supply_in_progress: number;
+      gap: number;
+      cities: Map<string, {
+        name: string;
+        demand: number;
+        supply_done: number;
+        supply_in_progress: number;
+        gap: number;
+        areas: Array<{
+          name: string;
+          demand: number;
+          demand_launches: number;
+          demand_zero_meetups: number;
+          supply_done: number;
+          supply_in_progress: number;
+          gap: number;
+        }>;
+      }>;
+    }>();
+
+    for (const entry of map.values()) {
+      const totalDemand = entry.demand_launches + entry.demand_zero_meetups;
+      const gap = Math.max(0, totalDemand - entry.supply_done);
+
+      if (!activities.has(entry.activity)) {
+        activities.set(entry.activity, {
+          name: entry.activity,
+          demand: 0, supply_done: 0, supply_in_progress: 0, gap: 0,
+          cities: new Map(),
+        });
+      }
+      const actGroup = activities.get(entry.activity)!;
+      actGroup.demand += totalDemand;
+      actGroup.supply_done += entry.supply_done;
+      actGroup.supply_in_progress += entry.supply_in_progress;
+      actGroup.gap += gap;
+
+      if (!actGroup.cities.has(entry.city)) {
+        actGroup.cities.set(entry.city, {
+          name: entry.city,
+          demand: 0, supply_done: 0, supply_in_progress: 0, gap: 0,
+          areas: [],
+        });
+      }
+      const cityGroup = actGroup.cities.get(entry.city)!;
+      cityGroup.demand += totalDemand;
+      cityGroup.supply_done += entry.supply_done;
+      cityGroup.supply_in_progress += entry.supply_in_progress;
+      cityGroup.gap += gap;
+
+      cityGroup.areas.push({
+        name: entry.area,
+        demand: totalDemand,
+        demand_launches: entry.demand_launches,
+        demand_zero_meetups: entry.demand_zero_meetups,
+        supply_done: entry.supply_done,
+        supply_in_progress: entry.supply_in_progress,
+        gap,
+      });
+    }
+
+    // Convert maps to arrays sorted by gap desc
+    const hierarchy = Array.from(activities.values())
+      .map(act => ({
+        ...act,
+        cities: Array.from(act.cities.values())
+          .map(city => ({
+            ...city,
+            areas: city.areas.sort((a, b) => b.gap - a.gap),
+          }))
+          .sort((a, b) => b.gap - a.gap),
+      }))
+      .sort((a, b) => b.gap - a.gap);
+
+    // Totals
+    const totalDemand = hierarchy.reduce((s, a) => s + a.demand, 0);
+    const totalDone = hierarchy.reduce((s, a) => s + a.supply_done, 0);
+    const totalInProgress = hierarchy.reduce((s, a) => s + a.supply_in_progress, 0);
+    const totalGap = hierarchy.reduce((s, a) => s + a.gap, 0);
+
+    res.json({
+      success: true,
+      summary: { total_demand: totalDemand, supply_done: totalDone, supply_in_progress: totalInProgress, gap: totalGap },
+      hierarchy,
+    });
+  } catch (error) {
+    console.error('Error fetching supply-demand:', error);
+    res.status(500).json({ success: false, error: 'Failed to fetch supply-demand data' });
+  }
+});
+
 // GET /api/requirements/venues - List venue requirements with filters
 router.get('/venues', async (req: Request, res: Response) => {
   try {
