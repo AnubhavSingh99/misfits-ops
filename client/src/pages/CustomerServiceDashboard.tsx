@@ -457,10 +457,10 @@ function StakeholderSection({
 }) {
   const config = stakeholderConfig[type];
   const typeQueries = queries.filter(q => q.stakeholder_type === type);
-  // Open = created, in_progress, ticket_communicated
-  const openQueries = typeQueries.filter(q => ['created', 'in_progress', 'ticket_communicated'].includes(q.status));
-  // Closed = resolved, resolution_communicated
-  const closedQueries = typeQueries.filter(q => ['resolved', 'resolution_communicated'].includes(q.status));
+  // Open = created, in_progress, ticket_communicated, resolved (not yet communicated to user)
+  const openQueries = typeQueries.filter(q => ['created', 'in_progress', 'ticket_communicated', 'resolved'].includes(q.status));
+  // Closed = only resolution_communicated (final state - resolution communicated to user)
+  const closedQueries = typeQueries.filter(q => q.status === 'resolution_communicated');
 
   const sectionKey = `${type}`;
   const isExpanded = expandedSections[sectionKey] !== false;
@@ -1294,7 +1294,7 @@ export default function CustomerServiceDashboard() {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm text-gray-500">Open</p>
-              <p className="text-2xl font-bold text-blue-600">{(stats?.open || 0) + (stats?.in_progress || 0) + (stats?.pending || 0)}</p>
+              <p className="text-2xl font-bold text-blue-600">{(stats?.open || 0) + (stats?.in_progress || 0) + (stats?.pending || 0) + (stats?.resolved || 0)}</p>
             </div>
             <div className="p-3 bg-blue-100 rounded-lg">
               <Inbox className="h-5 w-5 text-blue-600" />
@@ -1305,7 +1305,7 @@ export default function CustomerServiceDashboard() {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm text-gray-500">Closed</p>
-              <p className="text-2xl font-bold text-green-600">{(stats?.resolved || 0) + (stats?.closed || 0)}</p>
+              <p className="text-2xl font-bold text-green-600">{stats?.closed || 0}</p>
             </div>
             <div className="p-3 bg-green-100 rounded-lg">
               <CheckCircle className="h-5 w-5 text-green-600" />

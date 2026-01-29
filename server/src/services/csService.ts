@@ -531,7 +531,7 @@ export async function getDashboardStats(): Promise<{
       COUNT(*) FILTER (WHERE status = 'ticket_communicated') as ticket_communicated,
       COUNT(*) FILTER (WHERE status = 'resolved') as resolved,
       COUNT(*) FILTER (WHERE status = 'resolution_communicated') as resolution_communicated,
-      COUNT(*) FILTER (WHERE has_contact_info = false AND status NOT IN ('resolved', 'resolution_communicated')) as no_contact
+      COUNT(*) FILTER (WHERE has_contact_info = false) as no_contact
     FROM cs_queries
   `;
 
