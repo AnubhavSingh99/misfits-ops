@@ -45,6 +45,9 @@ Co-Authored-By: Claude <noreply@anthropic.com>"
     echo "🔗 Setting up database tunnel on production..."
     ssh -i $PRODUCTION_KEY $PRODUCTION_SERVER "cd $PRODUCTION_PATH && chmod +x db_connect.sh && ./db_connect.sh start"
 
+    echo "🧹 Setting up log cleanup cron job..."
+    ssh -i $PRODUCTION_KEY $PRODUCTION_SERVER "chmod +x $PRODUCTION_PATH/server/scripts/cleanup-logs.sh && (crontab -l 2>/dev/null | grep -q 'cleanup-logs.sh' || (crontab -l 2>/dev/null; echo '0 3 * * * $PRODUCTION_PATH/server/scripts/cleanup-logs.sh >> $PRODUCTION_PATH/server/cleanup.log 2>&1') | crontab -)"
+
     echo "🔄 Restarting services..."
     ssh -i $PRODUCTION_KEY $PRODUCTION_SERVER "cd $PRODUCTION_PATH && pm2 restart misfits-app"
 

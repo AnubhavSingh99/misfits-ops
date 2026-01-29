@@ -987,6 +987,7 @@ export default function CustomerServiceDashboard() {
     club_name: '',
     attachments: [] as string[]
   });
+  const [createError, setCreateError] = useState<string | null>(null);
   const [attachmentUrl, setAttachmentUrl] = useState('');
   const [clubs, setClubs] = useState<Club[]>([]);
   const [hosts, setHosts] = useState<Host[]>([]);
@@ -1242,6 +1243,7 @@ export default function CustomerServiceDashboard() {
 
   // Create query
   const createQuery = async () => {
+    setCreateError(null);
     try {
       const response = await fetch(`${API_BASE}/api/cs/queries`, {
         method: 'POST',
@@ -1276,9 +1278,13 @@ export default function CustomerServiceDashboard() {
         setClubs([]);
         setHosts([]);
         await fetchData();
+      } else {
+        const data = await response.json().catch(() => null);
+        setCreateError(data?.error || `Failed to create query (${response.status})`);
       }
     } catch (error) {
       console.error('Create query failed:', error);
+      setCreateError('Failed to connect to server. Please try again.');
     }
   };
 
@@ -1461,8 +1467,8 @@ export default function CustomerServiceDashboard() {
       {/* Create Query Modal */}
       {showCreateModal && (
         <div className="fixed inset-0 z-50 overflow-y-auto">
-          <div className="fixed inset-0 bg-black/30 backdrop-blur-sm" onClick={() => setShowCreateModal(false)} />
-          <div className="flex min-h-full items-center justify-center p-4">
+          <div className="fixed inset-0 bg-black/30 backdrop-blur-sm" onClick={() => { setShowCreateModal(false); setCreateError(null); }} />
+          <div className="flex min-h-full items-center justify-center p-4 relative z-10">
             <div className="relative bg-white rounded-2xl shadow-xl w-full max-w-lg p-6">
               <button
                 onClick={() => setShowCreateModal(false)}
@@ -1563,122 +1569,74 @@ export default function CustomerServiceDashboard() {
 
                 {/* Club Selection - Only for Leaders */}
                 {createForm.stakeholder_type === 'leader' && (
-                  <>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Club Name *</label>
-                      <div className="relative">
-                        <input
-                          type="text"
-                          value={clubSearch}
-                          onChange={e => {
-                            setClubSearch(e.target.value);
-                            setCreateForm(f => ({ ...f, club_id: '', club_name: '' }));
-                          }}
-                          className="w-full px-3 py-2 border rounded-lg text-sm"
-                          placeholder="Search for club..."
-                        />
-                        {loadingClubs && (
-                          <div className="absolute right-3 top-1/2 -translate-y-1/2">
-                            <RefreshCw className="h-4 w-4 animate-spin text-gray-400" />
-                          </div>
-                        )}
-                      </div>
-                      {clubs.length > 0 && !createForm.club_id && clubSearch && (
-                        <div className="mt-1 border rounded-lg max-h-40 overflow-y-auto bg-white shadow-lg">
-                          {clubs.map(club => (
-                            <button
-                              key={club.id}
-                              type="button"
-                              onClick={() => {
-                                setCreateForm(f => ({
-                                  ...f,
-                                  club_id: club.id.toString(),
-                                  club_name: club.name,
-                                  user_name: '',
-                                  user_contact: ''
-                                }));
-                                setClubSearch(club.name);
-                              }}
-                              className="w-full text-left px-3 py-2 hover:bg-gray-50 text-sm border-b last:border-b-0"
-                            >
-                              <span className="font-medium">{club.name}</span>
-                              {club.activity && (
-                                <span className="text-gray-500 ml-2 text-xs">({club.activity})</span>
-                              )}
-                            </button>
-                          ))}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Club Name</label>
+                    <div className="relative">
+                      <input
+                        type="text"
+                        value={clubSearch}
+                        onChange={e => {
+                          setClubSearch(e.target.value);
+                          setCreateForm(f => ({ ...f, club_id: '', club_name: '' }));
+                        }}
+                        className="w-full px-3 py-2 border rounded-lg text-sm"
+                        placeholder="Search for club..."
+                      />
+                      {loadingClubs && (
+                        <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                          <RefreshCw className="h-4 w-4 animate-spin text-gray-400" />
                         </div>
                       )}
-                      {createForm.club_name && (
-                        <p className="text-xs text-green-600 mt-1">Selected: {createForm.club_name}</p>
-                      )}
                     </div>
-
-                    {/* Host Selection - Only when club is selected */}
-                    {createForm.club_id && (
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Select Host (Leader) *</label>
-                        {loadingHosts ? (
-                          <div className="flex items-center gap-2 text-gray-500 text-sm py-2">
-                            <RefreshCw className="h-4 w-4 animate-spin" />
-                            Loading hosts...
-                          </div>
-                        ) : hosts.length > 0 ? (
-                          <select
-                            value={createForm.user_name}
-                            onChange={e => {
-                              const selectedHost = hosts.find(h => h.name === e.target.value);
+                    {clubs.length > 0 && !createForm.club_id && clubSearch && (
+                      <div className="mt-1 border rounded-lg max-h-40 overflow-y-auto bg-white shadow-lg">
+                        {clubs.map(club => (
+                          <button
+                            key={club.id}
+                            type="button"
+                            onClick={() => {
                               setCreateForm(f => ({
                                 ...f,
-                                user_name: selectedHost?.name || '',
-                                user_contact: selectedHost?.phone || ''
+                                club_id: club.id.toString(),
+                                club_name: club.name
                               }));
+                              setClubSearch(club.name);
                             }}
-                            className="w-full px-3 py-2 border rounded-lg text-sm"
+                            className="w-full text-left px-3 py-2 hover:bg-gray-50 text-sm border-b last:border-b-0"
                           >
-                            <option value="">Select a host</option>
-                            {hosts.map(host => (
-                              <option key={host.id} value={host.name}>
-                                {host.name} {host.phone ? `(${host.phone})` : ''} - {host.type}
-                              </option>
-                            ))}
-                          </select>
-                        ) : (
-                          <p className="text-sm text-gray-500 py-2">No hosts found for this club</p>
-                        )}
+                            <span className="font-medium">{club.name}</span>
+                            {club.activity && (
+                              <span className="text-gray-500 ml-2 text-xs">({club.activity})</span>
+                            )}
+                          </button>
+                        ))}
                       </div>
                     )}
-                  </>
+                    {createForm.club_name && (
+                      <p className="text-xs text-green-600 mt-1">Selected: {createForm.club_name}</p>
+                    )}
+                  </div>
                 )}
 
-                {/* User Details - Show for non-leader or after host selection */}
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      {createForm.stakeholder_type === 'leader' ? 'Host Name' : 'Name'}
-                      {createForm.stakeholder_type === 'leader' && ' (Auto-filled)'}
-                    </label>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>
                     <input
                       type="text"
                       value={createForm.user_name}
                       onChange={e => setCreateForm(f => ({ ...f, user_name: e.target.value }))}
                       className="w-full px-3 py-2 border rounded-lg text-sm"
-                      placeholder={createForm.stakeholder_type === 'leader' ? 'Select host above' : 'User name'}
-                      readOnly={createForm.stakeholder_type === 'leader' && !!createForm.club_id}
+                      placeholder="Name"
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Phone *
-                      {createForm.stakeholder_type === 'leader' && ' (Auto-filled)'}
-                    </label>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Phone *</label>
                     <input
                       type="text"
                       value={createForm.user_contact}
                       onChange={e => setCreateForm(f => ({ ...f, user_contact: e.target.value }))}
                       className="w-full px-3 py-2 border rounded-lg text-sm"
                       placeholder="Phone number"
-                      readOnly={createForm.stakeholder_type === 'leader' && !!createForm.club_id}
                     />
                   </div>
                 </div>
@@ -1752,9 +1710,15 @@ export default function CustomerServiceDashboard() {
                 </div>
               </div>
 
+              {createError && (
+                <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+                  {createError}
+                </div>
+              )}
+
               <div className="flex justify-end gap-3 mt-6">
                 <button
-                  onClick={() => setShowCreateModal(false)}
+                  onClick={() => { setShowCreateModal(false); setCreateError(null); }}
                   className="px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg"
                 >
                   Cancel

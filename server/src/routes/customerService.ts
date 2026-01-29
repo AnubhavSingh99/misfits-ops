@@ -433,7 +433,7 @@ router.get('/clubs/:clubId/hosts', async (req: Request, res: Response) => {
     const { clubId } = req.params;
 
     // Query to get all hosts associated with the club
-    // Hosts could be the club leader or event hosts
+    // Includes: club leader, co-leaders, and all event hosts
     const hostsQuery = `
       SELECT DISTINCT
         u.pk as user_id,
@@ -459,9 +459,8 @@ router.get('/clubs/:clubId/hosts', async (req: Request, res: Response) => {
       JOIN event_host eh ON e.pk = eh.event_id
       JOIN "user" u ON eh.user_id = u.pk
       WHERE e.club_id = $1
-        AND e.state = 'CREATED'
 
-      ORDER BY user_name ASC
+      ORDER BY host_type ASC, user_name ASC
       LIMIT 50
     `;
 

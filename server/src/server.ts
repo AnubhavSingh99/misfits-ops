@@ -181,6 +181,10 @@ app.get('*', (req, res) => {
 // Error handling
 app.use(errorHandler);
 
+// Track intervals for cleanup on shutdown
+let slaInterval: NodeJS.Timeout | null = null;
+let memoryInterval: NodeJS.Timeout | null = null;
+
 async function startServer() {
   try {
     // Try to initialize database (optional)
@@ -203,7 +207,7 @@ async function startServer() {
       logger.info('Slack service initialized');
 
       // Check SLA breaches every hour
-      setInterval(async () => {
+      slaInterval = setInterval(async () => {
         try {
           await checkSLABreaches();
         } catch (error) {
@@ -231,7 +235,7 @@ async function startServer() {
       logger.info(`🔗 Frontend URL: ${process.env.FRONTEND_URL || 'http://localhost:3000'}`);
 
       // Memory monitoring - log memory usage every 5 minutes
-      setInterval(() => {
+      memoryInterval = setInterval(() => {
         const memUsage = process.memoryUsage();
         const heapUsedMB = Math.round(memUsage.heapUsed / 1024 / 1024);
         const heapTotalMB = Math.round(memUsage.heapTotal / 1024 / 1024);
@@ -247,6 +251,10 @@ async function startServer() {
     // Graceful shutdown
     const shutdown = async (signal: string) => {
       logger.info(`${signal} received, shutting down gracefully`);
+
+      // Clear intervals
+      if (slaInterval) clearInterval(slaInterval);
+      if (memoryInterval) clearInterval(memoryInterval);
 
       // Stop CS polling
       const { stopPolling: stopCSPolling } = await import('./services/csPollingService');
