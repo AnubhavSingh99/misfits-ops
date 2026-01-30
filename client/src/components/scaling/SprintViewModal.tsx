@@ -71,9 +71,6 @@ export function SprintViewModal({ isOpen, onClose, node, context }: SprintViewMo
   const [showCommentsPanel, setShowCommentsPanel] = useState(false);
   const [editingTask, setEditingTask] = useState<ScalingTask | null>(null);
 
-  // Week picker state for duplicate
-  const [duplicatingTask, setDuplicatingTask] = useState<ScalingTask | null>(null);
-
   // Multi-select state
   const [selectedTaskIds, setSelectedTaskIds] = useState<Set<number>>(new Set());
   const [bulkActionLoading, setBulkActionLoading] = useState(false);
@@ -395,63 +392,20 @@ export function SprintViewModal({ isOpen, onClose, node, context }: SprintViewMo
     }
   };
 
-  // Handle duplicate - opens week picker
-  const handleDuplicate = (task: ScalingTask) => {
-    setDuplicatingTask(task);
-  };
-
-  // Get weeks where task already exists
-  const getTaskWeeks = (taskId: number): Set<string> => {
-    const taskWeeks = new Set<string>();
-    weeks.forEach(week => {
-      if (week.tasks.some(t => t.id === taskId)) {
-        taskWeeks.add(week.week_start);
-      }
-    });
-    return taskWeeks;
-  };
-
-  // Handle duplicate to specific week
-  const handleDuplicateToWeek = async (weekStart: string) => {
-    if (!duplicatingTask) return;
-
+  // Handle move task to a different week
+  const handleMoveToWeek = async (taskId: number, weekStart: string) => {
+    saveScrollPosition();
     try {
-      const response = await fetch(`${API_BASE}/scaling-tasks/${duplicatingTask.id}/duplicate-to-week`, {
+      const response = await fetch(`${API_BASE}/scaling-tasks/${taskId}/duplicate-to-week`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ week_start: weekStart })
       });
-
-      const data = await response.json();
-      if (data.success) {
-        setDuplicatingTask(null);
-        fetchSprintsPreserveScroll();
-      } else {
-        alert(data.error || 'Failed to add task to week');
+      if (response.ok) {
+        fetchSprints();
       }
     } catch (err) {
-      console.error('Failed to add task to week:', err);
-    }
-  };
-
-  // Handle remove task from a specific week
-  const handleRemoveFromWeek = async (weekStart: string) => {
-    if (!duplicatingTask) return;
-
-    try {
-      const response = await fetch(`${API_BASE}/scaling-tasks/${duplicatingTask.id}/weeks/${weekStart}`, {
-        method: 'DELETE'
-      });
-
-      const data = await response.json();
-      if (data.success) {
-        setDuplicatingTask(null);
-        fetchSprintsPreserveScroll();
-      } else {
-        alert(data.error || 'Failed to remove task from week');
-      }
-    } catch (err) {
-      console.error('Failed to remove task from week:', err);
+      console.error('Failed to move task:', err);
     }
   };
 
@@ -484,56 +438,70 @@ export function SprintViewModal({ isOpen, onClose, node, context }: SprintViewMo
     fetchSprintsPreserveScroll();
   };
 
-  // Handle drag end for reordering tasks within same week
+  // Handle drag end for reordering tasks within same week OR moving between weeks
   const handleDragEnd = async (result: DropResult) => {
     const { source, destination, draggableId } = result;
 
     // Dropped outside a droppable area
     if (!destination) return;
 
-    // Only allow reordering within the same week
-    if (source.droppableId !== destination.droppableId) return;
-
-    // No change in position
-    if (source.index === destination.index) return;
-
-    const weekStart = source.droppableId.replace('week-', '');
     // draggableId format: task-{id}-{week_start}
     const taskId = parseInt(draggableId.split('-')[1]);
+    const sourceWeek = source.droppableId.replace('week-', '').replace('older-', '');
+    const destWeek = destination.droppableId.replace('week-', '').replace('older-', '');
 
-    // Optimistic update - reorder locally first
-    setWeeks(prevWeeks => {
-      const newWeeks = prevWeeks.map(week => {
-        if (week.week_start !== weekStart) return week;
+    // Same week = reorder only
+    if (source.droppableId === destination.droppableId) {
+      // No change in position
+      if (source.index === destination.index) return;
 
-        const newTasks = [...week.tasks];
-        const [movedTask] = newTasks.splice(source.index, 1);
-        newTasks.splice(destination.index, 0, movedTask);
+      // Optimistic update - reorder locally first
+      setWeeks(prevWeeks => {
+        const newWeeks = prevWeeks.map(week => {
+          if (week.week_start !== sourceWeek) return week;
 
-        return { ...week, tasks: newTasks };
-      });
-      return newWeeks;
-    });
+          const newTasks = [...week.tasks];
+          const [movedTask] = newTasks.splice(source.index, 1);
+          newTasks.splice(destination.index, 0, movedTask);
 
-    // Send to backend
-    try {
-      const response = await fetch(`${API_BASE}/scaling-tasks/${taskId}/reorder`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          source_week: weekStart,
-          dest_week: weekStart,
-          new_position: destination.index
-        })
+          return { ...week, tasks: newTasks };
+        });
+        return newWeeks;
       });
 
-      if (!response.ok) {
-        // Revert on failure
+      // Send to backend
+      try {
+        const response = await fetch(`${API_BASE}/scaling-tasks/${taskId}/reorder`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            source_week: sourceWeek,
+            dest_week: sourceWeek,
+            new_position: destination.index
+          })
+        });
+
+        if (!response.ok) {
+          // Revert on failure
+          fetchSprintsPreserveScroll();
+        }
+      } catch (err) {
+        console.error('Failed to reorder task:', err);
         fetchSprintsPreserveScroll();
       }
-    } catch (err) {
-      console.error('Failed to reorder task:', err);
-      fetchSprintsPreserveScroll();
+    } else {
+      // Different week = MOVE task
+      saveScrollPosition();
+      try {
+        await fetch(`${API_BASE}/scaling-tasks/${taskId}/duplicate-to-week`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ week_start: destWeek })
+        });
+        fetchSprints();
+      } catch (err) {
+        console.error('Failed to move task:', err);
+      }
     }
   };
 
@@ -554,8 +522,8 @@ export function SprintViewModal({ isOpen, onClose, node, context }: SprintViewMo
     setSelectedTaskIds(new Set());
   }, []);
 
-  // Bulk add tasks to a week
-  const handleBulkAddToWeek = async (weekStart: string) => {
+  // Bulk move tasks to a week
+  const handleBulkMoveToWeek = async (weekStart: string) => {
     if (selectedTaskIds.size === 0) return;
     saveScrollPosition();
     setBulkActionLoading(true);
@@ -573,7 +541,7 @@ export function SprintViewModal({ isOpen, onClose, node, context }: SprintViewMo
       clearSelection();
       fetchSprints();
     } catch (err) {
-      console.error('Failed to bulk add tasks to week:', err);
+      console.error('Failed to bulk move tasks to week:', err);
     } finally {
       setBulkActionLoading(false);
     }
@@ -893,7 +861,12 @@ export function SprintViewModal({ isOpen, onClose, node, context }: SprintViewMo
                               key={task.id}
                               task={task}
                               onEdit={handleEditTask}
-                              onDuplicate={handleDuplicate}
+                              weeks={weeks.map(w => ({
+                                week_start: w.week_start,
+                                week_end: w.week_end,
+                                is_current: w.is_current
+                              }))}
+                              onMoveToWeek={handleMoveToWeek}
                               onViewComments={handleViewComments}
                               onStatusChange={handleStatusChange}
                               showCheckbox={true}
@@ -1001,7 +974,12 @@ export function SprintViewModal({ isOpen, onClose, node, context }: SprintViewMo
                                         <ScalingTaskTileV2
                                           task={task}
                                           onEdit={handleEditTask}
-                                          onDuplicate={handleDuplicate}
+                                          weeks={weeks.map(w => ({
+                                            week_start: w.week_start,
+                                            week_end: w.week_end,
+                                            is_current: w.is_current
+                                          }))}
+                                          onMoveToWeek={handleMoveToWeek}
                                           onViewComments={handleViewComments}
                                           onStatusChange={handleStatusChange}
                                           isDragging={dragSnapshot.isDragging}
@@ -1065,7 +1043,7 @@ export function SprintViewModal({ isOpen, onClose, node, context }: SprintViewMo
 
               <div className="w-px h-6 bg-gray-700" />
 
-              {/* Add to Week Dropdown */}
+              {/* Move to Week Dropdown */}
               <div className="relative group">
                 <button
                   disabled={bulkActionLoading}
@@ -1079,7 +1057,7 @@ export function SprintViewModal({ isOpen, onClose, node, context }: SprintViewMo
                   "
                 >
                   <Calendar className="h-4 w-4" />
-                  <span>Add to Week</span>
+                  <span>Move to Week</span>
                   <ChevronDown className="h-3.5 w-3.5 opacity-70" />
                 </button>
                 {/* Dropdown */}
@@ -1105,7 +1083,7 @@ export function SprintViewModal({ isOpen, onClose, node, context }: SprintViewMo
                     {weeks.map(week => (
                       <button
                         key={week.week_start}
-                        onClick={() => handleBulkAddToWeek(week.week_start)}
+                        onClick={() => handleBulkMoveToWeek(week.week_start)}
                         className={`
                           w-full flex items-center gap-3 px-3 py-2.5
                           text-sm transition-colors duration-100
@@ -1255,108 +1233,6 @@ export function SprintViewModal({ isOpen, onClose, node, context }: SprintViewMo
           task={selectedTask}
           onCommentAdded={fetchSprints}
         />
-      )}
-
-      {/* Week Picker Modal for Duplicate */}
-      {duplicatingTask && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center">
-          <div
-            className="absolute inset-0 bg-black/50"
-            onClick={() => setDuplicatingTask(null)}
-          />
-          <div className="relative bg-white rounded-xl shadow-2xl w-full max-w-sm mx-4 overflow-hidden">
-            {/* Header */}
-            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200 bg-gray-50">
-              <div>
-                <h3 className="text-base font-bold text-gray-900">Manage Weeks</h3>
-                <p className="text-xs text-gray-500 mt-0.5 truncate max-w-[250px]">
-                  {duplicatingTask.title}
-                </p>
-              </div>
-              <button
-                onClick={() => setDuplicatingTask(null)}
-                className="p-1.5 rounded-lg hover:bg-gray-200 text-gray-500 transition-colors"
-              >
-                <X size={18} />
-              </button>
-            </div>
-
-            {/* Week List */}
-            <div className="p-4 max-h-[400px] overflow-y-auto">
-              <p className="text-xs text-gray-500 mb-3">
-                Add or remove this task from weeks:
-              </p>
-              <div className="space-y-2">
-                {(() => {
-                  const taskWeeksSet = getTaskWeeks(duplicatingTask.id);
-                  const taskWeekCount = taskWeeksSet.size;
-                  const canRemove = taskWeekCount > 1;
-
-                  return weeks.map(week => {
-                    const taskAlreadyInWeek = taskWeeksSet.has(week.week_start);
-                    const isCurrentWeek = week.week_label?.includes('Current');
-
-                    return (
-                      <div
-                        key={week.week_start}
-                        className={`w-full flex items-center justify-between px-4 py-3 rounded-lg border transition-all
-                          ${taskAlreadyInWeek
-                            ? 'bg-green-50 border-green-200'
-                            : 'bg-white border-gray-200 hover:border-blue-400 hover:bg-blue-50'
-                          }`}
-                      >
-                        <div className="flex items-center gap-3">
-                          <Calendar size={16} className={taskAlreadyInWeek ? 'text-green-600' : 'text-gray-500'} />
-                          <div>
-                            <div className={`text-sm font-medium ${taskAlreadyInWeek ? 'text-green-700' : 'text-gray-700'}`}>
-                              {new Date(week.week_start).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                              {' - '}
-                              {new Date(week.week_end).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
-                            </div>
-                            {isCurrentWeek && (
-                              <span className="text-xs text-blue-600 font-medium">Current Week</span>
-                            )}
-                          </div>
-                        </div>
-                        {taskAlreadyInWeek ? (
-                          canRemove ? (
-                            <button
-                              onClick={() => handleRemoveFromWeek(week.week_start)}
-                              className="text-xs text-red-600 hover:text-red-700 bg-red-50 hover:bg-red-100 px-2.5 py-1 rounded font-medium transition-colors"
-                            >
-                              Remove
-                            </button>
-                          ) : (
-                            <span className="text-xs text-gray-400 bg-gray-100 px-2 py-1 rounded">
-                              Only week
-                            </span>
-                          )
-                        ) : (
-                          <button
-                            onClick={() => handleDuplicateToWeek(week.week_start)}
-                            className="text-xs text-blue-600 hover:text-blue-700 font-medium"
-                          >
-                            + Add
-                          </button>
-                        )}
-                      </div>
-                    );
-                  });
-                })()}
-              </div>
-            </div>
-
-            {/* Footer */}
-            <div className="px-5 py-3 border-t border-gray-200 bg-gray-50">
-              <button
-                onClick={() => setDuplicatingTask(null)}
-                className="w-full px-4 py-2 text-sm text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-lg transition-colors"
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        </div>
       )}
 
       {/* Edit Task Modal */}

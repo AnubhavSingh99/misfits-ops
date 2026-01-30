@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import {
   GripVertical,
-  Copy,
+  MoveRight,
   MessageSquare,
   ExternalLink,
   Pencil,
@@ -171,9 +171,17 @@ interface Comment {
   created_at: string;
 }
 
+// Week info for move dropdown
+interface WeekOption {
+  week_start: string;
+  week_end: string;
+  is_current: boolean;
+}
+
 interface ScalingTaskTileV2Props {
   task: ScalingTask;
-  onDuplicate?: (task: ScalingTask) => void;
+  weeks?: WeekOption[];
+  onMoveToWeek?: (taskId: number, weekStart: string) => void;
   onViewComments?: (task: ScalingTask) => void;
   onEdit?: (task: ScalingTask) => void;
   onClick?: (task: ScalingTask) => void;
@@ -226,9 +234,17 @@ function formatDateTime(dateStr: string): string {
   }
 }
 
+// Format week label for dropdown
+function formatWeekLabel(start: string, end: string): string {
+  const s = new Date(start);
+  const e = new Date(end);
+  return `${s.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${e.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
+}
+
 export function ScalingTaskTileV2({
   task,
-  onDuplicate,
+  weeks,
+  onMoveToWeek,
   onViewComments,
   onEdit,
   onClick,
@@ -252,8 +268,11 @@ export function ScalingTaskTileV2({
 
   const statusButtonRef = useRef<HTMLButtonElement>(null);
   const authorButtonRef = useRef<HTMLButtonElement>(null);
+  const moveButtonRef = useRef<HTMLButtonElement>(null);
   const [dropdownPosition, setDropdownPosition] = useState({ top: 0, left: 0 });
   const [authorDropdownPosition, setAuthorDropdownPosition] = useState({ top: 0, left: 0 });
+  const [moveDropdownOpen, setMoveDropdownOpen] = useState(false);
+  const [moveDropdownPosition, setMoveDropdownPosition] = useState({ top: 0, left: 0 });
 
   // Update dropdown position when opened
   useEffect(() => {
@@ -276,6 +295,34 @@ export function ScalingTaskTileV2({
       });
     }
   }, [authorDropdownOpen]);
+
+  // Update move dropdown position
+  useEffect(() => {
+    if (moveDropdownOpen && moveButtonRef.current) {
+      const rect = moveButtonRef.current.getBoundingClientRect();
+      setMoveDropdownPosition({
+        top: rect.bottom + 4,
+        left: rect.right - 200 // Right-align dropdown
+      });
+    }
+  }, [moveDropdownOpen]);
+
+  // Close move dropdown on outside click
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (moveButtonRef.current && !moveButtonRef.current.contains(e.target as Node)) {
+        const dropdown = document.getElementById(`move-dropdown-${task.id}`);
+        if (dropdown && dropdown.contains(e.target as Node)) {
+          return;
+        }
+        setMoveDropdownOpen(false);
+      }
+    };
+    if (moveDropdownOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [moveDropdownOpen, task.id]);
 
   // Track if assignees have been fetched
   const [assigneesFetched, setAssigneesFetched] = useState(false);
@@ -600,6 +647,61 @@ export function ScalingTaskTileV2({
           document.body
         )}
 
+        {/* Move to Week Dropdown Portal */}
+        {moveDropdownOpen && weeks && createPortal(
+          <div
+            id={`move-dropdown-${task.id}`}
+            className="fixed bg-white rounded-xl shadow-2xl border border-gray-200 py-1.5 min-w-[200px] animate-in fade-in slide-in-from-top-2 duration-150"
+            style={{
+              top: moveDropdownPosition.top,
+              left: moveDropdownPosition.left,
+              zIndex: 9999
+            }}
+          >
+            <div className="px-3 py-1.5 text-xs font-semibold text-gray-500 border-b border-gray-100">
+              Move to Week
+            </div>
+            {weeks.map(week => {
+              const isTaskHere = task.week_start === week.week_start;
+
+              return (
+                <button
+                  key={week.week_start}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (!isTaskHere) {
+                      onMoveToWeek?.(task.id, week.week_start);
+                      setMoveDropdownOpen(false);
+                    }
+                  }}
+                  disabled={isTaskHere}
+                  className={`
+                    w-full flex items-center justify-between px-3 py-2 text-xs
+                    ${isTaskHere
+                      ? 'bg-gray-50 text-gray-400 cursor-not-allowed'
+                      : 'hover:bg-blue-50 text-gray-700'}
+                  `}
+                >
+                  <span>
+                    {formatWeekLabel(week.week_start, week.week_end)}
+                  </span>
+                  <div className="flex items-center gap-1.5">
+                    {week.is_current && (
+                      <span className="text-[10px] bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded">
+                        Current
+                      </span>
+                    )}
+                    {isTaskHere && (
+                      <span className="text-[10px] text-gray-400">Here</span>
+                    )}
+                  </div>
+                </button>
+              );
+            })}
+          </div>,
+          document.body
+        )}
+
         {/* Action Icons */}
         <div className="flex items-center gap-0.5 flex-shrink-0">
           {onEdit && (
@@ -614,16 +716,22 @@ export function ScalingTaskTileV2({
               <Pencil className="h-3.5 w-3.5" />
             </button>
           )}
-          {onDuplicate && (
+          {/* Move to Week Button with Dropdown */}
+          {onMoveToWeek && weeks && weeks.length > 0 && (
             <button
+              ref={moveButtonRef}
               onClick={(e) => {
                 e.stopPropagation();
-                onDuplicate(task);
+                setMoveDropdownOpen(!moveDropdownOpen);
               }}
-              className="p-1.5 rounded hover:bg-white/80 text-gray-400 hover:text-blue-600 transition-colors"
-              title="Duplicate to week"
+              className={`p-1.5 rounded transition-colors ${
+                moveDropdownOpen
+                  ? 'bg-blue-100 text-blue-600'
+                  : 'hover:bg-white/80 text-gray-400 hover:text-blue-600'
+              }`}
+              title="Move to week"
             >
-              <Copy className="h-3.5 w-3.5" />
+              <MoveRight className="h-3.5 w-3.5" />
             </button>
           )}
           {/* Comments Toggle */}

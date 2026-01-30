@@ -992,7 +992,7 @@ router.get('/:id/comments', async (req, res) => {
 // SPRINT/WEEK MANAGEMENT ENDPOINTS
 // =====================================================
 
-// POST /api/scaling-tasks/:id/duplicate-to-week - Duplicate task to another week
+// POST /api/scaling-tasks/:id/duplicate-to-week - Move task to another week (replaces all existing week assignments)
 router.post('/:id/duplicate-to-week', async (req, res) => {
   try {
     const taskId = parseInt(req.params.id);
@@ -1016,42 +1016,33 @@ router.post('/:id/duplicate-to-week', async (req, res) => {
       });
     }
 
-    // Check if already in this week
-    const existingCheck = await queryLocal(`
-      SELECT id FROM scaling_task_weeks WHERE task_id = $1 AND week_start = $2
-    `, [taskId, weekMonday]);
-
-    if (existingCheck.rows.length > 0) {
-      return res.status(400).json({
-        success: false,
-        error: 'Task already exists in this week'
-      });
-    }
-
-    // Get max position
+    // Get max position for the target week
     const maxPosResult = await queryLocal(`
       SELECT COALESCE(MAX(position), -1) + 1 as next_pos
       FROM scaling_task_weeks
       WHERE week_start = $1
     `, [weekMonday]);
 
-    // Add to week
+    // Delete from all existing weeks first (move behavior)
+    await queryLocal(`DELETE FROM scaling_task_weeks WHERE task_id = $1`, [taskId]);
+
+    // Insert into the new week
     await queryLocal(`
       INSERT INTO scaling_task_weeks (task_id, week_start, position)
       VALUES ($1, $2, $3)
     `, [taskId, weekMonday, maxPosResult.rows[0].next_pos]);
 
-    logger.info(`Duplicated task ${taskId} to week ${weekMonday}`);
+    logger.info(`Moved task ${taskId} to week ${weekMonday}`);
 
     res.json({
       success: true,
-      message: 'Task added to week successfully'
+      message: 'Task moved to week successfully'
     });
   } catch (error) {
-    logger.error('Failed to duplicate task to week:', error);
+    logger.error('Failed to move task to week:', error);
     res.status(500).json({
       success: false,
-      error: 'Failed to duplicate task to week',
+      error: 'Failed to move task to week',
       details: error instanceof Error ? error.message : 'Unknown error'
     });
   }
