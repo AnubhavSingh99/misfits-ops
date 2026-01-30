@@ -360,16 +360,44 @@ export function ScalingTaskCreateModal({
     if (activityName && cityName) {
       const detectedTeam = getTeamForClub(activityName, cityName);
       setSelectedTeam(detectedTeam);
-      // Reset assignee when team changes to ensure they pick from correct team
-      setAssigneeId('');
+
+      // Auto-select Kriti when yellow team is auto-detected
+      if (detectedTeam === 'yellow') {
+        const kritiIdx = TEAMS.yellow.members.findIndex(m => m.toLowerCase() === 'kriti');
+        if (kritiIdx >= 0) {
+          const matchingPoc = assignees.find(a =>
+            a.name.toLowerCase() === 'kriti' ||
+            (a.team_lead && a.team_lead.toLowerCase().includes('kriti'))
+          );
+          setAssigneeId(matchingPoc?.id || -(kritiIdx + 1));
+        }
+      } else {
+        // Reset assignee when team changes to ensure they pick from correct team
+        setAssigneeId('');
+      }
     }
-  }, [selectedActivityName, selectedCityName, context.activity_name, context.city_name, teamManuallySet]);
+  }, [selectedActivityName, selectedCityName, context.activity_name, context.city_name, teamManuallySet, assignees]);
 
   // Handle manual team selection
   const handleTeamChange = (team: TeamKey) => {
     setSelectedTeam(team);
     setTeamManuallySet(true);
-    setAssigneeId(''); // Reset assignee when team is manually changed
+
+    // Auto-select Kriti when yellow team is selected
+    if (team === 'yellow') {
+      // Kriti is at index 1 in yellow team members array
+      // Try to find matching POC from database, otherwise use negative index
+      const kritiIdx = TEAMS.yellow.members.findIndex(m => m.toLowerCase() === 'kriti');
+      if (kritiIdx >= 0) {
+        const matchingPoc = assignees.find(a =>
+          a.name.toLowerCase() === 'kriti' ||
+          (a.team_lead && a.team_lead.toLowerCase().includes('kriti'))
+        );
+        setAssigneeId(matchingPoc?.id || -(kritiIdx + 1));
+      }
+    } else {
+      setAssigneeId(''); // Reset assignee for other teams
+    }
   };
 
   const fetchAssignees = async () => {
