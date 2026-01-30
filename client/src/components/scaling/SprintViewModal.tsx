@@ -392,20 +392,85 @@ export function SprintViewModal({ isOpen, onClose, node, context }: SprintViewMo
     }
   };
 
-  // Handle move task to a different week
+  // Handle move task to a different week with optimistic update
   const handleMoveToWeek = async (taskId: number, weekStart: string) => {
-    saveScrollPosition();
+    // Find the task
+    let movedTask: ScalingTask | null = null;
+
+    // Optimistic update - move task locally first
+    setWeeks(prevWeeks => {
+      // First pass: find and remove from source week
+      const newWeeks = prevWeeks.map(week => {
+        const taskIndex = week.tasks.findIndex(t => t.id === taskId);
+        if (taskIndex !== -1) {
+          movedTask = { ...week.tasks[taskIndex], week_start: weekStart };
+          const newTasks = [...week.tasks];
+          newTasks.splice(taskIndex, 1);
+          return { ...week, tasks: newTasks };
+        }
+        return week;
+      });
+
+      // Second pass: add to destination week
+      if (movedTask) {
+        return newWeeks.map(week => {
+          if (week.week_start === weekStart) {
+            return { ...week, tasks: [...week.tasks, movedTask!] };
+          }
+          return week;
+        });
+      }
+      return newWeeks;
+    });
+
+    // Also check olderTasks if task wasn't found in weeks
+    if (!movedTask && olderTasks) {
+      for (const weekKey of Object.keys(olderTasks.groupedByWeek)) {
+        const tasks = olderTasks.groupedByWeek[weekKey];
+        const task = tasks.find(t => t.id === taskId);
+        if (task) {
+          movedTask = { ...task, week_start: weekStart };
+          // Remove from older tasks
+          setOlderTasks(prev => {
+            if (!prev) return prev;
+            const newGrouped = { ...prev.groupedByWeek };
+            newGrouped[weekKey] = tasks.filter(t => t.id !== taskId);
+            if (newGrouped[weekKey].length === 0) {
+              delete newGrouped[weekKey];
+            }
+            return {
+              ...prev,
+              groupedByWeek: newGrouped,
+              totalCount: prev.totalCount - 1
+            };
+          });
+          // Add to destination week
+          setWeeks(prevWeeks => prevWeeks.map(week => {
+            if (week.week_start === weekStart) {
+              return { ...week, tasks: [...week.tasks, movedTask!] };
+            }
+            return week;
+          }));
+          break;
+        }
+      }
+    }
+
+    // Send to backend
     try {
       const response = await fetch(`${API_BASE}/scaling-tasks/${taskId}/duplicate-to-week`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ week_start: weekStart })
       });
-      if (response.ok) {
-        fetchSprints();
+
+      if (!response.ok) {
+        // Revert on failure
+        fetchSprintsPreserveScroll();
       }
     } catch (err) {
       console.error('Failed to move task:', err);
+      fetchSprintsPreserveScroll();
     }
   };
 
@@ -490,17 +555,53 @@ export function SprintViewModal({ isOpen, onClose, node, context }: SprintViewMo
         fetchSprintsPreserveScroll();
       }
     } else {
-      // Different week = MOVE task
-      saveScrollPosition();
+      // Different week = MOVE task with optimistic update
+      // Find the task being moved
+      let movedTask: ScalingTask | null = null;
+
+      // Optimistic update - move task locally first
+      setWeeks(prevWeeks => {
+        const newWeeks = prevWeeks.map(week => {
+          if (week.week_start === sourceWeek) {
+            // Remove from source week
+            const taskIndex = week.tasks.findIndex(t => t.id === taskId);
+            if (taskIndex !== -1) {
+              movedTask = { ...week.tasks[taskIndex], week_start: destWeek };
+              const newTasks = [...week.tasks];
+              newTasks.splice(taskIndex, 1);
+              return { ...week, tasks: newTasks };
+            }
+          }
+          return week;
+        });
+
+        // Add to destination week
+        if (movedTask) {
+          return newWeeks.map(week => {
+            if (week.week_start === destWeek) {
+              return { ...week, tasks: [...week.tasks, movedTask!] };
+            }
+            return week;
+          });
+        }
+        return newWeeks;
+      });
+
+      // Send to backend
       try {
-        await fetch(`${API_BASE}/scaling-tasks/${taskId}/duplicate-to-week`, {
+        const response = await fetch(`${API_BASE}/scaling-tasks/${taskId}/duplicate-to-week`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ week_start: destWeek })
         });
-        fetchSprints();
+
+        if (!response.ok) {
+          // Revert on failure
+          fetchSprintsPreserveScroll();
+        }
       } catch (err) {
         console.error('Failed to move task:', err);
+        fetchSprintsPreserveScroll();
       }
     }
   };
@@ -522,15 +623,47 @@ export function SprintViewModal({ isOpen, onClose, node, context }: SprintViewMo
     setSelectedTaskIds(new Set());
   }, []);
 
-  // Bulk move tasks to a week
+  // Bulk move tasks to a week with optimistic update
   const handleBulkMoveToWeek = async (weekStart: string) => {
     if (selectedTaskIds.size === 0) return;
-    saveScrollPosition();
     setBulkActionLoading(true);
+
+    const taskIdsToMove = Array.from(selectedTaskIds);
+    const movedTasks: ScalingTask[] = [];
+
+    // Optimistic update - move tasks locally first
+    setWeeks(prevWeeks => {
+      // First pass: find and remove tasks from their source weeks
+      const newWeeks = prevWeeks.map(week => {
+        const tasksToKeep: ScalingTask[] = [];
+        week.tasks.forEach(task => {
+          if (taskIdsToMove.includes(task.id)) {
+            movedTasks.push({ ...task, week_start: weekStart });
+          } else {
+            tasksToKeep.push(task);
+          }
+        });
+        if (tasksToKeep.length !== week.tasks.length) {
+          return { ...week, tasks: tasksToKeep };
+        }
+        return week;
+      });
+
+      // Second pass: add moved tasks to destination week
+      return newWeeks.map(week => {
+        if (week.week_start === weekStart) {
+          return { ...week, tasks: [...week.tasks, ...movedTasks] };
+        }
+        return week;
+      });
+    });
+
+    clearSelection();
+
+    // Send to backend
     try {
-      // Process in parallel for speed
-      await Promise.all(
-        Array.from(selectedTaskIds).map(taskId =>
+      const results = await Promise.all(
+        taskIdsToMove.map(taskId =>
           fetch(`${API_BASE}/scaling-tasks/${taskId}/duplicate-to-week`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -538,10 +671,14 @@ export function SprintViewModal({ isOpen, onClose, node, context }: SprintViewMo
           })
         )
       );
-      clearSelection();
-      fetchSprints();
+
+      // If any failed, refresh to get correct state
+      if (results.some(r => !r.ok)) {
+        fetchSprintsPreserveScroll();
+      }
     } catch (err) {
       console.error('Failed to bulk move tasks to week:', err);
+      fetchSprintsPreserveScroll();
     } finally {
       setBulkActionLoading(false);
     }
