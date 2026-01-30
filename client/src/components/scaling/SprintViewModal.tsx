@@ -259,23 +259,15 @@ export function SprintViewModal({ isOpen, onClose, node, context }: SprintViewMo
     });
   }, [teamFilter, memberFilter, statusFilter]);
 
-  // Apply filters to weeks and sort tasks (completed at bottom)
+  // Apply filters to weeks and sort tasks (completed at bottom, preserve manual order for others)
   const filteredWeeks = useMemo(() => {
-    // Sort order: not_started first, then in_progress, then completed at bottom
-    const statusOrder: Record<string, number> = {
-      'not_started': 0,
-      'in_progress': 1,
-      'completed': 2
-    };
-
     return weeks.map(week => {
       const filtered = filterTasks(week.tasks);
-      // Sort tasks: completed tasks go to the bottom
-      const sorted = [...filtered].sort((a, b) => {
-        const orderA = statusOrder[a.status] ?? 1;
-        const orderB = statusOrder[b.status] ?? 1;
-        return orderA - orderB;
-      });
+      // Separate completed from non-completed, preserving original order within each group
+      const nonCompleted = filtered.filter(t => t.status !== 'completed');
+      const completed = filtered.filter(t => t.status === 'completed');
+      // Non-completed tasks keep their manual drag order, completed go to bottom
+      const sorted = [...nonCompleted, ...completed];
 
       return {
         ...week,
@@ -777,11 +769,10 @@ export function SprintViewModal({ isOpen, onClose, node, context }: SprintViewMo
                           });
                           if (filteredTasks.length === 0) return null;
 
-                          // Sort tasks: completed at bottom
-                          const statusOrder: Record<string, number> = { 'not_started': 0, 'in_progress': 1, 'completed': 2 };
-                          const sortedTasks = [...filteredTasks].sort((a, b) =>
-                            (statusOrder[a.status] ?? 1) - (statusOrder[b.status] ?? 1)
-                          );
+                          // Sort tasks: completed at bottom, preserve manual order for others
+                          const nonCompleted = filteredTasks.filter((t: ScalingTask) => t.status !== 'completed');
+                          const completed = filteredTasks.filter((t: ScalingTask) => t.status === 'completed');
+                          const sortedTasks = [...nonCompleted, ...completed];
 
                           // Format week label
                           const weekDate = new Date(weekStart + 'T00:00:00');
