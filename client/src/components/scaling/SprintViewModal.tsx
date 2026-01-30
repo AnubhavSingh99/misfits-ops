@@ -74,6 +74,10 @@ export function SprintViewModal({ isOpen, onClose, node, context }: SprintViewMo
   // Week picker state for duplicate
   const [duplicatingTask, setDuplicatingTask] = useState<ScalingTask | null>(null);
 
+  // Multi-select state
+  const [selectedTaskIds, setSelectedTaskIds] = useState<Set<number>>(new Set());
+  const [bulkActionLoading, setBulkActionLoading] = useState(false);
+
   // Older tasks state (tasks scheduled before the sprint window)
   const [olderTasks, setOlderTasks] = useState<{
     groupedByWeek: Record<string, ScalingTask[]>;
@@ -97,7 +101,7 @@ export function SprintViewModal({ isOpen, onClose, node, context }: SprintViewMo
   const [filtersInitialized, setFiltersInitialized] = useState(false);
   const [initialFetchDone, setInitialFetchDone] = useState(false);
 
-  // Reset filters when modal closes
+  // Reset filters and selection when modal closes
   useEffect(() => {
     if (!isOpen) {
       setFiltersInitialized(false);
@@ -109,6 +113,7 @@ export function SprintViewModal({ isOpen, onClose, node, context }: SprintViewMo
       setTeamFilter('all');
       setStatusFilter('all');
       setMemberFilter(null);
+      setSelectedTaskIds(new Set());
     }
   }, [isOpen]);
 
@@ -509,6 +514,71 @@ export function SprintViewModal({ isOpen, onClose, node, context }: SprintViewMo
     }
   };
 
+  // Multi-select helper functions
+  const toggleTaskSelection = useCallback((taskId: number) => {
+    setSelectedTaskIds(prev => {
+      const next = new Set(prev);
+      if (next.has(taskId)) {
+        next.delete(taskId);
+      } else {
+        next.add(taskId);
+      }
+      return next;
+    });
+  }, []);
+
+  const clearSelection = useCallback(() => {
+    setSelectedTaskIds(new Set());
+  }, []);
+
+  // Bulk add tasks to a week
+  const handleBulkAddToWeek = async (weekStart: string) => {
+    if (selectedTaskIds.size === 0) return;
+    setBulkActionLoading(true);
+    try {
+      // Process in parallel for speed
+      await Promise.all(
+        Array.from(selectedTaskIds).map(taskId =>
+          fetch(`${API_BASE}/scaling-tasks/${taskId}/duplicate-to-week`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ week_start: weekStart })
+          })
+        )
+      );
+      clearSelection();
+      fetchSprints();
+    } catch (err) {
+      console.error('Failed to bulk add tasks to week:', err);
+    } finally {
+      setBulkActionLoading(false);
+    }
+  };
+
+  // Bulk status change
+  const handleBulkStatusChange = async (newStatus: string) => {
+    if (selectedTaskIds.size === 0) return;
+    setBulkActionLoading(true);
+    try {
+      // Process in parallel for speed
+      await Promise.all(
+        Array.from(selectedTaskIds).map(taskId =>
+          fetch(`${API_BASE}/scaling-tasks/${taskId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status: newStatus })
+          })
+        )
+      );
+      clearSelection();
+      fetchSprints();
+    } catch (err) {
+      console.error('Failed to bulk update status:', err);
+    } finally {
+      setBulkActionLoading(false);
+    }
+  };
+
   // Get context for task creation - uses the passed context which has all hierarchy names
   const getCreateContext = () => {
     // For launches, use node.name as club_name since it's the planned club name
@@ -718,7 +788,7 @@ export function SprintViewModal({ isOpen, onClose, node, context }: SprintViewMo
         </div>
 
         {/* Content */}
-        <div className="flex-1 overflow-y-auto p-6">
+        <div className={`flex-1 overflow-y-auto p-6 ${selectedTaskIds.size > 0 ? 'pb-24' : ''}`}>
           {loading ? (
             <div className="flex items-center justify-center py-12">
               <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
@@ -757,54 +827,49 @@ export function SprintViewModal({ isOpen, onClose, node, context }: SprintViewMo
                     </button>
 
                     {showOlderTasks && (
-                      <div className="p-4 space-y-4">
-                        {olderTasks.sortedWeeks.map((weekStart) => {
-                          const weekTasks = olderTasks.groupedByWeek[weekStart] || [];
-                          // Filter by team/status/member if filters are active
-                          const filteredTasks = weekTasks.filter((task: ScalingTask) => {
-                            if (teamFilter !== 'all' && task.assigned_team_lead !== teamFilter) return false;
-                            if (statusFilter !== 'all' && task.status !== statusFilter) return false;
-                            if (memberFilter && task.assigned_to_name !== memberFilter) return false;
-                            return true;
+                      <div className="p-3 space-y-2">
+                        {/* Flat consolidated list of all older tasks */}
+                        {(() => {
+                          // Collect all tasks from all weeks, filter and sort
+                          const allOlderTasks: ScalingTask[] = [];
+                          olderTasks.sortedWeeks.forEach((weekStart) => {
+                            const weekTasks = olderTasks.groupedByWeek[weekStart] || [];
+                            weekTasks.forEach((task: ScalingTask) => {
+                              // Apply filters
+                              if (teamFilter !== 'all' && task.assigned_team_lead !== teamFilter) return;
+                              if (statusFilter !== 'all' && task.status !== statusFilter) return;
+                              if (memberFilter && task.assigned_to_name !== memberFilter) return;
+                              allOlderTasks.push(task);
+                            });
                           });
-                          if (filteredTasks.length === 0) return null;
 
-                          // Sort tasks: completed at bottom, preserve manual order for others
-                          const nonCompleted = filteredTasks.filter((t: ScalingTask) => t.status !== 'completed');
-                          const completed = filteredTasks.filter((t: ScalingTask) => t.status === 'completed');
+                          // Sort: completed at bottom
+                          const nonCompleted = allOlderTasks.filter(t => t.status !== 'completed');
+                          const completed = allOlderTasks.filter(t => t.status === 'completed');
                           const sortedTasks = [...nonCompleted, ...completed];
 
-                          // Format week label
-                          const weekDate = new Date(weekStart + 'T00:00:00');
-                          const weekEnd = new Date(weekDate);
-                          weekEnd.setDate(weekEnd.getDate() + 6);
-                          const weekLabel = `${weekDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${weekEnd.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
+                          if (sortedTasks.length === 0) {
+                            return (
+                              <div className="text-center py-4 text-sm text-orange-600">
+                                No tasks match current filters
+                              </div>
+                            );
+                          }
 
-                          return (
-                            <div key={weekStart} className="border border-orange-200 rounded-lg bg-white">
-                              <div className="px-3 py-2 bg-orange-50 border-b border-orange-200">
-                                <span className="text-sm font-medium text-orange-700">
-                                  {weekLabel}
-                                </span>
-                                <span className="ml-2 text-xs text-orange-500">
-                                  ({sortedTasks.length} task{sortedTasks.length !== 1 ? 's' : ''})
-                                </span>
-                              </div>
-                              <div className="p-2 space-y-2">
-                                {sortedTasks.map((task: ScalingTask) => (
-                                  <ScalingTaskTileV2
-                                    key={task.id}
-                                    task={task}
-                                    onEdit={handleEditTask}
-                                    onDuplicate={handleDuplicate}
-                                    onViewComments={handleViewComments}
-                                    onStatusChange={handleStatusChange}
-                                  />
-                                ))}
-                              </div>
-                            </div>
-                          );
-                        })}
+                          return sortedTasks.map((task: ScalingTask) => (
+                            <ScalingTaskTileV2
+                              key={task.id}
+                              task={task}
+                              onEdit={handleEditTask}
+                              onDuplicate={handleDuplicate}
+                              onViewComments={handleViewComments}
+                              onStatusChange={handleStatusChange}
+                              showCheckbox={true}
+                              isSelected={selectedTaskIds.has(task.id)}
+                              onToggleSelect={toggleTaskSelection}
+                            />
+                          ));
+                        })()}
                       </div>
                     )}
                   </div>
@@ -909,6 +974,9 @@ export function SprintViewModal({ isOpen, onClose, node, context }: SprintViewMo
                                           onStatusChange={handleStatusChange}
                                           isDragging={dragSnapshot.isDragging}
                                           dragHandleProps={dragProvided.dragHandleProps}
+                                          showCheckbox={true}
+                                          isSelected={selectedTaskIds.has(task.id)}
+                                          onToggleSelect={toggleTaskSelection}
                                         />
                                       </div>
                                     )}
@@ -933,6 +1001,204 @@ export function SprintViewModal({ isOpen, onClose, node, context }: SprintViewMo
             </DragDropContext>
           )}
         </div>
+
+        {/* Floating Action Bar for Multi-Select */}
+        {selectedTaskIds.size > 0 && (
+          <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-20">
+            <div className="
+              flex items-center gap-2
+              px-2 py-2
+              bg-gray-900/95 backdrop-blur-sm
+              border border-gray-700/50
+              rounded-xl
+              shadow-2xl shadow-gray-900/30
+              animate-in slide-in-from-bottom-4 fade-in duration-300
+            ">
+              {/* Selection Count */}
+              <div className="flex items-center gap-2 px-3 py-1.5 bg-white/10 rounded-lg">
+                <span className="
+                  w-6 h-6
+                  bg-blue-500 text-white
+                  text-xs font-bold
+                  rounded-full
+                  flex items-center justify-center
+                  ring-2 ring-blue-400/30
+                ">
+                  {selectedTaskIds.size}
+                </span>
+                <span className="text-sm font-medium text-gray-200">
+                  selected
+                </span>
+              </div>
+
+              <div className="w-px h-6 bg-gray-700" />
+
+              {/* Add to Week Dropdown */}
+              <div className="relative group">
+                <button
+                  disabled={bulkActionLoading}
+                  className="
+                    flex items-center gap-2 px-3 py-2
+                    bg-blue-500 hover:bg-blue-400
+                    text-white text-sm font-medium
+                    rounded-lg
+                    transition-all duration-150
+                    disabled:opacity-50 disabled:cursor-not-allowed
+                  "
+                >
+                  <Calendar className="h-4 w-4" />
+                  <span>Add to Week</span>
+                  <ChevronDown className="h-3.5 w-3.5 opacity-70" />
+                </button>
+                {/* Dropdown */}
+                <div className="
+                  absolute bottom-full left-0 mb-2
+                  opacity-0 invisible
+                  group-hover:opacity-100 group-hover:visible
+                  transition-all duration-150
+                  transform translate-y-1 group-hover:translate-y-0
+                ">
+                  <div className="
+                    bg-white rounded-xl
+                    border border-gray-200
+                    shadow-xl shadow-gray-200/50
+                    py-1.5 min-w-[220px]
+                    overflow-hidden
+                  ">
+                    <div className="px-3 py-1.5 border-b border-gray-100">
+                      <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">
+                        Select Week
+                      </span>
+                    </div>
+                    {weeks.map(week => (
+                      <button
+                        key={week.week_start}
+                        onClick={() => handleBulkAddToWeek(week.week_start)}
+                        className={`
+                          w-full flex items-center gap-3 px-3 py-2.5
+                          text-sm transition-colors duration-100
+                          ${week.is_current
+                            ? 'bg-blue-50/50 hover:bg-blue-50'
+                            : 'hover:bg-gray-50'
+                          }
+                        `}
+                      >
+                        <span className={`
+                          w-8 h-8 rounded-lg flex items-center justify-center
+                          ${week.is_current
+                            ? 'bg-blue-100 text-blue-600'
+                            : 'bg-gray-100 text-gray-500'
+                          }
+                        `}>
+                          <Calendar className="h-4 w-4" />
+                        </span>
+                        <div className="flex-1 text-left">
+                          <div className="font-medium text-gray-800">
+                            {new Date(week.week_start).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                            {' – '}
+                            {new Date(week.week_end).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                          </div>
+                          {week.is_current && (
+                            <div className="text-[10px] font-medium text-blue-600 mt-0.5">
+                              Current Week
+                            </div>
+                          )}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Status Dropdown */}
+              <div className="relative group">
+                <button
+                  disabled={bulkActionLoading}
+                  className="
+                    flex items-center gap-2 px-3 py-2
+                    bg-white/10 hover:bg-white/20
+                    text-gray-200 text-sm font-medium
+                    rounded-lg
+                    transition-all duration-150
+                    disabled:opacity-50 disabled:cursor-not-allowed
+                  "
+                >
+                  <span className="text-gray-400">Set Status</span>
+                  <ChevronDown className="h-3.5 w-3.5 opacity-70" />
+                </button>
+                {/* Dropdown */}
+                <div className="
+                  absolute bottom-full left-0 mb-2
+                  opacity-0 invisible
+                  group-hover:opacity-100 group-hover:visible
+                  transition-all duration-150
+                  transform translate-y-1 group-hover:translate-y-0
+                ">
+                  <div className="
+                    bg-white rounded-xl
+                    border border-gray-200
+                    shadow-xl shadow-gray-200/50
+                    py-1.5 min-w-[180px]
+                    overflow-hidden
+                  ">
+                    <div className="px-3 py-1.5 border-b border-gray-100">
+                      <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">
+                        Change Status
+                      </span>
+                    </div>
+                    <button
+                      onClick={() => handleBulkStatusChange('not_started')}
+                      className="w-full flex items-center gap-3 px-3 py-2.5 text-sm hover:bg-red-50 transition-colors"
+                    >
+                      <span className="w-3 h-3 rounded-full bg-gradient-to-br from-red-400 to-red-600 ring-2 ring-red-100" />
+                      <span className="font-medium text-gray-700">Not Started</span>
+                    </button>
+                    <button
+                      onClick={() => handleBulkStatusChange('in_progress')}
+                      className="w-full flex items-center gap-3 px-3 py-2.5 text-sm hover:bg-amber-50 transition-colors"
+                    >
+                      <span className="w-3 h-3 rounded-full bg-gradient-to-br from-amber-400 to-amber-600 ring-2 ring-amber-100" />
+                      <span className="font-medium text-gray-700">In Progress</span>
+                    </button>
+                    <button
+                      onClick={() => handleBulkStatusChange('completed')}
+                      className="w-full flex items-center gap-3 px-3 py-2.5 text-sm hover:bg-green-50 transition-colors"
+                    >
+                      <span className="w-3 h-3 rounded-full bg-gradient-to-br from-green-400 to-green-600 ring-2 ring-green-100" />
+                      <span className="font-medium text-gray-700">Completed</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="w-px h-6 bg-gray-700" />
+
+              {/* Clear Selection */}
+              <button
+                onClick={clearSelection}
+                className="
+                  flex items-center justify-center
+                  w-8 h-8
+                  text-gray-400 hover:text-white
+                  hover:bg-white/10
+                  rounded-lg
+                  transition-colors duration-150
+                "
+                title="Clear selection"
+              >
+                <X className="h-4 w-4" />
+              </button>
+
+              {/* Loading Overlay */}
+              {bulkActionLoading && (
+                <div className="absolute inset-0 bg-gray-900/90 backdrop-blur-sm flex items-center justify-center rounded-xl">
+                  <Loader2 className="h-5 w-5 animate-spin text-blue-400" />
+                  <span className="ml-2 text-sm text-gray-300">Processing...</span>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Create Task Modal */}

@@ -180,6 +180,10 @@ interface ScalingTaskTileV2Props {
   onStatusChange?: (task: ScalingTask, newStatus: ScalingTask['status']) => void;
   isDragging?: boolean;
   dragHandleProps?: any;
+  // Multi-select props
+  showCheckbox?: boolean;
+  isSelected?: boolean;
+  onToggleSelect?: (taskId: number) => void;
 }
 
 // Format date/time with Today/Yesterday + exact time
@@ -230,7 +234,10 @@ export function ScalingTaskTileV2({
   onClick,
   onStatusChange,
   isDragging = false,
-  dragHandleProps
+  dragHandleProps,
+  showCheckbox = false,
+  isSelected = false,
+  onToggleSelect
 }: ScalingTaskTileV2Props) {
   const [statusDropdownOpen, setStatusDropdownOpen] = useState(false);
   const [commentsExpanded, setCommentsExpanded] = useState(false);
@@ -401,6 +408,7 @@ export function ScalingTaskTileV2({
         transition-all duration-150 ease-out
         ${isDragging ? 'shadow-xl ring-2 ring-blue-400 scale-[1.01]' : 'hover:shadow-md'}
         ${currentStatus.border}
+        ${isSelected ? 'ring-2 ring-blue-400 bg-blue-50/30' : ''}
       `}
       style={{ borderLeftWidth: '3px', borderLeftColor: accentColor }}
     >
@@ -410,6 +418,26 @@ export function ScalingTaskTileV2({
         <div
           className={`absolute inset-y-0 right-0 w-1/4 bg-gradient-to-l ${currentStatus.gradient} pointer-events-none`}
         />
+        {/* Checkbox for multi-select */}
+        {showCheckbox && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleSelect?.(task.id);
+            }}
+            className={`
+              flex-shrink-0 w-4 h-4 rounded border flex items-center justify-center
+              transition-all duration-150 cursor-pointer
+              ${isSelected
+                ? 'bg-blue-500 border-blue-500 text-white'
+                : 'border-gray-300 hover:border-blue-400 hover:bg-blue-50'
+              }
+            `}
+          >
+            {isSelected && <Check className="h-2.5 w-2.5 stroke-[3]" />}
+          </button>
+        )}
+
         {/* Drag Handle */}
         <div
           {...dragHandleProps}
