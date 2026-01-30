@@ -20,7 +20,7 @@ function App() {
   return (
     <Layout>
       <Routes>
-        <Route path="/" element={<Dashboard />} />
+        <Route path="/" element={<ScalingPlannerV2 />} />
         <Route path="/workspace" element={<Workspace />} />
         <Route path="/analytics" element={<Analytics />} />
         <Route path="/revenue-growth" element={<RevenueGrowth />} />
