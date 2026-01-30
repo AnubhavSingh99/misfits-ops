@@ -775,11 +775,10 @@ export function SprintViewModal({ isOpen, onClose, node, context }: SprintViewMo
                                   <ScalingTaskTileV2
                                     key={task.id}
                                     task={task}
-                                    onClick={() => setEditingTask(task)}
-                                    onOpenComments={() => {
-                                      setSelectedTask(task);
-                                      setShowCommentsPanel(true);
-                                    }}
+                                    onEdit={handleEditTask}
+                                    onDuplicate={handleDuplicate}
+                                    onViewComments={handleViewComments}
+                                    onStatusChange={handleStatusChange}
                                   />
                                 ))}
                               </div>
