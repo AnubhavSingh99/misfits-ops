@@ -259,17 +259,34 @@ export function SprintViewModal({ isOpen, onClose, node, context }: SprintViewMo
     });
   }, [teamFilter, memberFilter, statusFilter]);
 
-  // Apply filters to weeks
+  // Apply filters to weeks and sort tasks (completed at bottom)
   const filteredWeeks = useMemo(() => {
-    return weeks.map(week => ({
-      ...week,
-      tasks: filterTasks(week.tasks),
-      summary: {
-        not_started: filterTasks(week.tasks).filter(t => t.status === 'not_started').length,
-        in_progress: filterTasks(week.tasks).filter(t => t.status === 'in_progress').length,
-        completed: filterTasks(week.tasks).filter(t => t.status === 'completed').length
-      }
-    }));
+    // Sort order: not_started first, then in_progress, then completed at bottom
+    const statusOrder: Record<string, number> = {
+      'not_started': 0,
+      'in_progress': 1,
+      'completed': 2
+    };
+
+    return weeks.map(week => {
+      const filtered = filterTasks(week.tasks);
+      // Sort tasks: completed tasks go to the bottom
+      const sorted = [...filtered].sort((a, b) => {
+        const orderA = statusOrder[a.status] ?? 1;
+        const orderB = statusOrder[b.status] ?? 1;
+        return orderA - orderB;
+      });
+
+      return {
+        ...week,
+        tasks: sorted,
+        summary: {
+          not_started: filtered.filter(t => t.status === 'not_started').length,
+          in_progress: filtered.filter(t => t.status === 'in_progress').length,
+          completed: filtered.filter(t => t.status === 'completed').length
+        }
+      };
+    });
   }, [weeks, filterTasks]);
 
   // Fetch sprints data
@@ -760,6 +777,12 @@ export function SprintViewModal({ isOpen, onClose, node, context }: SprintViewMo
                           });
                           if (filteredTasks.length === 0) return null;
 
+                          // Sort tasks: completed at bottom
+                          const statusOrder: Record<string, number> = { 'not_started': 0, 'in_progress': 1, 'completed': 2 };
+                          const sortedTasks = [...filteredTasks].sort((a, b) =>
+                            (statusOrder[a.status] ?? 1) - (statusOrder[b.status] ?? 1)
+                          );
+
                           // Format week label
                           const weekDate = new Date(weekStart + 'T00:00:00');
                           const weekEnd = new Date(weekDate);
@@ -773,11 +796,11 @@ export function SprintViewModal({ isOpen, onClose, node, context }: SprintViewMo
                                   {weekLabel}
                                 </span>
                                 <span className="ml-2 text-xs text-orange-500">
-                                  ({filteredTasks.length} task{filteredTasks.length !== 1 ? 's' : ''})
+                                  ({sortedTasks.length} task{sortedTasks.length !== 1 ? 's' : ''})
                                 </span>
                               </div>
                               <div className="p-2 space-y-2">
-                                {filteredTasks.map((task: ScalingTask) => (
+                                {sortedTasks.map((task: ScalingTask) => (
                                   <ScalingTaskTileV2
                                     key={task.id}
                                     task={task}
