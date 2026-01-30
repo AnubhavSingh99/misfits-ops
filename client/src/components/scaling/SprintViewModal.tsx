@@ -298,11 +298,17 @@ export function SprintViewModal({ isOpen, onClose, node, context }: SprintViewMo
         } else {
           setOlderTasks(null);
         }
-        // Auto-expand current week
-        const currentWeek = data.weeks.find((w: SprintWeek) => w.is_current);
-        if (currentWeek) {
-          setExpandedWeeks(new Set([currentWeek.week_start]));
-        }
+        // Auto-expand current week ONLY on initial load (when no weeks are expanded yet)
+        // This preserves user's expanded state during status changes, duplicates, etc.
+        setExpandedWeeks(prev => {
+          if (prev.size === 0) {
+            const currentWeek = data.weeks.find((w: SprintWeek) => w.is_current);
+            if (currentWeek) {
+              return new Set([currentWeek.week_start]);
+            }
+          }
+          return prev;
+        });
       } else {
         setError(data.error || 'Failed to fetch sprints');
       }
