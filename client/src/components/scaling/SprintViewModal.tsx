@@ -858,15 +858,19 @@ export function SprintViewModal({ isOpen, onClose, node, context }: SprintViewMo
                       <div className="p-3 space-y-2">
                         {/* Flat consolidated list of all older tasks */}
                         {(() => {
-                          // Collect all tasks from all weeks, filter and sort
+                          // Collect all tasks from all weeks, filter and deduplicate
                           const allOlderTasks: ScalingTask[] = [];
+                          const seenTaskIds = new Set<number>();
                           olderTasks.sortedWeeks.forEach((weekStart) => {
                             const weekTasks = olderTasks.groupedByWeek[weekStart] || [];
                             weekTasks.forEach((task: ScalingTask) => {
+                              // Skip if already added (task can exist in multiple weeks)
+                              if (seenTaskIds.has(task.id)) return;
                               // Apply filters
                               if (teamFilter !== 'all' && task.assigned_team_lead !== teamFilter) return;
                               if (statusFilter !== 'all' && task.status !== statusFilter) return;
                               if (memberFilter && task.assigned_to_name !== memberFilter) return;
+                              seenTaskIds.add(task.id);
                               allOlderTasks.push(task);
                             });
                           });
