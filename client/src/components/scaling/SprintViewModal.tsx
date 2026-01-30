@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { DragDropContext, Droppable, Draggable, DropResult } from '@hello-pangea/dnd';
 import { X, Plus, ChevronDown, ChevronRight, Calendar, Loader2, Filter, Users, Activity, Building2, MapPin, Home } from 'lucide-react';
 import { ScalingTaskTileV2 } from './ScalingTaskTileV2';
@@ -77,6 +77,10 @@ export function SprintViewModal({ isOpen, onClose, node, context }: SprintViewMo
   // Multi-select state
   const [selectedTaskIds, setSelectedTaskIds] = useState<Set<number>>(new Set());
   const [bulkActionLoading, setBulkActionLoading] = useState(false);
+
+  // Scroll position preservation
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const savedScrollPosition = useRef<number>(0);
 
   // Older tasks state (tasks scheduled before the sprint window)
   const [olderTasks, setOlderTasks] = useState<{
@@ -331,6 +335,12 @@ export function SprintViewModal({ isOpen, onClose, node, context }: SprintViewMo
       console.error('Error fetching sprints:', err);
     } finally {
       setLoading(false);
+      // Restore scroll position after data loads
+      requestAnimationFrame(() => {
+        if (scrollContainerRef.current && savedScrollPosition.current > 0) {
+          scrollContainerRef.current.scrollTop = savedScrollPosition.current;
+        }
+      });
     }
   }, [activityFilters, cityFilters, areaFilters, clubFilters, node.launch_id]);
 
@@ -341,6 +351,19 @@ export function SprintViewModal({ isOpen, onClose, node, context }: SprintViewMo
       fetchSprints();
     }
   }, [isOpen, fetchSprints, filtersInitialized]);
+
+  // Helper to save scroll position before refetching data
+  const saveScrollPosition = useCallback(() => {
+    if (scrollContainerRef.current) {
+      savedScrollPosition.current = scrollContainerRef.current.scrollTop;
+    }
+  }, []);
+
+  // Fetch sprints while preserving scroll position
+  const fetchSprintsPreserveScroll = useCallback(() => {
+    saveScrollPosition();
+    fetchSprints();
+  }, [saveScrollPosition, fetchSprints]);
 
   // Toggle week expansion
   const toggleWeek = (weekStart: string) => {
@@ -365,7 +388,7 @@ export function SprintViewModal({ isOpen, onClose, node, context }: SprintViewMo
       });
 
       if (response.ok) {
-        fetchSprints();
+        fetchSprintsPreserveScroll();
       }
     } catch (err) {
       console.error('Failed to update task status:', err);
@@ -402,7 +425,7 @@ export function SprintViewModal({ isOpen, onClose, node, context }: SprintViewMo
       const data = await response.json();
       if (data.success) {
         setDuplicatingTask(null);
-        fetchSprints();
+        fetchSprintsPreserveScroll();
       } else {
         alert(data.error || 'Failed to add task to week');
       }
@@ -423,7 +446,7 @@ export function SprintViewModal({ isOpen, onClose, node, context }: SprintViewMo
       const data = await response.json();
       if (data.success) {
         setDuplicatingTask(null);
-        fetchSprints();
+        fetchSprintsPreserveScroll();
       } else {
         alert(data.error || 'Failed to remove task from week');
       }
@@ -435,7 +458,7 @@ export function SprintViewModal({ isOpen, onClose, node, context }: SprintViewMo
   // Handle task creation
   const handleTaskCreated = () => {
     setShowCreateModal(false);
-    fetchSprints();
+    fetchSprintsPreserveScroll();
   };
 
   // View comments
@@ -452,13 +475,13 @@ export function SprintViewModal({ isOpen, onClose, node, context }: SprintViewMo
   // Handle task updated
   const handleTaskUpdated = () => {
     setEditingTask(null);
-    fetchSprints();
+    fetchSprintsPreserveScroll();
   };
 
   // Handle task deleted
   const handleTaskDeleted = () => {
     setEditingTask(null);
-    fetchSprints();
+    fetchSprintsPreserveScroll();
   };
 
   // Handle drag end for reordering tasks within same week
@@ -506,11 +529,11 @@ export function SprintViewModal({ isOpen, onClose, node, context }: SprintViewMo
 
       if (!response.ok) {
         // Revert on failure
-        fetchSprints();
+        fetchSprintsPreserveScroll();
       }
     } catch (err) {
       console.error('Failed to reorder task:', err);
-      fetchSprints();
+      fetchSprintsPreserveScroll();
     }
   };
 
@@ -534,6 +557,7 @@ export function SprintViewModal({ isOpen, onClose, node, context }: SprintViewMo
   // Bulk add tasks to a week
   const handleBulkAddToWeek = async (weekStart: string) => {
     if (selectedTaskIds.size === 0) return;
+    saveScrollPosition();
     setBulkActionLoading(true);
     try {
       // Process in parallel for speed
@@ -558,6 +582,7 @@ export function SprintViewModal({ isOpen, onClose, node, context }: SprintViewMo
   // Bulk status change
   const handleBulkStatusChange = async (newStatus: string) => {
     if (selectedTaskIds.size === 0) return;
+    saveScrollPosition();
     setBulkActionLoading(true);
     try {
       // Process in parallel for speed
@@ -788,7 +813,10 @@ export function SprintViewModal({ isOpen, onClose, node, context }: SprintViewMo
         </div>
 
         {/* Content */}
-        <div className={`flex-1 overflow-y-auto p-6 ${selectedTaskIds.size > 0 ? 'pb-24' : ''}`}>
+        <div
+          ref={scrollContainerRef}
+          className={`flex-1 overflow-y-auto p-6 ${selectedTaskIds.size > 0 ? 'pb-24' : ''}`}
+        >
           {loading ? (
             <div className="flex items-center justify-center py-12">
               <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
