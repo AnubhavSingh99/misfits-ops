@@ -1936,8 +1936,8 @@ function buildDynamicHierarchy(
         // Update club ID to match the dynamic path
         clubNode.id = `${currentKey}-club:${clubNode.club_id}`;
         node.children.push(clubNode);
-        // Roll up progress
-        if (hasTargets) {
+        // Roll up progress (include unattributed meetups for clubs without targets)
+        if (hasTargets || (aggregatedProgress.unattributed_meetups || 0) > 0) {
           node.progress_summary = sumProgress([node.progress_summary, aggregatedProgress]);
         }
       } else {
@@ -2954,8 +2954,12 @@ router.get('/v2/hierarchy', async (req, res) => {
             return sumProgress([acc, p]);
           }, { ...defaultProgress });
         } else {
-          // No targets for this area - use empty progress
-          aggregatedProgress = { ...defaultProgress };
+          // No targets for this area - show actual meetups as unattributed
+          const clubCurrentMeetups = parseInt(club.current_meetups) || 0;
+          aggregatedProgress = {
+            ...defaultProgress,
+            unattributed_meetups: clubCurrentMeetups
+          };
         }
 
         const currentMeetups = parseInt(club.current_meetups) || 0;
@@ -3555,8 +3559,12 @@ router.get('/v2/hierarchy', async (req, res) => {
           return sumProgress([acc, p]);
         }, { ...defaultProgress });
       } else {
-        // No targets for this area - use empty progress
-        aggregatedProgress = { ...defaultProgress };
+        // No targets for this area - show actual meetups as unattributed
+        const clubCurrentMeetups = parseInt(club.current_meetups) || 0;
+        aggregatedProgress = {
+          ...defaultProgress,
+          unattributed_meetups: clubCurrentMeetups
+        };
       }
 
       const currentMeetups = parseInt(club.current_meetups) || 0;
@@ -3866,8 +3874,8 @@ router.get('/v2/hierarchy', async (req, res) => {
 
       areaNode.children.push(clubNode);
 
-      // Roll up progress only if club has targets
-      if (hasTargets) {
+      // Roll up progress (include unattributed meetups for clubs without targets)
+      if (hasTargets || (aggregatedProgress.unattributed_meetups || 0) > 0) {
         areaNode.progress_summary = sumProgress([areaNode.progress_summary, aggregatedProgress]);
       }
 
