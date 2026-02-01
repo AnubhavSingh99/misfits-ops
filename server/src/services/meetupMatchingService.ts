@@ -160,8 +160,8 @@ export async function getClubMeetups(
       CROSS JOIN week_bounds wb
       WHERE e.club_id = $1
         AND e.state = 'CREATED'
-        AND e.start_time AT TIME ZONE 'Asia/Kolkata' >= wb.week_start
-        AND e.start_time AT TIME ZONE 'Asia/Kolkata' < wb.week_end
+        AND e.start_time >= wb.week_start
+        AND e.start_time < wb.week_end
       GROUP BY e.pk, e.name, e.club_id, l.area_id, a.name, e.start_time
       HAVING COUNT(DISTINCT CASE WHEN b.booking_status NOT IN ('DEREGISTERED', 'INITIATED') THEN b.id END) > 0
       ORDER BY e.start_time
