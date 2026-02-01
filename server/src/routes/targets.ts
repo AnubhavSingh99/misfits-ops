@@ -2947,12 +2947,18 @@ router.get('/v2/hierarchy', async (req, res) => {
           }, { ...defaultProgress });
           aggregatedProgress.unattributed_meetups = (aggregatedProgress.unattributed_meetups || 0) + areaUnattributedMeetups;
         } else if (hasTargets) {
-          // Has targets but no auto-match results - use stored progress
+          // Has targets but no auto-match results for this area - use stored progress
+          // But still add this area's unattributed meetups from auto-matching (if any)
           aggregatedProgress = targets.reduce((acc: any, t: any) => {
             const tMeetups = parseInt(t.target_meetups) || 0;
             const p = syncProgress(t.progress, tMeetups);
             return sumProgress([acc, p]);
           }, { ...defaultProgress });
+          // Add area-level unattributed meetups (meetups in THIS area that didn't match any target)
+          // This handles the case where a club has targets in other areas but events in this area
+          if (areaUnattributedMeetups > 0) {
+            aggregatedProgress.unattributed_meetups = (aggregatedProgress.unattributed_meetups || 0) + areaUnattributedMeetups;
+          }
         } else {
           // No targets for this area - show actual meetups as unattributed
           const clubCurrentMeetups = parseInt(club.current_meetups) || 0;
@@ -3552,12 +3558,18 @@ router.get('/v2/hierarchy', async (req, res) => {
         // Add area-level unattributed meetups (meetups that didn't match any target in THIS area)
         aggregatedProgress.unattributed_meetups = (aggregatedProgress.unattributed_meetups || 0) + areaUnattributedMeetups;
       } else if (hasTargets) {
-        // Has targets but no auto-match results - use stored progress
+        // Has targets but no auto-match results for this area - use stored progress
+        // But still add this area's unattributed meetups from auto-matching (if any)
         aggregatedProgress = targets.reduce((acc, t) => {
           const tMeetups = parseInt(t.target_meetups) || 0;
           const p = syncProgress(t.progress, tMeetups);
           return sumProgress([acc, p]);
         }, { ...defaultProgress });
+        // Add area-level unattributed meetups (meetups in THIS area that didn't match any target)
+        // This handles the case where a club has targets in other areas but events in this area
+        if (areaUnattributedMeetups > 0) {
+          aggregatedProgress.unattributed_meetups = (aggregatedProgress.unattributed_meetups || 0) + areaUnattributedMeetups;
+        }
       } else {
         // No targets for this area - show actual meetups as unattributed
         const clubCurrentMeetups = parseInt(club.current_meetups) || 0;

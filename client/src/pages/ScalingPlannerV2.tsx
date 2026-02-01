@@ -4240,6 +4240,7 @@ export default function ScalingPlannerV2() {
                   onCreateTask={() => setScalingTaskNode(rollupNode)}
                   onCreateLeaderRequirement={() => setLeaderRequirementNode(rollupNode)}
                   filterContext={rollupFilterContext}
+                  backendSummary={summary}
                 />
                 {flattenedRows.length === 0 ? (
                   <tr>

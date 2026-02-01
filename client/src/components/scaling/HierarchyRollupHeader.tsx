@@ -97,6 +97,16 @@ interface HierarchyRollupHeaderProps {
   filterContext?: FilteredContext;
   // Task summary for the filtered data
   taskSummary?: ScalingTaskSummary | null;
+  // Backend-calculated summary to avoid frontend double-counting for multi-area clubs
+  backendSummary?: {
+    total_current_meetups: number;
+    total_target_meetups: number;
+    total_current_revenue: number;
+    total_target_revenue: number;
+    overall_progress: StageProgress & { unattributed_meetups?: number };
+    last_4w_revenue_total?: number;
+    last_4w_revenue_avg?: number;
+  } | null;
 }
 
 // Format currency in Lakhs or K
@@ -286,9 +296,29 @@ export function HierarchyRollupHeader({
   onCreateTask,
   onCreateLeaderRequirement,
   filterContext,
-  taskSummary
+  taskSummary,
+  backendSummary
 }: HierarchyRollupHeaderProps) {
-  const totals = calculateTotals(filteredData);
+  const calculatedTotals = calculateTotals(filteredData);
+
+  // Use backend summary when NOT filtered to avoid double-counting multi-area clubs
+  // The frontend recalculation visits each area-instance of a club separately,
+  // causing multi-area clubs to be counted multiple times for progress
+  const totals = !isFiltered && backendSummary ? {
+    ...calculatedTotals,
+    targetMeetups: backendSummary.total_target_meetups,
+    currentMeetups: backendSummary.total_current_meetups,
+    targetRevenue: backendSummary.total_target_revenue,
+    currentRevenue: backendSummary.total_current_revenue,
+    gapMeetups: Math.max(0, backendSummary.total_target_meetups - backendSummary.total_current_meetups),
+    gapRevenue: Math.max(0, backendSummary.total_target_revenue - backendSummary.total_current_revenue),
+    l4wRevenue: backendSummary.last_4w_revenue_total ?? calculatedTotals.l4wRevenue,
+    l4wRevenueAvg: backendSummary.last_4w_revenue_avg ?? calculatedTotals.l4wRevenueAvg,
+    progress: {
+      ...backendSummary.overall_progress,
+      unattributed_meetups: backendSummary.overall_progress.unattributed_meetups || 0
+    }
+  } : calculatedTotals;
 
   // Calculate total tasks from summary
   const totalTasks = taskSummary
