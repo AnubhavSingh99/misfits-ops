@@ -132,11 +132,12 @@ export async function getClubMeetups(
     // Default to last completed week if not specified
     // 0-BOOKING FILTER: Only include events with at least 1 valid booking
     // Note: When dates are provided, format them as IST timestamps to match hierarchy queries
+    // IMPORTANT: Use CURRENT_TIMESTAMP (not CURRENT_DATE) to match hierarchy SQL exactly
     const query = `
       WITH week_bounds AS (
         SELECT
-          COALESCE($2::timestamptz, DATE_TRUNC('week', CURRENT_DATE AT TIME ZONE 'Asia/Kolkata') AT TIME ZONE 'Asia/Kolkata' - INTERVAL '1 week') as week_start,
-          COALESCE($3::timestamptz, DATE_TRUNC('week', CURRENT_DATE AT TIME ZONE 'Asia/Kolkata') AT TIME ZONE 'Asia/Kolkata') as week_end
+          COALESCE($2::timestamptz, DATE_TRUNC('week', CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata') AT TIME ZONE 'Asia/Kolkata' - INTERVAL '7 days') as week_start,
+          COALESCE($3::timestamptz, DATE_TRUNC('week', CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata') AT TIME ZONE 'Asia/Kolkata') as week_end
       )
       SELECT
         e.pk as event_id,
