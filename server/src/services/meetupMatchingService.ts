@@ -115,6 +115,14 @@ export interface ClubMatchResult {
  * Get actual meetups for a club from production DB
  * Filters to last completed week by default
  */
+// Helper to format Date as IST timestamp string for PostgreSQL
+// This ensures consistent timezone handling between hierarchy queries and auto-matching
+function formatDateAsIST(date: Date): string {
+  // Format as YYYY-MM-DD HH:MM:SS+05:30 for IST
+  const isoDate = date.toISOString().split('T')[0];
+  return `${isoDate} 00:00:00+05:30`;
+}
+
 export async function getClubMeetups(
   clubId: number,
   weekStart?: Date,
@@ -123,11 +131,12 @@ export async function getClubMeetups(
   try {
     // Default to last completed week if not specified
     // 0-BOOKING FILTER: Only include events with at least 1 valid booking
+    // Note: When dates are provided, format them as IST timestamps to match hierarchy queries
     const query = `
       WITH week_bounds AS (
         SELECT
-          COALESCE($2::timestamp, DATE_TRUNC('week', CURRENT_DATE AT TIME ZONE 'Asia/Kolkata') - INTERVAL '1 week') as week_start,
-          COALESCE($3::timestamp, DATE_TRUNC('week', CURRENT_DATE AT TIME ZONE 'Asia/Kolkata')) as week_end
+          COALESCE($2::timestamptz, DATE_TRUNC('week', CURRENT_DATE AT TIME ZONE 'Asia/Kolkata') AT TIME ZONE 'Asia/Kolkata' - INTERVAL '1 week') as week_start,
+          COALESCE($3::timestamptz, DATE_TRUNC('week', CURRENT_DATE AT TIME ZONE 'Asia/Kolkata') AT TIME ZONE 'Asia/Kolkata') as week_end
       )
       SELECT
         e.pk as event_id,
@@ -159,8 +168,8 @@ export async function getClubMeetups(
 
     const result = await queryProduction(query, [
       clubId,
-      weekStart || null,
-      weekEnd || null
+      weekStart ? formatDateAsIST(weekStart) : null,
+      weekEnd ? formatDateAsIST(weekEnd) : null
     ]);
 
     return result.rows.map((row: any) => ({
