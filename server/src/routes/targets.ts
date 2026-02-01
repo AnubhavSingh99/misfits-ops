@@ -2943,6 +2943,22 @@ router.get('/v2/hierarchy', async (req, res) => {
         // This prevents legacy targets (without area_id) from showing in all areas
         if (hasTargets && areaFilteredTargets.length > 0) {
           aggregatedProgress = areaFilteredTargets.reduce((acc: any, t: any) => {
+            // FIX: For targets WITHOUT area_id, they match meetups from ALL areas.
+            // We must only count the meetups that are actually in THIS area to avoid double-counting.
+            if (!t.production_area_id && t.matched_meetups && Array.isArray(t.matched_meetups)) {
+              // Filter matched meetups to only those in this area
+              const areaMeetups = t.matched_meetups.filter((m: any) => m.area_id === areaId);
+              const areaRealisedCount = areaMeetups.length;
+              // Create area-specific progress
+              const areaProgress = {
+                ...t.new_progress,
+                realised: areaRealisedCount,
+                // Extra meetups for this area (beyond what could be attributed)
+                unattributed_meetups: 0  // Will be handled separately
+              };
+              return sumProgress([acc, areaProgress]);
+            }
+            // For targets WITH area_id, all their meetups are in that area, use full progress
             return sumProgress([acc, t.new_progress]);
           }, { ...defaultProgress });
           aggregatedProgress.unattributed_meetups = (aggregatedProgress.unattributed_meetups || 0) + areaUnattributedMeetups;
@@ -3553,6 +3569,22 @@ router.get('/v2/hierarchy', async (req, res) => {
       if (hasTargets && areaFilteredTargets.length > 0) {
         // Use auto-matched progress (filtered by area)
         aggregatedProgress = areaFilteredTargets.reduce((acc: any, t: any) => {
+          // FIX: For targets WITHOUT area_id, they match meetups from ALL areas.
+          // We must only count the meetups that are actually in THIS area to avoid double-counting.
+          if (!t.production_area_id && t.matched_meetups && Array.isArray(t.matched_meetups)) {
+            // Filter matched meetups to only those in this area
+            const areaMeetups = t.matched_meetups.filter((m: any) => m.area_id === areaId);
+            const areaRealisedCount = areaMeetups.length;
+            // Create area-specific progress
+            const areaProgress = {
+              ...t.new_progress,
+              realised: areaRealisedCount,
+              // Extra meetups for this area (beyond what could be attributed)
+              unattributed_meetups: 0  // Will be handled separately
+            };
+            return sumProgress([acc, areaProgress]);
+          }
+          // For targets WITH area_id, all their meetups are in that area, use full progress
           return sumProgress([acc, t.new_progress]);
         }, { ...defaultProgress });
         // Add area-level unattributed meetups (meetups that didn't match any target in THIS area)

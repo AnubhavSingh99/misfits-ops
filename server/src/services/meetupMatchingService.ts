@@ -431,6 +431,15 @@ export function calculateNewProgress(
     remaining -= toMove;
   }
 
+  // FIX: If we still have remaining matched meetups but no pipeline stages to move from,
+  // count them as realised anyway. This handles cases where:
+  // 1. Stored progress has all stages = 0 (new target or cleared pipeline)
+  // 2. Actual meetups happened but weren't tracked in the pipeline
+  // The matched meetups are REAL, they should be counted even without pipeline stages.
+  if (remaining > 0) {
+    progress.realised += remaining;
+  }
+
   // Store extra meetups
   progress.unattributed_meetups = extraMeetups;
 
