@@ -400,48 +400,71 @@ export function calculateNewProgress(
   matchedMeetups: number,
   targetMeetups: number
 ): { progress: StageProgressWithUA; extraMeetups: number } {
-  // Reset realised to 0 - we calculate it fresh from matched meetups
-  // This ensures auto-matching shows absolute values, not incremental
-  // The stored progress stages (not_picked through stage_4) are the "pipeline"
-  // Matched meetups move from pipeline to realised
+  // Use DELTA logic - don't reset realised to 0
+  // Calculate the difference between matched and current realised
+  // Only consume/add the delta from/to stages
   const progress: StageProgressWithUA = {
-    ...currentProgress,
-    realised: 0,  // Reset to calculate from scratch
+    not_picked: currentProgress.not_picked || 0,
+    started: currentProgress.started || 0,
+    stage_1: currentProgress.stage_1 || 0,
+    stage_2: currentProgress.stage_2 || 0,
+    stage_3: currentProgress.stage_3 || 0,
+    stage_4: currentProgress.stage_4 || 0,
+    realised: currentProgress.realised || 0,
     unattributed_meetups: 0
   };
 
-  // Cap realised at target - all matched meetups go to realised (up to target)
-  const toRealise = Math.min(matchedMeetups, targetMeetups);
-  const extraMeetups = matchedMeetups - toRealise;
+  // Cap matched at target for realised calculation
+  const effectiveMatched = Math.min(matchedMeetups, targetMeetups);
+  const extraMeetups = Math.max(0, matchedMeetups - targetMeetups);
 
-  let remaining = toRealise;
+  // Calculate delta: how many more (or fewer) meetups than currently realised
+  const delta = effectiveMatched - progress.realised;
 
-  // Move from HIGHEST stage first
-  const stageOrder: (keyof StageProgress)[] = [
-    'stage_4', 'stage_3', 'stage_2', 'stage_1', 'started', 'not_picked'
-  ];
+  if (delta > 0) {
+    // More matched than current realised - consume delta from highest stages
+    let remaining = delta;
+    const stageOrder: (keyof StageProgress)[] = [
+      'stage_4', 'stage_3', 'stage_2', 'stage_1', 'started', 'not_picked'
+    ];
 
-  for (const stage of stageOrder) {
-    if (remaining <= 0) break;
+    for (const stage of stageOrder) {
+      if (remaining <= 0) break;
 
-    const available = progress[stage] as number;
-    const toMove = Math.min(available, remaining);
+      const available = progress[stage] as number;
+      const toMove = Math.min(available, remaining);
 
-    (progress[stage] as number) -= toMove;
-    progress.realised += toMove;
-    remaining -= toMove;
+      (progress[stage] as number) -= toMove;
+      progress.realised += toMove;
+      remaining -= toMove;
+    }
+
+    // If still remaining (no pipeline stages left), add to realised anyway
+    // This handles cases where actual meetups exceed tracked pipeline
+    if (remaining > 0) {
+      progress.realised += remaining;
+    }
+  } else if (delta < 0) {
+    // Fewer matched than current realised - regression
+    // Move the difference to S4 (regression stage)
+    const regression = Math.abs(delta);
+    progress.realised -= regression;
+    progress.stage_4 += regression;
+  }
+  // If delta = 0, no change needed
+
+  // Ensure sum = target (syncProgress logic)
+  // If sum doesn't match target, adjust NP as catch-all
+  const sum = progress.not_picked + progress.started +
+    progress.stage_1 + progress.stage_2 + progress.stage_3 +
+    progress.stage_4 + progress.realised;
+
+  if (sum !== targetMeetups) {
+    const diff = targetMeetups - sum;
+    progress.not_picked = Math.max(0, progress.not_picked + diff);
   }
 
-  // FIX: If we still have remaining matched meetups but no pipeline stages to move from,
-  // count them as realised anyway. This handles cases where:
-  // 1. Stored progress has all stages = 0 (new target or cleared pipeline)
-  // 2. Actual meetups happened but weren't tracked in the pipeline
-  // The matched meetups are REAL, they should be counted even without pipeline stages.
-  if (remaining > 0) {
-    progress.realised += remaining;
-  }
-
-  // Store extra meetups
+  // Store extra meetups (beyond target)
   progress.unattributed_meetups = extraMeetups;
 
   return { progress, extraMeetups };
