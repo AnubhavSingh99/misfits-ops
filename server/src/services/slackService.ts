@@ -364,6 +364,13 @@ export async function sendSLABreachNotification(ticketId: number, isFirstNotific
     }
 
     const ticket = ticketResult.rows[0];
+
+    // Guard: don't send for closed tickets (double-check in case status changed between query and send)
+    if (['resolved', 'resolution_communicated'].includes(ticket.status)) {
+      logger.info(`Skipping SLA breach notification for ${ticket.ticket_number} - already ${ticket.status}`);
+      return { success: false, error: 'Ticket already closed' };
+    }
+
     const channel = SLACK_CHANNELS.sla_breach;
 
     // Calculate hours since creation
