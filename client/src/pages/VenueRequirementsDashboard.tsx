@@ -1255,13 +1255,26 @@ export default function VenueRequirementsDashboard() {
                         className="flex items-center justify-between p-3 rounded-lg border border-gray-200 hover:border-indigo-300 hover:bg-indigo-50/30 transition-colors"
                       >
                         <div className="flex items-center gap-3">
-                          <span className={`text-xs px-2 py-1 rounded font-medium ${
-                            venue.source === 'vms'
-                              ? 'bg-green-100 text-green-700'
-                              : 'bg-indigo-100 text-indigo-700'
-                          }`}>
-                            {venue.source === 'vms' ? 'VMS' : 'Repository'}
-                          </span>
+                          <div className="flex flex-col gap-1">
+                            <span className={`text-xs px-2 py-0.5 rounded font-medium ${
+                              venue.source === 'vms'
+                                ? 'bg-green-100 text-green-700'
+                                : 'bg-indigo-100 text-indigo-700'
+                            }`}>
+                              {venue.source === 'vms' ? 'VMS' : 'Repository'}
+                            </span>
+                            {venue.source === 'repository' && venue.status && (
+                              <span className={`text-xs px-2 py-0.5 rounded font-medium ${
+                                venue.status === 'new' ? 'bg-blue-100 text-blue-700' :
+                                venue.status === 'contacted' ? 'bg-yellow-100 text-yellow-700' :
+                                venue.status === 'interested' ? 'bg-cyan-100 text-cyan-700' :
+                                venue.status === 'negotiating' ? 'bg-purple-100 text-purple-700' :
+                                'bg-gray-100 text-gray-700'
+                              }`}>
+                                {venue.status.charAt(0).toUpperCase() + venue.status.slice(1)}
+                              </span>
+                            )}
+                          </div>
                           <div>
                             <div className="font-medium text-gray-800">{venue.name}</div>
                             <div className="text-sm text-gray-500">

@@ -364,6 +364,13 @@ export async function sendSLABreachNotification(ticketId: number, isFirstNotific
     }
 
     const ticket = ticketResult.rows[0];
+
+    // Guard: don't send for closed tickets (double-check in case status changed between query and send)
+    if (['resolved', 'resolution_communicated'].includes(ticket.status)) {
+      logger.info(`Skipping SLA breach notification for ${ticket.ticket_number} - already ${ticket.status}`);
+      return { success: false, error: 'Ticket already closed' };
+    }
+
     const channel = SLACK_CHANNELS.sla_breach;
 
     // Calculate hours since creation
@@ -464,19 +471,36 @@ export async function sendSLABreachNotification(ticketId: number, isFirstNotific
       // Post as thread reply to the original SLA breach message
       if (ticket.sla_breach_message_ts) {
         await postThreadReply(channel.id, ticket.sla_breach_message_ts, text);
+
+        // Update notification timestamp
+        await pool.query(`
+          UPDATE cs_queries
+          SET sla_breach_notified_at = NOW()
+          WHERE id = $1
+        `, [ticketId]);
+
+        logger.info(`SLA breach escalation sent for ticket ${ticket.ticket_number} (thread reply)`);
       } else {
-        // Fallback: post new message if no thread to reply to
-        await postMessage(channel.id, text);
+        // No message_ts saved from first notification - send new message and save ts for future
+        const response = await postMessage(channel.id, text);
+
+        if (response.ok && response.ts) {
+          await pool.query(`
+            UPDATE cs_queries
+            SET sla_breach_notified_at = NOW(),
+                sla_breach_message_ts = $2
+            WHERE id = $1
+          `, [ticketId, response.ts]);
+          logger.info(`SLA breach escalation sent for ticket ${ticket.ticket_number} (new message - ts was missing, now saved)`);
+        } else {
+          await pool.query(`
+            UPDATE cs_queries
+            SET sla_breach_notified_at = NOW()
+            WHERE id = $1
+          `, [ticketId]);
+          logger.info(`SLA breach escalation sent for ticket ${ticket.ticket_number} (new message - ts still missing)`);
+        }
       }
-
-      // Update notification timestamp
-      await pool.query(`
-        UPDATE cs_queries
-        SET sla_breach_notified_at = NOW()
-        WHERE id = $1
-      `, [ticketId]);
-
-      logger.info(`SLA breach escalation sent for ticket ${ticket.ticket_number} (thread reply with tags)`);
     }
 
     return { success: true };
@@ -526,7 +550,9 @@ export async function checkSLABreaches(): Promise<{ checked: number; notified: n
 
     let notified = 0;
     for (const ticket of result.rows) {
-      const isFirstNotification = !ticket.sla_breach_message_ts;
+      // Use sla_breach_notified as the reliable indicator for first notification
+      // (sla_breach_message_ts might be missing if Slack API had issues saving the ts)
+      const isFirstNotification = !ticket.sla_breach_notified;
       const response = await sendSLABreachNotification(ticket.id, isFirstNotification);
       if (response.success) {
         notified++;
