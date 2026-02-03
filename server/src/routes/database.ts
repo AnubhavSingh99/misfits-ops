@@ -889,10 +889,10 @@ router.get('/activity-heads', async (req, res) => {
       {
         id: '4',
         name: 'Gaming Lead',
-        activities: ['Board Gaming', 'Social Deduction', 'Quiz'],
+        activities: ['Board Gaming', 'Mafia', 'Quiz'],
         team: 'Gaming Team',
         clubs: 31,
-        revenue: 2987236, // ₹29.9L (Board Gaming ₹14.3L + Social Deduction ₹11.5L + Quiz ₹4.1L)
+        revenue: 2987236, // ₹29.9L (Board Gaming ₹14.3L + Mafia ₹11.5L + Quiz ₹4.1L)
         health: 80,
         healthStatus: 'green',
         teamMembers: [

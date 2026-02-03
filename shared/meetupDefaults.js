@@ -15,7 +15,7 @@ exports.ACTIVITY_NAME_MAP = {
     'BOOK_CLUB': 'Book Club',
     'BOWLING': 'Bowling',
     'HIKING': 'Hiking',
-    'SOCIAL_DEDUCTIONS': 'Social Deduction',
+    'SOCIAL_DEDUCTIONS': 'Mafia',
     'YOGA': 'Yoga',
     'JOURNALING': 'Journaling',
     'QUIZ': 'Quiz',
@@ -219,6 +219,8 @@ function normalizeActivity(activity) {
     if (normalized === 'BOARD_GAMING')
         return 'BOARDGAMING';
     if (normalized === 'SOCIAL_DEDUCTION')
+        return 'SOCIAL_DEDUCTIONS';
+    if (normalized === 'MAFIA')
         return 'SOCIAL_DEDUCTIONS';
     return normalized;
 }

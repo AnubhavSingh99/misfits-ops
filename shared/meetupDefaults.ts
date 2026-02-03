@@ -26,7 +26,7 @@ export const ACTIVITY_NAME_MAP: Record<string, string> = {
   'BOOK_CLUB': 'Book Club',
   'BOWLING': 'Bowling',
   'HIKING': 'Hiking',
-  'SOCIAL_DEDUCTIONS': 'Social Deduction',
+  'SOCIAL_DEDUCTIONS': 'Mafia',
   'YOGA': 'Yoga',
   'JOURNALING': 'Journaling',
   'QUIZ': 'Quiz',
@@ -251,6 +251,7 @@ function normalizeActivity(activity: string): string {
   // Handle common variations
   if (normalized === 'BOARD_GAMING') return 'BOARDGAMING';
   if (normalized === 'SOCIAL_DEDUCTION') return 'SOCIAL_DEDUCTIONS';
+  if (normalized === 'MAFIA') return 'SOCIAL_DEDUCTIONS';
   return normalized;
 }
 

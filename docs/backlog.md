@@ -70,7 +70,7 @@
 - [x] Kept legacy constants for backward compatibility but they're not used
 
 **Team Activity Assignments (Platform-Wide):**
-- Blue: Board Gaming, Football, Social Deduction, Quiz
+- Blue: Board Gaming, Football, Mafia, Quiz
 - Yellow: Badminton, Art, Journaling, Box Cricket
 - Green: All other activities
 
