@@ -28,6 +28,7 @@ import requirementsRoutes from './routes/requirements';
 import configRoutes from './routes/config';
 import feedbackRoutes from './routes/feedback';
 import customerServiceRoutes from './routes/customerService';
+import venueRepositoryRoutes from './routes/venueRepository';
 
 // Import services
 import { initializeDatabase, getLocalPool } from './services/database';
@@ -145,6 +146,7 @@ app.use('/api/requirements', requirementsRoutes);
 app.use('/api/config', configRoutes);
 app.use('/api/feedback', feedbackRoutes);
 app.use('/api/cs', customerServiceRoutes);
+app.use('/api/venue-repository', venueRepositoryRoutes);
 app.use('/api', revenueRoutes); // Also handle direct /api/revenue-growth
 
 // Teams endpoints (simple fallback)

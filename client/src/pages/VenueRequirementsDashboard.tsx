@@ -34,6 +34,7 @@ import type { VenueRequirement, VenueRequirementStatus, CreateRequirementRequest
 import { TIME_OF_DAY_OPTIONS, CAPACITY_BUCKET_OPTIONS } from '../../../shared/types';
 import { getTeamForClub, TEAMS, TEAM_KEYS, type TeamKey } from '../../../shared/teamConfig';
 import { MultiSelectDropdown } from '../components/ui/MultiSelectDropdown';
+import { VenueRepository } from '../components/VenueRepository';
 
 const API_BASE = import.meta.env.VITE_API_URL
   ? `${import.meta.env.VITE_API_URL}/api`
@@ -514,6 +515,7 @@ export default function VenueRequirementsDashboard() {
 
   // Completed section collapse state
   const [completedSectionExpanded, setCompletedSectionExpanded] = useState(false);
+  const [requirementsSectionExpanded, setRequirementsSectionExpanded] = useState(true); // Default expanded
 
   // Status categories for splitting the view
   const ACTIVE_STATUSES: VenueRequirementStatus[] = ['not_picked', 'picked', 'venue_aligned', 'leader_approval'];
@@ -637,7 +639,10 @@ export default function VenueRequirementsDashboard() {
                   type="button"
                   tabIndex={-1}
                   className="p-0.5 hover:bg-gray-200 rounded transition-colors"
-                  onClick={(e) => e.stopPropagation()}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    toggleExpand(nodeKey);
+                  }}
                 >
                   {isExpanded ? (
                     <ChevronDown className="h-4 w-4 text-gray-400" />
@@ -766,6 +771,12 @@ export default function VenueRequirementsDashboard() {
     const [submittingComment, setSubmittingComment] = useState(false);
     const [commentAuthor, setCommentAuthor] = useState('User');
 
+    // Venue suggestions state
+    const [suggestionsExpanded, setSuggestionsExpanded] = useState(false);
+    const [suggestions, setSuggestions] = useState<any[]>([]);
+    const [loadingSuggestions, setLoadingSuggestions] = useState(false);
+    const [suggestionsFetched, setSuggestionsFetched] = useState(false);
+
     // Comments tooltip position
     const commentsButtonRef = useRef<HTMLButtonElement>(null);
     const [tooltipPosition, setTooltipPosition] = useState({ top: 0, left: 0 });
@@ -803,6 +814,29 @@ export default function VenueRequirementsDashboard() {
         fetchAssignees();
       }
     }, [commentsExpanded, commentsFetched, assigneesFetched]);
+
+    // Fetch venue suggestions when expanded
+    useEffect(() => {
+      if (suggestionsExpanded && !suggestionsFetched) {
+        fetchSuggestions();
+      }
+    }, [suggestionsExpanded, suggestionsFetched]);
+
+    const fetchSuggestions = async () => {
+      setLoadingSuggestions(true);
+      try {
+        const response = await fetch(`${API_BASE}/venue-repository/suggestions/${req.id}`);
+        const data = await response.json();
+        if (data.success) {
+          setSuggestions(data.suggestions || []);
+        }
+      } catch (error) {
+        console.error('Error fetching venue suggestions:', error);
+      } finally {
+        setLoadingSuggestions(false);
+        setSuggestionsFetched(true);
+      }
+    };
 
     // Update dropdown position when opened
     useEffect(() => {
@@ -1116,6 +1150,21 @@ export default function VenueRequirementsDashboard() {
           {/* Actions */}
           <td className="py-2.5 px-4 text-center">
             <div className="flex items-center justify-center gap-1">
+              {/* Venues button - always visible */}
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setSuggestionsExpanded(true);
+                }}
+                className={`p-1.5 rounded-md flex items-center gap-0.5 transition-colors ${
+                  suggestionsExpanded
+                    ? 'bg-indigo-100 text-indigo-600'
+                    : 'bg-indigo-50 text-indigo-500 hover:bg-indigo-100 hover:text-indigo-600'
+                }`}
+                title="View venue suggestions"
+              >
+                <MapPin className="h-3.5 w-3.5" />
+              </button>
               {/* Comments button - always visible */}
               <button
                 ref={commentsButtonRef}
@@ -1163,6 +1212,94 @@ export default function VenueRequirementsDashboard() {
             </div>
           </td>
         </tr>
+
+        {/* Venue Suggestions Modal */}
+        {suggestionsExpanded && createPortal(
+          <div className="fixed inset-0 z-50 flex items-center justify-center">
+            <div className="absolute inset-0 bg-black/50" onClick={() => setSuggestionsExpanded(false)} />
+            <div className="relative bg-white rounded-xl shadow-2xl w-full max-w-lg mx-4 max-h-[80vh] overflow-hidden">
+              <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200 bg-gradient-to-r from-indigo-50 to-purple-50">
+                <div>
+                  <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+                    <MapPin className="h-5 w-5 text-indigo-600" />
+                    Suggested Venues
+                  </h3>
+                  <p className="text-sm text-gray-500 mt-0.5">
+                    {req.city}{req.area ? ` / ${req.area}` : ''}{req.activity ? ` / ${req.activity}` : ''}
+                  </p>
+                </div>
+                <button
+                  onClick={() => setSuggestionsExpanded(false)}
+                  className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+                >
+                  <X className="h-5 w-5 text-gray-500" />
+                </button>
+              </div>
+              <div className="p-5 overflow-y-auto max-h-[60vh]">
+                {loadingSuggestions ? (
+                  <div className="flex items-center justify-center gap-2 py-8 text-gray-400">
+                    <Loader2 className="h-5 w-5 animate-spin" />
+                    <span>Loading suggestions...</span>
+                  </div>
+                ) : suggestions.length === 0 ? (
+                  <div className="text-center py-8">
+                    <MapPin className="h-12 w-12 text-gray-300 mx-auto mb-3" />
+                    <p className="text-gray-500">No matching venues found</p>
+                    <p className="text-sm text-gray-400 mt-1">Try adding venues to the repository below</p>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {suggestions.map((venue, idx) => (
+                      <div
+                        key={`${venue.source}-${venue.id || venue.vms_id || idx}`}
+                        className="flex items-center justify-between p-3 rounded-lg border border-gray-200 hover:border-indigo-300 hover:bg-indigo-50/30 transition-colors"
+                      >
+                        <div className="flex items-center gap-3">
+                          <span className={`text-xs px-2 py-1 rounded font-medium ${
+                            venue.source === 'vms'
+                              ? 'bg-green-100 text-green-700'
+                              : 'bg-indigo-100 text-indigo-700'
+                          }`}>
+                            {venue.source === 'vms' ? 'VMS' : 'Repository'}
+                          </span>
+                          <div>
+                            <div className="font-medium text-gray-800">{venue.name}</div>
+                            <div className="text-sm text-gray-500">
+                              {venue.area_name && venue.city_name
+                                ? `${venue.area_name}, ${venue.city_name}`
+                                : venue.city_name || '-'}
+                              {venue.venue_info?.capacity_category && (
+                                <span className="ml-2">
+                                  • {
+                                    venue.venue_info.capacity_category === 'LESS_THAN_25' ? '<25 pax' :
+                                    venue.venue_info.capacity_category === 'CAPACITY_25_TO_50' ? '25-50 pax' :
+                                    venue.venue_info.capacity_category === 'CAPACITY_50_PLUS' ? '50+ pax' :
+                                    venue.venue_info.capacity_category
+                                  }
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                        {venue.url && (
+                          <a
+                            href={venue.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="px-3 py-1.5 text-sm text-indigo-600 hover:bg-indigo-100 rounded-lg transition-colors flex items-center gap-1"
+                          >
+                            Maps ↗
+                          </a>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>,
+          document.body
+        )}
 
         {/* Comments Tooltip Portal */}
         {commentsExpanded && createPortal(
@@ -1738,68 +1875,85 @@ export default function VenueRequirementsDashboard() {
           </div>
         </div>
 
-        {/* Active Requirements Section */}
+        {/* Active Requirements Section - Collapsible */}
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm">
-          {loading ? (
-            <div className="flex items-center justify-center py-20">
-              <Loader2 className="h-8 w-8 text-teal-500 animate-spin" />
+          <button
+            onClick={() => setRequirementsSectionExpanded(!requirementsSectionExpanded)}
+            className="w-full px-4 py-3 flex items-center justify-between bg-teal-50/50 hover:bg-teal-100/50 transition-colors rounded-t-xl"
+          >
+            <div className="flex items-center gap-2">
+              <MapPin className="h-5 w-5 text-teal-600" />
+              <span className="font-medium text-gray-700">
+                Requirements ({summary?.total ? summary.total - (summary.done || 0) - (summary.deprioritised || 0) : 0})
+              </span>
             </div>
-          ) : hierarchy.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-20 text-gray-400">
-              <MapPin className="h-12 w-12 mb-4 opacity-40" />
-              <p className="text-lg font-medium">No venue requirements found</p>
-              <p className="text-sm mt-1">Create your first requirement to get started</p>
-            </div>
-          ) : activeHierarchy.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-12 text-gray-400">
-              <CheckCircle className="h-10 w-10 mb-3 opacity-40" />
-              <p className="text-sm font-medium">No active requirements</p>
-              <p className="text-xs mt-1">All requirements are completed or deprioritised</p>
-            </div>
-          ) : (
-            <div className="overflow-x-auto max-h-[60vh] overflow-y-auto">
-            <table className="w-full min-w-[1200px]">
-              <thead className="sticky top-0 z-10">
-                <tr className="border-b border-gray-200 bg-gray-50 shadow-sm">
-                  <th className="text-left py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[200px]">
-                    Hierarchy
-                  </th>
-                  <th className="text-left py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[110px]">
-                    Status
-                  </th>
-                  <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[90px]">
-                    Day Type
-                  </th>
-                  <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[80px]">
-                    Capacity
-                  </th>
-                  <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[100px]">
-                    Time
-                  </th>
-                  <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[120px]">
-                    Amenities
-                  </th>
-                  <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[70px]">
-                    Age
-                  </th>
-                  <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[90px]">
-                    Completed
-                  </th>
-                  <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[60px]">
-                    TAT
-                  </th>
-                  <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[120px]">
-                    Actions
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {activeHierarchy.map(node => (
-                  <HierarchyRow key={`active-${node.id}`} node={node} sectionPrefix="active" />
-                ))}
-              </tbody>
-            </table>
-            </div>
+            {requirementsSectionExpanded ? <ChevronUp size={20} className="text-gray-400" /> : <ChevronDown size={20} className="text-gray-400" />}
+          </button>
+
+          {requirementsSectionExpanded && (
+            <>
+              {loading ? (
+                <div className="flex items-center justify-center py-20">
+                  <Loader2 className="h-8 w-8 text-teal-500 animate-spin" />
+                </div>
+              ) : hierarchy.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-20 text-gray-400">
+                  <MapPin className="h-12 w-12 mb-4 opacity-40" />
+                  <p className="text-lg font-medium">No venue requirements found</p>
+                  <p className="text-sm mt-1">Create your first requirement to get started</p>
+                </div>
+              ) : activeHierarchy.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-12 text-gray-400">
+                  <CheckCircle className="h-10 w-10 mb-3 opacity-40" />
+                  <p className="text-sm font-medium">No active requirements</p>
+                  <p className="text-xs mt-1">All requirements are completed or deprioritised</p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto max-h-[60vh] overflow-y-auto">
+                <table className="w-full min-w-[1200px]">
+                  <thead className="sticky top-0 z-10">
+                    <tr className="border-b border-gray-200 bg-gray-50 shadow-sm">
+                      <th className="text-left py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[200px]">
+                        Hierarchy
+                      </th>
+                      <th className="text-left py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[110px]">
+                        Status
+                      </th>
+                      <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[90px]">
+                        Day Type
+                      </th>
+                      <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[80px]">
+                        Capacity
+                      </th>
+                      <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[100px]">
+                        Time
+                      </th>
+                      <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[120px]">
+                        Amenities
+                      </th>
+                      <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[70px]">
+                        Age
+                      </th>
+                      <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[90px]">
+                        Completed
+                      </th>
+                      <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[60px]">
+                        TAT
+                      </th>
+                      <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[120px]">
+                        Actions
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {activeHierarchy.map(node => (
+                      <HierarchyRow key={`active-${node.id}`} node={node} sectionPrefix="active" />
+                    ))}
+                  </tbody>
+                </table>
+                </div>
+              )}
+            </>
           )}
         </div>
 
@@ -1932,6 +2086,9 @@ export default function VenueRequirementsDashboard() {
             )}
           </div>
         )}
+
+        {/* Venue Repository - Collapsible Section (below Done & Deprioritised) */}
+        <VenueRepository />
       </div>
 
       {/* Create Requirement Modal */}
