@@ -292,22 +292,17 @@ export function VenueRepository() {
   };
 
   return (
-    <div className="bg-white rounded-xl border border-gray-200 mb-6 shadow-sm overflow-hidden">
-      {/* Header - Always visible */}
-      <div
-        className="flex items-center justify-between p-4 cursor-pointer hover:bg-gray-50 transition-colors"
+    <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+      {/* Header - Always visible, styled like Done & Deprioritised */}
+      <button
         onClick={() => setIsExpanded(!isExpanded)}
+        className="w-full px-4 py-3 flex items-center justify-between bg-gray-50/80 hover:bg-gray-100 transition-colors"
       >
-        <div className="flex items-center gap-3">
-          <div className="p-2 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-lg">
-            <Building2 className="h-5 w-5 text-white" />
-          </div>
-          <div>
-            <h2 className="text-lg font-semibold text-gray-900">Venue Repository</h2>
-            <p className="text-sm text-gray-500">
-              {stats ? `${stats.total} venues | ${stats.new} new | ${stats.negotiating} negotiating | ${stats.onboarded} onboarded` : 'Track venue sourcing pipeline'}
-            </p>
-          </div>
+        <div className="flex items-center gap-2">
+          <Building2 className="h-5 w-5 text-indigo-500" />
+          <span className="font-medium text-gray-700">
+            Venue Repository ({stats?.total || 0})
+          </span>
         </div>
         <div className="flex items-center gap-2">
           {isExpanded && (
@@ -319,9 +314,9 @@ export function VenueRepository() {
               Add Venue
             </button>
           )}
-          {isExpanded ? <ChevronUp className="h-5 w-5 text-gray-400" /> : <ChevronDown className="h-5 w-5 text-gray-400" />}
+          {isExpanded ? <ChevronUp size={20} className="text-gray-400" /> : <ChevronDown size={20} className="text-gray-400" />}
         </div>
-      </div>
+      </button>
 
       {/* Expanded Content */}
       {isExpanded && (
