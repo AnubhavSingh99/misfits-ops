@@ -1482,7 +1482,7 @@ export default function VenueRequirementsDashboard() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-teal-50/30">
-      <div className="max-w-7xl mx-auto px-6 py-8">
+      <div className="max-w-[1400px] mx-auto px-6 py-8">
         {/* Header */}
         <div className="mb-8">
           <div className="flex items-center justify-between">
@@ -2101,7 +2101,9 @@ export default function VenueRequirementsDashboard() {
         )}
 
         {/* Venue Repository - Collapsible Section (below Done & Deprioritised) */}
-        <VenueRepository />
+        <div className="mt-6">
+          <VenueRepository />
+        </div>
       </div>
 
       {/* Create Requirement Modal */}
