@@ -1782,11 +1782,11 @@ export default function CustomerServiceDashboard() {
                   </div>
                 </div>
                 <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
-                  <MessageSquare className="h-5 w-5 text-gray-400" />
+                  <UserIcon className="h-5 w-5 text-gray-400" />
                   <div>
-                    <p className="text-xs text-gray-500">Email</p>
-                    <p className="font-medium text-sm truncate max-w-[150px]" title={selectedQuery.user_email || ''}>
-                      {selectedQuery.user_email || <span className="text-gray-400">N/A</span>}
+                    <p className="text-xs text-gray-500">Name</p>
+                    <p className="font-medium text-sm truncate max-w-[150px]" title={selectedQuery.user_name || ''}>
+                      {selectedQuery.user_name || <span className="text-gray-400">N/A</span>}
                     </p>
                   </div>
                 </div>
