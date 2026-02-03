@@ -1972,6 +1972,11 @@ function buildDynamicHierarchy(
       if (!node.launch_count) node.launch_count = 0;
       node.launch_count++;
 
+      // Roll up launch revenue status to parent nodes (same as clubs)
+      if (launchNode.revenue_status) {
+        node.revenue_status_list.push(launchNode.revenue_status);
+      }
+
       if (i === hierarchyLevels.length - 1) {
         // Last level - add launch as child
         launchNode.id = `${currentKey}-launch:${launchNode.launch_id}`;
@@ -4507,6 +4512,13 @@ router.get('/v2/hierarchy', async (req, res) => {
         // Roll up progress
         if (launchTarget || targetMeetups > 0) {
           areaNode.progress_summary = sumProgress([areaNode.progress_summary, progress]);
+        }
+
+        // Roll up launch revenue status to parent nodes (area, city, activity)
+        if (launchRevenueStatus) {
+          areaNode.revenue_status_list.push(launchRevenueStatus);
+          cityNode.revenue_status_list.push(launchRevenueStatus);
+          activityNode.revenue_status_list.push(launchRevenueStatus);
         }
 
         // Roll up leader requirements from launches to area, city, activity
