@@ -4516,6 +4516,11 @@ router.get('/v2/hierarchy', async (req, res) => {
 
         // Roll up launch revenue status to parent nodes (area, city, activity)
         if (launchRevenueStatus) {
+          // Ensure revenue_status_list exists on nodes (might be missing if node was created for launches only)
+          if (!areaNode.revenue_status_list) areaNode.revenue_status_list = [];
+          if (!cityNode.revenue_status_list) cityNode.revenue_status_list = [];
+          if (!activityNode.revenue_status_list) activityNode.revenue_status_list = [];
+
           areaNode.revenue_status_list.push(launchRevenueStatus);
           cityNode.revenue_status_list.push(launchRevenueStatus);
           activityNode.revenue_status_list.push(launchRevenueStatus);
