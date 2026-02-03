@@ -3224,6 +3224,14 @@ router.get('/v2/hierarchy', async (req, res) => {
             done: 0
           };
 
+          // Calculate revenue status for launch based on progress and target
+          const launchRevenueStatus = targetMeetups > 0 && targetRevenue > 0
+            ? calculateClubRevenueStatus(
+                [{ target_revenue: targetRevenue, progress }],
+                0 // Launches have no current revenue
+              )
+            : null;
+
           const launchNode = {
             type: 'launch',
             id: `launch:${launch.launch_id}`, // Will be updated with full path
@@ -3253,6 +3261,8 @@ router.get('/v2/hierarchy', async (req, res) => {
             team: launchTeam,
             city_name: areaInfo.city_name || 'Unknown',
             area_name: areaInfo.name || 'Unknown',
+            revenue_status: launchRevenueStatus,
+            revenue_status_display: launchRevenueStatus ? getRevenueStatusDisplay(launchRevenueStatus) : null,
             leaders_required_total: launchLeaderReq.leaders_required_total,
             leader_requirements_summary: {
               total_requirements: launchLeaderReq.total_requirements,
@@ -4444,6 +4454,14 @@ router.get('/v2/hierarchy', async (req, res) => {
           done: 0
         };
 
+        // Calculate revenue status for launch based on progress and target
+        const launchRevenueStatus = targetMeetups > 0 && targetRevenue > 0
+          ? calculateClubRevenueStatus(
+              [{ target_revenue: targetRevenue, progress }],
+              currentRevenue
+            )
+          : null;
+
         const launchNode = {
           type: 'launch',
           id: `activity:${activityId}-city:${cityId}-area:${areaId}-launch:${launch.launch_id}`,
@@ -4471,6 +4489,8 @@ router.get('/v2/hierarchy', async (req, res) => {
           planned_launch_date: launch.planned_launch_date,
           milestones: launch.milestones,
           team: launchTeam,
+          revenue_status: launchRevenueStatus,
+          revenue_status_display: launchRevenueStatus ? getRevenueStatusDisplay(launchRevenueStatus) : null,
           leaders_required_total: launchLeaderReq.leaders_required_total,
           leader_requirements_summary: {
             total_requirements: launchLeaderReq.total_requirements,
