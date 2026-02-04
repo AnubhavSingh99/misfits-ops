@@ -84,8 +84,177 @@ router.get('/options', async (req: Request, res: Response) => {
 });
 
 // ============================================
+// FILTER OPTIONS
+// ============================================
+
+/**
+ * GET /api/venue-repository/filter-options
+ * Get distinct filter values from venue_repository data
+ */
+router.get('/filter-options', async (req: Request, res: Response) => {
+  try {
+    // 1. Get ALL cities and areas from production app
+    const prodResult = await queryProduction(`
+      SELECT a.id as area_id, a.name as area_name, c.id as city_id, c.name as city_name
+      FROM area a
+      JOIN city c ON a.city_id = c.id
+      ORDER BY c.name, a.name
+    `);
+
+    const cityMap = new Map<number, string>();
+    const prodAreas: { id: number; name: string; city_id: number }[] = [];
+    for (const row of prodResult.rows) {
+      const cityId = parseInt(row.city_id);
+      const areaId = parseInt(row.area_id);
+      cityMap.set(cityId, row.city_name);
+      prodAreas.push({ id: areaId, name: row.area_name, city_id: cityId });
+    }
+    const prodCities = Array.from(cityMap.entries()).map(([id, name]) => ({ id, name }));
+
+    // 2. Get custom cities and areas from venue_repository (ones not in production)
+    const customCitiesResult = await queryLocal(`
+      SELECT DISTINCT custom_city FROM venue_repository
+      WHERE custom_city IS NOT NULL AND custom_city != '' AND area_id IS NULL
+      ORDER BY custom_city
+    `);
+    const customAreasResult = await queryLocal(`
+      SELECT DISTINCT custom_area, custom_city FROM venue_repository
+      WHERE custom_area IS NOT NULL AND custom_area != '' AND area_id IS NULL
+      ORDER BY custom_area
+    `);
+
+    // Assign negative IDs to custom values
+    let customCityId = -1;
+    const customCityMap = new Map<string, number>();
+    const customCities = customCitiesResult.rows.map(r => {
+      const id = customCityId--;
+      customCityMap.set((r.custom_city || '').toLowerCase(), id);
+      return { id, name: r.custom_city };
+    });
+
+    let customAreaId = -1;
+    const customAreas = customAreasResult.rows.map(r => {
+      const cityId = customCityMap.get((r.custom_city || '').toLowerCase()) || 0;
+      return { id: customAreaId--, name: r.custom_area, city_id: cityId };
+    });
+
+    // 3. Get ALL activities from production app
+    const activitiesResult = await queryProduction(`
+      SELECT id, name FROM activity WHERE is_active = true ORDER BY name
+    `);
+    const activities = activitiesResult.rows.map(r => ({
+      id: parseInt(r.id),
+      name: r.name
+    }));
+
+    // 4. Capacity categories (fixed set)
+    const capacities = [
+      { id: 1, name: 'LESS_THAN_25', label: '<25' },
+      { id: 2, name: 'CAPACITY_25_TO_50', label: '25-50' },
+      { id: 3, name: 'CAPACITY_50_PLUS', label: '50+' }
+    ];
+
+    res.json({
+      success: true,
+      options: {
+        cities: [...prodCities, ...customCities].sort((a, b) => a.name.localeCompare(b.name)),
+        areas: [...prodAreas, ...customAreas].sort((a, b) => a.name.localeCompare(b.name)),
+        activities,
+        capacities
+      }
+    });
+  } catch (error) {
+    logger.error('Error fetching venue repository filter options:', error);
+    res.status(500).json({ error: 'Failed to fetch filter options' });
+  }
+});
+
+// ============================================
 // VENUE REPOSITORY CRUD
 // ============================================
+
+/**
+ * Build filter clauses for venue queries
+ * Returns { clauses, params, nextIndex } to be appended to WHERE 1=1
+ */
+async function buildFilterClauses(query: Record<string, any>, startIndex: number) {
+  const clauses: string[] = [];
+  const params: any[] = [];
+  let idx = startIndex;
+
+  const { status, area_id, search, city_names, area_names, activities, capacity_categories } = query;
+
+  if (status) {
+    clauses.push(`vr.status = $${idx++}`);
+    params.push(status);
+  }
+
+  if (area_id) {
+    clauses.push(`vr.area_id = $${idx++}`);
+    params.push(area_id);
+  }
+
+  if (search) {
+    clauses.push(`(vr.name ILIKE $${idx} OR vr.contact_name ILIKE $${idx})`);
+    params.push(`%${search}%`);
+    idx++;
+  }
+
+  if (city_names) {
+    const names = (city_names as string).split(',');
+    // Get area IDs from production for matching cities
+    const cityAreasResult = await queryProduction(
+      `SELECT a.id FROM area a JOIN city c ON a.city_id = c.id WHERE c.name = ANY($1)`,
+      [names]
+    );
+    const matchingAreaIds = cityAreasResult.rows.map(r => r.id);
+
+    const conditions: string[] = [];
+    if (matchingAreaIds.length > 0) {
+      conditions.push(`vr.area_id = ANY($${idx++})`);
+      params.push(matchingAreaIds);
+    }
+    conditions.push(`vr.custom_city = ANY($${idx++})`);
+    params.push(names);
+
+    clauses.push(`(${conditions.join(' OR ')})`);
+  }
+
+  if (area_names) {
+    const names = (area_names as string).split(',');
+    const areaResult = await queryProduction(
+      `SELECT id FROM area WHERE name = ANY($1)`, [names]
+    );
+    const matchingAreaIds = areaResult.rows.map(r => r.id);
+
+    const conditions: string[] = [];
+    if (matchingAreaIds.length > 0) {
+      conditions.push(`vr.area_id = ANY($${idx++})`);
+      params.push(matchingAreaIds);
+    }
+    conditions.push(`vr.custom_area = ANY($${idx++})`);
+    params.push(names);
+
+    clauses.push(`(${conditions.join(' OR ')})`);
+  }
+
+  if (activities) {
+    const actList = (activities as string).split(',');
+    clauses.push(`EXISTS (
+      SELECT 1 FROM jsonb_array_elements(vr.venue_info->'preferred_schedules') AS ps
+      WHERE ps->>'preferred_activity' = ANY($${idx++})
+    )`);
+    params.push(actList);
+  }
+
+  if (capacity_categories) {
+    const capList = (capacity_categories as string).split(',');
+    clauses.push(`vr.venue_info->>'capacity_category' = ANY($${idx++})`);
+    params.push(capList);
+  }
+
+  return { clauses, params, nextIndex: idx };
+}
 
 /**
  * GET /api/venue-repository
@@ -93,49 +262,32 @@ router.get('/options', async (req: Request, res: Response) => {
  */
 router.get('/', async (req: Request, res: Response) => {
   try {
-    const { status, area_id, city_id, search, limit = 50, offset = 0 } = req.query;
+    const { limit = 50, offset = 0 } = req.query;
 
-    let query = `
-      SELECT vr.*
-      FROM venue_repository vr
-      WHERE 1=1
-    `;
-    const params: any[] = [];
-    let paramIndex = 1;
+    // Build filter clauses (shared between main and count queries)
+    const { clauses, params, nextIndex } = await buildFilterClauses(req.query, 1);
 
-    if (status) {
-      query += ` AND vr.status = $${paramIndex++}`;
-      params.push(status);
+    let query = `SELECT vr.* FROM venue_repository vr WHERE 1=1`;
+    if (clauses.length > 0) {
+      query += ' AND ' + clauses.join(' AND ');
     }
-
-    if (area_id) {
-      query += ` AND vr.area_id = $${paramIndex++}`;
-      params.push(area_id);
-    }
-
-    if (search) {
-      query += ` AND (vr.name ILIKE $${paramIndex} OR vr.contact_name ILIKE $${paramIndex})`;
-      params.push(`%${search}%`);
-      paramIndex++;
-    }
-
-    query += ` ORDER BY vr.created_at DESC LIMIT $${paramIndex++} OFFSET $${paramIndex++}`;
+    query += ` ORDER BY vr.created_at DESC LIMIT $${nextIndex} OFFSET $${nextIndex + 1}`;
     params.push(limit, offset);
 
     const result = await queryLocal(query, params);
 
     // Get area/city info from production for the venues
-    const areaIds = [...new Set(result.rows.filter(r => r.area_id).map(r => r.area_id))];
+    const venueAreaIds = [...new Set(result.rows.filter(r => r.area_id).map(r => r.area_id))];
     let areaMap = new Map<number, { area_name: string; city_name: string }>();
 
-    if (areaIds.length > 0) {
+    if (venueAreaIds.length > 0) {
       const areaQuery = `
         SELECT a.id, a.name as area_name, c.name as city_name
         FROM area a
         JOIN city c ON a.city_id = c.id
         WHERE a.id = ANY($1)
       `;
-      const areaResult = await queryProduction(areaQuery, [areaIds]);
+      const areaResult = await queryProduction(areaQuery, [venueAreaIds]);
       for (const row of areaResult.rows) {
         areaMap.set(row.id, { area_name: row.area_name, city_name: row.city_name });
       }
@@ -148,25 +300,13 @@ router.get('/', async (req: Request, res: Response) => {
       city_name: venue.area_id ? areaMap.get(venue.area_id)?.city_name : venue.custom_city || null
     }));
 
-    // Get total count
+    // Get total count with same filters
+    const countFilter = await buildFilterClauses(req.query, 1);
     let countQuery = `SELECT COUNT(*) FROM venue_repository vr WHERE 1=1`;
-    const countParams: any[] = [];
-    let countParamIndex = 1;
-
-    if (status) {
-      countQuery += ` AND vr.status = $${countParamIndex++}`;
-      countParams.push(status);
+    if (countFilter.clauses.length > 0) {
+      countQuery += ' AND ' + countFilter.clauses.join(' AND ');
     }
-    if (area_id) {
-      countQuery += ` AND vr.area_id = $${countParamIndex++}`;
-      countParams.push(area_id);
-    }
-    if (search) {
-      countQuery += ` AND (vr.name ILIKE $${countParamIndex} OR vr.contact_name ILIKE $${countParamIndex})`;
-      countParams.push(`%${search}%`);
-    }
-
-    const countResult = await queryLocal(countQuery, countParams);
+    const countResult = await queryLocal(countQuery, countFilter.params);
 
     res.json({
       success: true,
