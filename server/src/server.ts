@@ -208,14 +208,19 @@ async function startServer() {
       initSlackService(localPool);
       logger.info('Slack service initialized');
 
-      // Check SLA breaches every hour
-      slaInterval = setInterval(async () => {
-        try {
-          await checkSLABreaches();
-        } catch (error) {
-          logger.error('SLA breach check failed:', error);
-        }
-      }, 60 * 60 * 1000); // 1 hour
+      // Check SLA breaches every hour (production only)
+      if (process.env.NODE_ENV === 'production') {
+        slaInterval = setInterval(async () => {
+          try {
+            await checkSLABreaches();
+          } catch (error) {
+            logger.error('SLA breach check failed:', error);
+          }
+        }, 60 * 60 * 1000); // 1 hour
+        logger.info('SLA breach check scheduled (every 1 hour)');
+      } else {
+        logger.info('SLA breach check disabled (non-production environment)');
+      }
     } catch (dbError) {
       logger.warn('Database initialization failed, continuing without database:', dbError.message);
     }
