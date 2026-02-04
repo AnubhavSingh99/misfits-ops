@@ -180,7 +180,7 @@ function formatTicketMessage(ticket: any): { text: string; blocks: any[] } {
         },
         {
           type: 'mrkdwn',
-          text: `*Stakeholder:*\n${ticket.stakeholder_type}`
+          text: `*Type:*\n${ticket.stakeholder_type === 'leader' ? 'Leader Issue' : ticket.stakeholder_type === 'venue' ? 'Venue Issue' : 'User Issue'}`
         },
         {
           type: 'mrkdwn',
@@ -426,6 +426,10 @@ export async function sendSLABreachNotification(ticketId: number, isFirstNotific
             },
             {
               type: 'mrkdwn',
+              text: `*Type:*\n${ticket.stakeholder_type === 'leader' ? 'Leader Issue' : ticket.stakeholder_type === 'venue' ? 'Venue Issue' : 'User Issue'}`
+            },
+            {
+              type: 'mrkdwn',
               text: `*Contact:*\n${ticket.user_contact || 'N/A'}`
             },
             {
@@ -470,7 +474,8 @@ export async function sendSLABreachNotification(ticketId: number, isFirstNotific
 
     } else {
       // ESCALATION: Thread reply WITH tags
-      const text = `${userMentions}🚨 ESCALATION: Ticket ${ticket.ticket_number} still unresolved after ${hoursElapsed}h! Please take immediate action.`;
+      const typeLabel = ticket.stakeholder_type === 'leader' ? 'Leader Issue' : ticket.stakeholder_type === 'venue' ? 'Venue Issue' : 'User Issue';
+      const text = `${userMentions}🚨 ESCALATION (${typeLabel}): Ticket ${ticket.ticket_number} still unresolved after ${hoursElapsed}h! Please take immediate action.`;
 
       // Post as thread reply to the original SLA breach message
       if (ticket.sla_breach_message_ts) {
