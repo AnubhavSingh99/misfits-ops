@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   ChevronDown,
   ChevronUp,
@@ -17,8 +17,10 @@ import {
   Clock,
   MessageSquare,
   Users,
-  Trash2
+  Trash2,
+  Activity
 } from 'lucide-react';
+import { MultiSelectDropdown } from './ui/MultiSelectDropdown';
 
 const API_BASE = import.meta.env.VITE_API_URL
   ? `${import.meta.env.VITE_API_URL}/api`
@@ -88,6 +90,25 @@ interface Stats {
   total: number;
 }
 
+interface FilterOption {
+  id: number;
+  name: string;
+  city_id?: number;
+}
+
+interface CapacityOption {
+  id: number;
+  name: string;
+  label: string;
+}
+
+interface FilterOptions {
+  cities: FilterOption[];
+  areas: FilterOption[];
+  activities: FilterOption[];
+  capacities: CapacityOption[];
+}
+
 // Status configuration
 const STATUS_CONFIG: Record<string, { label: string; color: string; bgColor: string; borderColor: string }> = {
   new: { label: 'New', color: 'text-blue-600', bgColor: 'bg-blue-50', borderColor: 'border-blue-200' },
@@ -116,12 +137,35 @@ export function VenueRepository() {
   const [options, setOptions] = useState<Options | null>(null);
   const [showModal, setShowModal] = useState(false);
   const [editingVenue, setEditingVenue] = useState<Venue | null>(null);
-  const [filter, setFilter] = useState({ status: '', search: '' });
+  const [filter, setFilter] = useState({
+    status: '',
+    search: '',
+    cities: [] as number[],
+    areas: [] as number[],
+    activities: [] as number[],
+    capacities: [] as number[]
+  });
+  const [filterOptions, setFilterOptions] = useState<FilterOptions>({
+    cities: [], areas: [], activities: [], capacities: []
+  });
+
+  // Computed: filter areas based on selected cities
+  const filteredAreaOptions = useMemo(() => {
+    if (filter.cities.length === 0) return filterOptions.areas;
+    return filterOptions.areas.filter(a => a.city_id && filter.cities.includes(a.city_id));
+  }, [filterOptions.areas, filter.cities]);
+
+  // Computed: capacity options with display labels
+  const capacityDisplayOptions = useMemo(() =>
+    filterOptions.capacities.map(c => ({ id: c.id, name: c.label })),
+    [filterOptions.capacities]
+  );
 
   // Fetch options on mount
   useEffect(() => {
     fetchOptions();
     fetchStats();
+    fetchFilterOptions();
   }, []);
 
   // Fetch venues when expanded
@@ -130,6 +174,24 @@ export function VenueRepository() {
       fetchVenues();
     }
   }, [isExpanded]);
+
+  // Auto-refetch when dropdown filters change (only when expanded)
+  useEffect(() => {
+    if (isExpanded) {
+      fetchVenues();
+    }
+  }, [filter.cities, filter.areas, filter.activities, filter.capacities]);
+
+  // Cascading: clear orphaned area selections when city changes
+  useEffect(() => {
+    if (filter.cities.length > 0 && filter.areas.length > 0) {
+      const validAreaIds = filteredAreaOptions.map(a => a.id);
+      const cleaned = filter.areas.filter(id => validAreaIds.includes(id));
+      if (cleaned.length !== filter.areas.length) {
+        setFilter(f => ({ ...f, areas: cleaned }));
+      }
+    }
+  }, [filter.cities]);
 
   const fetchOptions = async () => {
     try {
@@ -155,12 +217,51 @@ export function VenueRepository() {
     }
   };
 
+  const fetchFilterOptions = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/venue-repository/filter-options`);
+      const data = await res.json();
+      if (data.success) {
+        setFilterOptions(data.options);
+      }
+    } catch (error) {
+      console.error('Error fetching filter options:', error);
+    }
+  };
+
   const fetchVenues = async () => {
     setLoading(true);
     try {
       const params = new URLSearchParams();
       if (filter.status) params.append('status', filter.status);
       if (filter.search) params.append('search', filter.search);
+
+      // Map selected IDs back to names for API
+      if (filter.cities.length > 0) {
+        const cityNames = filterOptions.cities
+          .filter(c => filter.cities.includes(c.id))
+          .map(c => c.name);
+        if (cityNames.length > 0) params.append('city_names', cityNames.join(','));
+      }
+      if (filter.areas.length > 0) {
+        const areaNames = filterOptions.areas
+          .filter(a => filter.areas.includes(a.id))
+          .map(a => a.name);
+        if (areaNames.length > 0) params.append('area_names', areaNames.join(','));
+      }
+      if (filter.activities.length > 0) {
+        const activityNames = filterOptions.activities
+          .filter(a => filter.activities.includes(a.id))
+          .map(a => a.name);
+        if (activityNames.length > 0) params.append('activities', activityNames.join(','));
+      }
+      if (filter.capacities.length > 0) {
+        const capNames = filterOptions.capacities
+          .filter(c => filter.capacities.includes(c.id))
+          .map(c => c.name);
+        if (capNames.length > 0) params.append('capacity_categories', capNames.join(','));
+      }
+
       params.append('limit', '100');
 
       const res = await fetch(`${API_BASE}/venue-repository?${params}`);
@@ -207,6 +308,7 @@ export function VenueRepository() {
         setShowModal(false);
         fetchVenues();
         fetchStats();
+        fetchFilterOptions();
       } else {
         alert(data.error || 'Failed to save venue');
       }
@@ -337,7 +439,51 @@ export function VenueRepository() {
             </div>
           )}
 
-          {/* Filters */}
+          {/* Filter Dropdowns */}
+          <div className="flex items-center gap-2 px-4 py-3 border-b border-gray-200 bg-white flex-wrap">
+            <MultiSelectDropdown
+              label="City"
+              options={filterOptions.cities}
+              selected={filter.cities}
+              onChange={(ids) => setFilter(f => ({ ...f, cities: ids }))}
+              icon={<MapPin className="h-3.5 w-3.5" />}
+              compact
+            />
+            <MultiSelectDropdown
+              label="Area"
+              options={filteredAreaOptions}
+              selected={filter.areas}
+              onChange={(ids) => setFilter(f => ({ ...f, areas: ids }))}
+              icon={<Building2 className="h-3.5 w-3.5" />}
+              compact
+            />
+            <MultiSelectDropdown
+              label="Activity"
+              options={filterOptions.activities}
+              selected={filter.activities}
+              onChange={(ids) => setFilter(f => ({ ...f, activities: ids }))}
+              icon={<Activity className="h-3.5 w-3.5" />}
+              compact
+            />
+            <MultiSelectDropdown
+              label="Capacity"
+              options={capacityDisplayOptions}
+              selected={filter.capacities}
+              onChange={(ids) => setFilter(f => ({ ...f, capacities: ids }))}
+              icon={<Users className="h-3.5 w-3.5" />}
+              compact
+            />
+            {(filter.cities.length > 0 || filter.areas.length > 0 || filter.activities.length > 0 || filter.capacities.length > 0) && (
+              <button
+                onClick={() => setFilter(f => ({ ...f, cities: [], areas: [], activities: [], capacities: [] }))}
+                className="px-2 py-1 text-xs font-medium text-gray-500 hover:text-red-600 hover:bg-red-50 rounded transition-colors"
+              >
+                Clear filters
+              </button>
+            )}
+          </div>
+
+          {/* Search */}
           <div className="flex items-center gap-3 p-4 border-b border-gray-200">
             <input
               type="text"
