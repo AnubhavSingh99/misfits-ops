@@ -193,7 +193,11 @@ function formatTicketMessage(ticket: any): { text: string; blocks: any[] } {
         {
           type: 'mrkdwn',
           text: `*Name:*\n${ticket.user_name || 'N/A'}`
-        }
+        },
+        ...(ticket.stakeholder_type === 'leader' && ticket.club_name ? [{
+          type: 'mrkdwn',
+          text: `*Club:*\n${ticket.club_name}`
+        }] : [])
       ]
     },
     {

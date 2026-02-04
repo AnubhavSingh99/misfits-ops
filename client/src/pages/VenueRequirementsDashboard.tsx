@@ -250,7 +250,7 @@ export default function VenueRequirementsDashboard() {
 
   // Hierarchy level ordering (drag-and-drop) - now includes priority
   const [hierarchyLevels, setHierarchyLevels] = useState<HierarchyLevel[]>(['priority', 'city', 'activity', 'area']);
-  const [enabledLevels, setEnabledLevels] = useState<Set<HierarchyLevel>>(new Set(['city', 'activity']));
+  const [enabledLevels, setEnabledLevels] = useState<Set<HierarchyLevel>>(new Set(['priority', 'city', 'activity', 'area']));
   const [draggingLevel, setDraggingLevel] = useState<HierarchyLevel | null>(null);
 
   // Expanded state
