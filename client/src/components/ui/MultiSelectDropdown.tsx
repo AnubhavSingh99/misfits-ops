@@ -1,17 +1,19 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Check, ChevronDown, Search, X } from 'lucide-react';
 
-interface MultiSelectDropdownProps {
+type IdType = number | string;
+
+interface MultiSelectDropdownProps<T extends IdType = number> {
   label: string;
-  options: { id: number; name: string }[];
-  selected: number[];
-  onChange: (selected: number[]) => void;
+  options: { id: T; name: string }[];
+  selected: T[];
+  onChange: (selected: T[]) => void;
   placeholder?: string;
   icon?: React.ReactNode;
   compact?: boolean;
 }
 
-export function MultiSelectDropdown({
+export function MultiSelectDropdown<T extends IdType = number>({
   label,
   options,
   selected,
@@ -19,7 +21,7 @@ export function MultiSelectDropdown({
   placeholder,
   icon,
   compact = false,
-}: MultiSelectDropdownProps) {
+}: MultiSelectDropdownProps<T>) {
   const [isOpen, setIsOpen] = useState(false);
   const [search, setSearch] = useState('');
   const containerRef = useRef<HTMLDivElement>(null);
@@ -67,7 +69,7 @@ export function MultiSelectDropdown({
   }, [isOpen]);
 
   const toggleOption = useCallback(
-    (id: number) => {
+    (id: T) => {
       if (selected.includes(id)) {
         onChange(selected.filter((s) => s !== id));
       } else {

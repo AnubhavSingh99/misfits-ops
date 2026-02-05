@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Activity,
   Users,
@@ -15,13 +15,17 @@ import {
   Download,
   Eye,
   MapPin,
+  Building2,
+  Home,
   BarChart3,
   Info,
-  X
+  X,
+  Heart
 } from 'lucide-react';
 import ScalingPlanner from '../components/ScalingPlanner';
 import { API_URL } from '../config/api';
-import { getTeamForClub, TEAMS, TeamKey } from '../../../shared/teamConfig';
+import { getTeamForClub, TEAMS, TEAM_KEYS, TeamKey } from '../../../shared/teamConfig';
+import { MultiSelectDropdown } from '../components/ui/MultiSelectDropdown';
 
 interface ClubHealth {
   id: number;
@@ -88,11 +92,22 @@ export function HealthDashboard() {
   const [clubs, setClubs] = useState<ClubHealth[]>([]);
   const [metrics, setMetrics] = useState<HealthMetrics | null>(null);
   const [loading, setLoading] = useState(true);
-  const [selectedCity, setSelectedCity] = useState<string>('all');
-  const [selectedActivity, setSelectedActivity] = useState<string>('all');
-  const [selectedHealthStatus, setSelectedHealthStatus] = useState<string>('all');
+
+  // Multi-select filter state (matching ScalingPlannerV2 pattern)
+  type HealthFilter = 'healthy' | 'at_risk' | 'critical' | 'dormant' | 'inactive';
+  const [filters, setFilters] = useState<{
+    activities: string[];
+    cities: string[];
+    teams: TeamKey[];
+    health: HealthFilter[];
+  }>({
+    activities: [],
+    cities: [],
+    teams: [],
+    health: []
+  });
+
   const [selectedClubStatus, setSelectedClubStatus] = useState<string>('all');
-  const [selectedTeam, setSelectedTeam] = useState<string>('all');
   const [sortBy, setSortBy] = useState<string>('health_score');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
   const [showTrends, setShowTrends] = useState(false);
@@ -196,10 +211,10 @@ export function HealthDashboard() {
   };
 
   const filteredClubs = clubs
-    .filter(club => selectedCity === 'all' || club.city === selectedCity)
-    .filter(club => selectedActivity === 'all' || club.activity === selectedActivity)
-    .filter(club => selectedHealthStatus === 'all' || club.health_status === selectedHealthStatus)
-    .filter(club => selectedTeam === 'all' || getTeamForClub(club.activity, club.city) === selectedTeam)
+    .filter(club => filters.cities.length === 0 || filters.cities.includes(club.city))
+    .filter(club => filters.activities.length === 0 || filters.activities.includes(club.activity))
+    .filter(club => filters.health.length === 0 || filters.health.includes(club.health_status as HealthFilter))
+    .filter(club => filters.teams.length === 0 || filters.teams.includes(getTeamForClub(club.activity, club.city) as TeamKey))
     .sort((a, b) => {
       let aValue = a[sortBy as keyof ClubHealth];
       let bValue = b[sortBy as keyof ClubHealth];
@@ -214,8 +229,58 @@ export function HealthDashboard() {
       }
     });
 
-  const uniqueCities = Array.from(new Set(clubs.map(club => club.city)));
-  const uniqueActivities = Array.from(new Set(clubs.map(club => club.activity)));
+  // Filter options for MultiSelectDropdown (needs {id, name} format)
+  const filterOptions = useMemo(() => {
+    const cities = Array.from(new Set(clubs.map(club => club.city)))
+      .sort()
+      .map((city, idx) => ({ id: city, name: city }));
+    const activities = Array.from(new Set(clubs.map(club => club.activity)))
+      .sort()
+      .map((activity, idx) => ({ id: activity, name: activity }));
+    return { cities, activities };
+  }, [clubs]);
+
+  // Health filter options (matching ScalingPlannerV2 style)
+  const HEALTH_OPTIONS: { key: HealthFilter; label: string; color: string; bg: string; border: string }[] = [
+    { key: 'healthy', label: 'Healthy', color: '#10b981', bg: 'bg-emerald-50', border: 'border-emerald-200' },
+    { key: 'at_risk', label: 'At Risk', color: '#f59e0b', bg: 'bg-amber-50', border: 'border-amber-200' },
+    { key: 'critical', label: 'Critical', color: '#ef4444', bg: 'bg-red-50', border: 'border-red-200' },
+    { key: 'dormant', label: 'Dormant', color: '#9ca3af', bg: 'bg-gray-100', border: 'border-gray-300' },
+    { key: 'inactive', label: 'Inactive', color: '#6b7280', bg: 'bg-gray-50', border: 'border-gray-200' },
+  ];
+
+  // Check if any filters are active
+  const hasActiveFilters = filters.activities.length > 0 ||
+    filters.cities.length > 0 ||
+    filters.teams.length > 0 ||
+    filters.health.length > 0;
+
+  const clearAllFilters = () => {
+    setFilters({
+      activities: [],
+      cities: [],
+      teams: [],
+      health: []
+    });
+  };
+
+  const toggleTeam = (teamKey: TeamKey) => {
+    setFilters(prev => ({
+      ...prev,
+      teams: prev.teams.includes(teamKey)
+        ? prev.teams.filter(t => t !== teamKey)
+        : [...prev.teams, teamKey]
+    }));
+  };
+
+  const toggleHealth = (healthKey: HealthFilter) => {
+    setFilters(prev => ({
+      ...prev,
+      health: prev.health.includes(healthKey)
+        ? prev.health.filter(h => h !== healthKey)
+        : [...prev.health, healthKey]
+    }));
+  };
 
   if (loading) {
     return (
@@ -423,87 +488,143 @@ export function HealthDashboard() {
         </div>
       )}
 
-      {/* Filters */}
-      <div className="bg-white p-4 rounded-lg shadow-sm border">
-        <div className="flex flex-wrap gap-4 items-center">
-          <div className="flex items-center space-x-2">
-            <Filter className="h-4 w-4 text-gray-500" />
-            <span className="text-sm font-medium text-gray-700">Filters:</span>
+      {/* Filters - Modern UI matching ScalingPlannerV2 */}
+      <div className="bg-white border border-gray-100 rounded-xl p-4 shadow-sm">
+        <div className="flex flex-wrap items-center gap-3">
+          {/* Activity Filter */}
+          <MultiSelectDropdown
+            label="Activity"
+            options={filterOptions.activities}
+            selected={filters.activities}
+            onChange={(val) => setFilters(prev => ({ ...prev, activities: val as string[] }))}
+            icon={<Activity size={14} />}
+            compact
+          />
+
+          {/* City Filter */}
+          <MultiSelectDropdown
+            label="City"
+            options={filterOptions.cities}
+            selected={filters.cities}
+            onChange={(val) => setFilters(prev => ({ ...prev, cities: val as string[] }))}
+            icon={<Building2 size={14} />}
+            compact
+          />
+
+          {/* Divider */}
+          <div className="h-6 w-px bg-gray-200" />
+
+          {/* Team Filter - Pill Buttons */}
+          <div className="flex items-center gap-2">
+            <Users size={14} className="text-gray-400" />
+            <div className="flex items-center gap-1">
+              {TEAM_KEYS.map(teamKey => {
+                const team = TEAMS[teamKey];
+                const isActive = filters.teams.includes(teamKey);
+                return (
+                  <button
+                    key={teamKey}
+                    onClick={() => toggleTeam(teamKey)}
+                    className={`
+                      px-3 py-1 text-xs font-medium rounded-full transition-all duration-150
+                      ${isActive
+                        ? 'text-white shadow-sm'
+                        : 'bg-white text-gray-600 hover:bg-gray-50 border border-gray-200'
+                      }
+                    `}
+                    style={isActive ? { backgroundColor: team.color.accent } : undefined}
+                  >
+                    {team.name}
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
-          <select
-            value={selectedTeam}
-            onChange={(e) => setSelectedTeam(e.target.value)}
-            className="px-3 py-1 border border-gray-300 rounded text-sm"
-          >
-            <option value="all">All Teams</option>
-            <option value="blue">🔵 Blue (Shashwat)</option>
-            <option value="yellow">🟡 Yellow (CD)</option>
-            <option value="green">🟢 Green (Saurabh)</option>
-          </select>
+          {/* Divider */}
+          <div className="h-6 w-px bg-gray-200" />
 
-          <select
-            value={selectedCity}
-            onChange={(e) => setSelectedCity(e.target.value)}
-            className="px-3 py-1 border border-gray-300 rounded text-sm"
-          >
-            <option value="all">All Cities</option>
-            {uniqueCities.map(city => (
-              <option key={city} value={city}>{city}</option>
-            ))}
-          </select>
+          {/* Health Filter - Pill Buttons with colored dots */}
+          <div className="flex items-center gap-2">
+            <Heart size={14} className="text-gray-400" />
+            <div className="flex items-center gap-1">
+              {HEALTH_OPTIONS.map(option => {
+                const isActive = filters.health.includes(option.key);
+                return (
+                  <button
+                    key={option.key}
+                    onClick={() => toggleHealth(option.key)}
+                    className={`
+                      flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-full
+                      transition-all duration-150
+                      ${isActive
+                        ? `${option.bg} ${option.border} border shadow-sm`
+                        : 'bg-white text-gray-600 hover:bg-gray-50 border border-gray-200'
+                      }
+                    `}
+                  >
+                    <span
+                      className="w-2 h-2 rounded-full"
+                      style={{ backgroundColor: option.color }}
+                    />
+                    <span className={isActive ? '' : 'text-gray-500'}>
+                      {option.label}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
 
-          <select
-            value={selectedActivity}
-            onChange={(e) => setSelectedActivity(e.target.value)}
-            className="px-3 py-1 border border-gray-300 rounded text-sm"
-          >
-            <option value="all">All Activities</option>
-            {uniqueActivities.map(activity => (
-              <option key={activity} value={activity}>{activity}</option>
-            ))}
-          </select>
+          {/* Clear Filters */}
+          {hasActiveFilters && (
+            <>
+              <div className="h-6 w-px bg-gray-200" />
+              <button
+                onClick={clearAllFilters}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-500 hover:text-gray-700 hover:bg-gray-50 rounded-lg transition-colors"
+              >
+                <X size={12} />
+                Clear filters
+              </button>
+            </>
+          )}
 
-          <select
-            value={selectedHealthStatus}
-            onChange={(e) => setSelectedHealthStatus(e.target.value)}
-            className="px-3 py-1 border border-gray-300 rounded text-sm"
-          >
-            <option value="all">All Health Status</option>
-            <option value="healthy">Healthy</option>
-            <option value="at_risk">At Risk</option>
-            <option value="critical">Critical</option>
-            <option value="dormant">Dormant</option>
-            <option value="inactive">Inactive</option>
-          </select>
+          {/* Divider before secondary controls */}
+          <div className="h-6 w-px bg-gray-200" />
+
+          {/* Club Status (API filter) */}
           <select
             value={selectedClubStatus}
             onChange={(e) => setSelectedClubStatus(e.target.value)}
-            className="px-3 py-1 border border-gray-300 rounded text-sm"
+            className="px-3 py-1.5 text-xs border border-gray-200 rounded-lg bg-white hover:border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400"
           >
             <option value="all">All Club Status</option>
             <option value="active">Active</option>
             <option value="inactive">Inactive</option>
           </select>
 
-          <select
-            value={sortBy}
-            onChange={(e) => setSortBy(e.target.value)}
-            className="px-3 py-1 border border-gray-300 rounded text-sm"
-          >
-            <option value="health_score">Health Score</option>
-            <option value="name">Club Name</option>
-            <option value="capacity">Capacity</option>
-            <option value="repeat_rate">Repeat Rate</option>
-            <option value="rating">Rating</option>
-          </select>
+          {/* Sort controls */}
+          <div className="flex items-center gap-1">
+            <select
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value)}
+              className="px-3 py-1.5 text-xs border border-gray-200 rounded-lg bg-white hover:border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400"
+            >
+              <option value="health_score">Sort: Health Score</option>
+              <option value="name">Sort: Club Name</option>
+              <option value="capacity">Sort: Capacity</option>
+              <option value="repeat_rate">Sort: Repeat Rate</option>
+              <option value="rating">Sort: Rating</option>
+            </select>
 
-          <button
-            onClick={() => setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')}
-            className="px-3 py-1 border border-gray-300 rounded text-sm bg-gray-50 hover:bg-gray-100"
-          >
-            {sortOrder === 'asc' ? '↑' : '↓'}
-          </button>
+            <button
+              onClick={() => setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')}
+              className="px-2 py-1.5 border border-gray-200 rounded-lg text-xs bg-white hover:bg-gray-50 transition-colors"
+            >
+              {sortOrder === 'asc' ? '↑ Asc' : '↓ Desc'}
+            </button>
+          </div>
         </div>
       </div>
 
