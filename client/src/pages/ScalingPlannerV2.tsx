@@ -2856,7 +2856,9 @@ export default function ScalingPlannerV2() {
     areas: [],
     clubs: [],
     teams: [],
-    health: []
+    health: [],
+    meetupStages: [],
+    revenueStages: []
   })
 
   // Hierarchy order state (drag-drop reorder + enable/disable)
@@ -3711,7 +3713,9 @@ export default function ScalingPlannerV2() {
       filters.areas.length > 0 ||
       filters.clubs.length > 0 ||
       filters.teams.length > 0 ||
-      (filters.health && filters.health.length > 0)
+      (filters.health && filters.health.length > 0) ||
+      (filters.meetupStages && filters.meetupStages.length > 0) ||
+      (filters.revenueStages && filters.revenueStages.length > 0)
 
     if (!hasFilters) return hierarchy
 
@@ -3788,6 +3792,44 @@ export default function ScalingPlannerV2() {
           // For parent nodes, we'll check if any children match
         }
 
+        // Meetup stage filter - check club/launch nodes by progress_summary
+        // Show node if ANY selected stage has count > 0
+        if (filters.meetupStages && filters.meetupStages.length > 0) {
+          if (node.type === 'club' || node.type === 'launch') {
+            const progress = node.progress_summary as any
+            if (!progress) {
+              matches = false
+            } else {
+              const hasAnySelectedStage = filters.meetupStages.some(
+                stage => (progress[stage] || 0) > 0
+              )
+              if (!hasAnySelectedStage) {
+                matches = false
+              }
+            }
+          }
+          // For parent nodes, we'll check if any children match
+        }
+
+        // Revenue stage filter - check club/launch nodes by revenue_status
+        // Show node if ANY selected revenue stage has amount > 0
+        if (filters.revenueStages && filters.revenueStages.length > 0) {
+          if (node.type === 'club' || node.type === 'launch') {
+            const revStatus = node.revenue_status as any
+            if (!revStatus) {
+              matches = false
+            } else {
+              const hasAnySelectedRevStage = filters.revenueStages.some(
+                stage => (revStatus[stage] || 0) > 0
+              )
+              if (!hasAnySelectedRevStage) {
+                matches = false
+              }
+            }
+          }
+          // For parent nodes, we'll check if any children match
+        }
+
         // Filter children with this node's context
         const filteredChildren = node.children ? filterNodes(node.children, context) : []
 
@@ -3796,20 +3838,23 @@ export default function ScalingPlannerV2() {
 
         // Determine if this node should be included:
         // - Leaf nodes (club/launch): must match all filters directly
-        // - Parent nodes (activity/city/area): must have matching children when team/club filters are active
+        // - Parent nodes (activity/city/area): must have matching children when leaf-level filters are active
         //   OR match all filters when only activity/city/area filters are active
 
-        const hasLeafFilters = filters.teams.length > 0 || filters.clubs.length > 0
+        const hasLeafFilters = filters.teams.length > 0 || filters.clubs.length > 0 ||
+          (filters.health && filters.health.length > 0) ||
+          (filters.meetupStages && filters.meetupStages.length > 0) ||
+          (filters.revenueStages && filters.revenueStages.length > 0)
 
         let includeNode = false
         if (isLeafNode) {
           // Leaf nodes must match all filters
           includeNode = matches
         } else if (hasLeafFilters) {
-          // Parent nodes with team/club filters: ONLY include if they have matching children
+          // Parent nodes with leaf-level filters: ONLY include if they have matching children
           includeNode = hasMatchingChildren
         } else {
-          // Parent nodes without team/club filters: include if matches or has children
+          // Parent nodes without leaf-level filters: include if matches or has children
           includeNode = matches || hasMatchingChildren
         }
 
@@ -3932,7 +3977,9 @@ export default function ScalingPlannerV2() {
       filters.areas.length > 0 ||
       filters.clubs.length > 0 ||
       filters.teams.length > 0 ||
-      (filters.health && filters.health.length > 0)
+      (filters.health && filters.health.length > 0) ||
+      (filters.meetupStages && filters.meetupStages.length > 0) ||
+      (filters.revenueStages && filters.revenueStages.length > 0)
   }, [filters])
 
   // Build filter context for rollup header (determines the hierarchy level for sprint/task)

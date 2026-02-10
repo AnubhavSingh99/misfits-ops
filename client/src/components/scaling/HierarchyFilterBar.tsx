@@ -1,5 +1,5 @@
 import React from 'react';
-import { Activity, Building2, MapPin, Home, Users, X, Layers, GripVertical, Check, Heart } from 'lucide-react';
+import { Activity, Building2, MapPin, Home, Users, X, Layers, GripVertical, Check, Heart, GitBranch, IndianRupee } from 'lucide-react';
 import { MultiSelectDropdown } from '../ui/MultiSelectDropdown';
 import { TEAMS, TEAM_KEYS, type TeamKey } from '../../../../shared/teamConfig';
 
@@ -17,6 +17,9 @@ const HEALTH_OPTIONS: { key: HealthFilter; label: string; color: string; bg: str
   { key: 'gray', label: 'Dormant', color: '#9ca3af', bg: 'bg-gray-100', border: 'border-gray-300' },
 ];
 
+export type MeetupStageFilter = 'not_picked' | 'started' | 'stage_1' | 'stage_2' | 'stage_3' | 'stage_4' | 'realised' | 'unattributed_meetups';
+export type RevenueStageFilter = 'np' | 'st' | 's1' | 's2' | 's3' | 's4' | 'realisation_gap' | 'unattributed' | 'realised_actual';
+
 export interface HierarchyFilters {
   activities: number[];
   cities: number[];
@@ -24,6 +27,8 @@ export interface HierarchyFilters {
   clubs: number[];
   teams: TeamKey[];
   health: HealthFilter[];
+  meetupStages: MeetupStageFilter[];
+  revenueStages: RevenueStageFilter[];
 }
 
 export type HierarchyLevel = 'activity' | 'city' | 'area';
@@ -53,6 +58,29 @@ interface HierarchyFilterBarProps {
   hierarchyOrder?: HierarchyOrderProps;
 }
 
+const MEETUP_STAGE_OPTIONS: { id: MeetupStageFilter; name: string }[] = [
+  { id: 'not_picked', name: 'Not Picked (NP)' },
+  { id: 'started', name: 'Started (St)' },
+  { id: 'stage_1', name: 'Leaders Found (S1)' },
+  { id: 'stage_2', name: 'Venue Found (S2)' },
+  { id: 'stage_3', name: 'Launch Ready (S3)' },
+  { id: 'stage_4', name: 'Regression (S4)' },
+  { id: 'realised', name: 'Realised (✓)' },
+  { id: 'unattributed_meetups', name: 'Unattributed (UA)' },
+];
+
+const REVENUE_STAGE_OPTIONS: { id: RevenueStageFilter; name: string }[] = [
+  { id: 'np', name: 'Not Picked ₹ (NP)' },
+  { id: 'st', name: 'Started ₹ (St)' },
+  { id: 's1', name: 'Leaders Found ₹ (S1)' },
+  { id: 's2', name: 'Venue Found ₹ (S2)' },
+  { id: 's3', name: 'Launch Ready ₹ (S3)' },
+  { id: 's4', name: 'Regression ₹ (S4)' },
+  { id: 'realisation_gap', name: 'Realisation Gap (RG)' },
+  { id: 'unattributed', name: 'Unattributed Rev (UA)' },
+  { id: 'realised_actual', name: 'Realised Actual (RA)' },
+];
+
 const levelConfig: Record<HierarchyLevel, { icon: typeof Activity; color: string; label: string }> = {
   activity: { icon: Activity, color: 'purple', label: 'Activity' },
   city: { icon: Building2, color: 'blue', label: 'City' },
@@ -71,7 +99,9 @@ export function HierarchyFilterBar({
     filters.areas.length > 0 ||
     filters.clubs.length > 0 ||
     filters.teams.length > 0 ||
-    (filters.health && filters.health.length > 0);
+    (filters.health && filters.health.length > 0) ||
+    (filters.meetupStages && filters.meetupStages.length > 0) ||
+    (filters.revenueStages && filters.revenueStages.length > 0);
 
   const clearAllFilters = () => {
     onFiltersChange({
@@ -80,7 +110,9 @@ export function HierarchyFilterBar({
       areas: [],
       clubs: [],
       teams: [],
-      health: []
+      health: [],
+      meetupStages: [],
+      revenueStages: []
     });
   };
 
@@ -212,6 +244,29 @@ export function HierarchyFilterBar({
             })}
           </div>
         </div>
+
+        {/* Divider */}
+        <div className="h-6 w-px bg-gray-200" />
+
+        {/* Meetup Stage Filter */}
+        <MultiSelectDropdown<MeetupStageFilter>
+          label="Meetup Stage"
+          options={MEETUP_STAGE_OPTIONS}
+          selected={filters.meetupStages || []}
+          onChange={(val) => updateFilter('meetupStages', val)}
+          icon={<GitBranch size={14} />}
+          compact
+        />
+
+        {/* Revenue Stage Filter */}
+        <MultiSelectDropdown<RevenueStageFilter>
+          label="Revenue Stage"
+          options={REVENUE_STAGE_OPTIONS}
+          selected={filters.revenueStages || []}
+          onChange={(val) => updateFilter('revenueStages', val)}
+          icon={<IndianRupee size={14} />}
+          compact
+        />
 
         {/* Clear Filters - moved before hierarchy order */}
         {hasActiveFilters && (
@@ -405,6 +460,16 @@ export function HierarchyFilterBar({
                     </span>
                   );
                 })}
+              </span>
+            )}
+            {filters.meetupStages && filters.meetupStages.length > 0 && (
+              <span className="px-2 py-0.5 bg-indigo-50 text-indigo-700 rounded">
+                {filters.meetupStages.length} Meetup {filters.meetupStages.length === 1 ? 'Stage' : 'Stages'}
+              </span>
+            )}
+            {filters.revenueStages && filters.revenueStages.length > 0 && (
+              <span className="px-2 py-0.5 bg-emerald-50 text-emerald-700 rounded">
+                {filters.revenueStages.length} Revenue {filters.revenueStages.length === 1 ? 'Stage' : 'Stages'}
               </span>
             )}
           </div>
