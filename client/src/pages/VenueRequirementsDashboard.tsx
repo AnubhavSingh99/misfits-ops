@@ -256,6 +256,9 @@ export default function VenueRequirementsDashboard() {
   // Expanded state
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
 
+  // Ref for the scrollable table container
+  const tableContainerRef = useRef<HTMLDivElement>(null);
+
   // Create modal state
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [createContext, setCreateContext] = useState<CreateContext>({});
@@ -266,6 +269,14 @@ export default function VenueRequirementsDashboard() {
   // Delete confirmation state
   const [deleteRequirement, setDeleteRequirement] = useState<VenueRequirement | null>(null);
   const [deleting, setDeleting] = useState(false);
+
+  // Venue completion modal state (shown when marking as done)
+  const [completionModal, setCompletionModal] = useState<{
+    requirement: VenueRequirement;
+    venueName: string;
+    venueCity: string;
+    venueArea: string;
+  } | null>(null);
 
   // Info modal state
   const [showInfoModal, setShowInfoModal] = useState(false);
@@ -371,8 +382,10 @@ export default function VenueRequirementsDashboard() {
     });
   };
 
-  // Expand all
+  // Expand all - preserve scroll position
   const expandAll = () => {
+    const containerScrollTop = tableContainerRef.current?.scrollTop || 0;
+    const windowScrollY = window.scrollY;
     const allIds = new Set<string>();
     const collect = (nodes: HierarchyNode[]) => {
       nodes.forEach(n => {
@@ -382,20 +395,41 @@ export default function VenueRequirementsDashboard() {
     };
     collect(hierarchy);
     setExpandedNodes(allIds);
+    // Restore scroll position after render
+    requestAnimationFrame(() => {
+      if (tableContainerRef.current) {
+        tableContainerRef.current.scrollTop = containerScrollTop;
+      }
+      window.scrollTo(0, windowScrollY);
+    });
   };
 
-  // Collapse all
+  // Collapse all - preserve scroll position
   const collapseAll = () => {
+    const containerScrollTop = tableContainerRef.current?.scrollTop || 0;
+    const windowScrollY = window.scrollY;
     setExpandedNodes(new Set());
+    requestAnimationFrame(() => {
+      if (tableContainerRef.current) {
+        tableContainerRef.current.scrollTop = containerScrollTop;
+      }
+      window.scrollTo(0, windowScrollY);
+    });
   };
 
   // Update requirement status
-  const updateRequirementStatus = async (id: number, status: VenueRequirementStatus) => {
+  const updateRequirementStatus = async (id: number, status: VenueRequirementStatus, venueInfo?: { venue_name: string; venue_city: string; venue_area: string }) => {
     try {
+      const body: any = { status };
+      if (venueInfo) {
+        body.venue_name = venueInfo.venue_name;
+        body.venue_city = venueInfo.venue_city;
+        body.venue_area = venueInfo.venue_area;
+      }
       const response = await fetch(`${API_BASE}/requirements/venues/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status })
+        body: JSON.stringify(body)
       });
       if (response.ok) {
         fetchData(true);
@@ -403,6 +437,41 @@ export default function VenueRequirementsDashboard() {
     } catch (err) {
       console.error('Failed to update status:', err);
     }
+  };
+
+  // Handle status change - intercept 'done' to show venue completion modal
+  const handleStatusChange = (req: VenueRequirement, newStatus: VenueRequirementStatus) => {
+    if (newStatus === 'done') {
+      // Show completion modal to collect venue info
+      setCompletionModal({
+        requirement: req,
+        venueName: '',
+        venueCity: req.city_name || '',
+        venueArea: req.area_name || ''
+      });
+    } else {
+      // Direct status update for other statuses
+      updateRequirementStatus(req.id, newStatus);
+    }
+  };
+
+  // Submit venue completion
+  const handleVenueCompletion = async () => {
+    if (!completionModal) return;
+    if (!completionModal.venueName.trim()) {
+      alert('Please enter the venue name');
+      return;
+    }
+    await updateRequirementStatus(
+      completionModal.requirement.id,
+      'done',
+      {
+        venue_name: completionModal.venueName,
+        venue_city: completionModal.venueCity,
+        venue_area: completionModal.venueArea
+      }
+    );
+    setCompletionModal(null);
   };
 
   // Delete requirement
@@ -737,7 +806,7 @@ export default function VenueRequirementsDashboard() {
             key={req.id}
             requirement={req}
             depth={depth + 1}
-            onStatusChange={updateRequirementStatus}
+            onStatusChange={handleStatusChange}
             onEdit={setEditingRequirement}
             onDelete={setDeleteRequirement}
           />
@@ -756,7 +825,7 @@ export default function VenueRequirementsDashboard() {
   }: {
     requirement: VenueRequirement;
     depth: number;
-    onStatusChange: (id: number, status: VenueRequirementStatus) => void;
+    onStatusChange: (req: VenueRequirement, status: VenueRequirementStatus) => void;
     onEdit: (req: VenueRequirement) => void;
     onDelete: (req: VenueRequirement) => void;
   }) => {
@@ -1025,7 +1094,7 @@ export default function VenueRequirementsDashboard() {
           <td className="py-2.5 px-4">
             <select
               value={req.status}
-              onChange={(e) => onStatusChange(req.id, e.target.value as VenueRequirementStatus)}
+              onChange={(e) => onStatusChange(req, e.target.value as VenueRequirementStatus)}
               onClick={(e) => e.stopPropagation()}
               className={`px-2.5 py-1 text-xs font-medium rounded-md border cursor-pointer
                 ${statusConfig.color.badge} focus:ring-2 focus:ring-teal-500 focus:border-teal-500`}
@@ -1873,13 +1942,15 @@ export default function VenueRequirementsDashboard() {
             {/* Expand/Collapse */}
             <div className="flex items-center gap-2">
               <button
-                onClick={expandAll}
+                onClick={(e) => { e.preventDefault(); expandAll(); }}
+                type="button"
                 className="px-3 py-1.5 text-xs font-medium text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
               >
                 Expand All
               </button>
               <button
-                onClick={collapseAll}
+                onClick={(e) => { e.preventDefault(); collapseAll(); }}
+                type="button"
                 className="px-3 py-1.5 text-xs font-medium text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
               >
                 Collapse All
@@ -1922,7 +1993,7 @@ export default function VenueRequirementsDashboard() {
                   <p className="text-xs mt-1">All requirements are completed or deprioritised</p>
                 </div>
               ) : (
-                <div className="overflow-x-auto max-h-[60vh] overflow-y-auto">
+                <div ref={tableContainerRef} className="overflow-x-auto max-h-[60vh] overflow-y-auto">
                 <table className="w-full min-w-[1200px]">
                   <thead className="sticky top-0 z-10">
                     <tr className="border-b border-gray-200 bg-gray-50 shadow-sm">
@@ -2165,6 +2236,80 @@ export default function VenueRequirementsDashboard() {
                     Delete
                   </>
                 )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Venue Completion Modal (shown when marking as done) */}
+      {completionModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/50" onClick={() => setCompletionModal(null)} />
+          <div className="relative bg-white rounded-xl shadow-2xl w-full max-w-md mx-4 overflow-hidden">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 bg-emerald-50">
+              <div>
+                <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+                  <CheckCircle size={20} className="text-emerald-600" />
+                  Complete Requirement
+                </h3>
+                <p className="text-sm text-gray-500">Enter venue details for: {completionModal.requirement.name}</p>
+              </div>
+              <button
+                onClick={() => setCompletionModal(null)}
+                className="p-1 hover:bg-emerald-100 rounded-lg transition-colors"
+              >
+                <X size={20} className="text-gray-500" />
+              </button>
+            </div>
+            <div className="px-6 py-4 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Venue Name <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={completionModal.venueName}
+                  onChange={(e) => setCompletionModal({ ...completionModal, venueName: e.target.value })}
+                  placeholder="Enter venue name"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  autoFocus
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Venue City</label>
+                <input
+                  type="text"
+                  value={completionModal.venueCity}
+                  onChange={(e) => setCompletionModal({ ...completionModal, venueCity: e.target.value })}
+                  placeholder="Enter city"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Venue Area</label>
+                <input
+                  type="text"
+                  value={completionModal.venueArea}
+                  onChange={(e) => setCompletionModal({ ...completionModal, venueArea: e.target.value })}
+                  placeholder="Enter area"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                />
+              </div>
+            </div>
+            <div className="flex gap-3 px-6 py-4 border-t border-gray-200 bg-gray-50">
+              <button
+                onClick={() => setCompletionModal(null)}
+                className="flex-1 px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleVenueCompletion}
+                className="flex-1 px-4 py-2 text-sm font-medium text-white bg-emerald-600 rounded-lg hover:bg-emerald-700 transition-colors flex items-center justify-center gap-2"
+              >
+                <CheckCircle className="h-4 w-4" />
+                Mark as Done
               </button>
             </div>
           </div>

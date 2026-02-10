@@ -1562,6 +1562,19 @@ router.put('/venues/:id', async (req: Request, res: Response) => {
       updates.push(`capacity = $${paramIndex++}`);
       params.push(data.capacity);
     }
+    // Venue completion fields (captured when marking as done)
+    if (data.venue_name !== undefined) {
+      updates.push(`venue_name = $${paramIndex++}`);
+      params.push(data.venue_name);
+    }
+    if (data.venue_city !== undefined) {
+      updates.push(`venue_city = $${paramIndex++}`);
+      params.push(data.venue_city);
+    }
+    if (data.venue_area !== undefined) {
+      updates.push(`venue_area = $${paramIndex++}`);
+      params.push(data.venue_area);
+    }
 
     updates.push(`updated_at = CURRENT_TIMESTAMP`);
 
