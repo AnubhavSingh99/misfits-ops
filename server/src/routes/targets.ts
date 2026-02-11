@@ -2628,6 +2628,83 @@ router.get('/v2/hierarchy', async (req, res) => {
       }
     ]));
 
+    // Get leader requirements aggregated by hierarchy level (activity, city, area)
+    // This captures ALL requirements including those for private clubs, matched launches,
+    // and orphaned launches that may not appear in the hierarchy tree
+    const leaderReqByLevelQuery = `
+      SELECT
+        activity_id, city_id, area_id,
+        SUM(CASE WHEN status != 'deprioritised' THEN leaders_required ELSE 0 END) as leaders_required_total,
+        COUNT(*) as total_requirements,
+        COUNT(CASE WHEN status = 'not_picked' THEN 1 END) as not_picked,
+        COUNT(CASE WHEN status = 'deprioritised' THEN 1 END) as deprioritised,
+        COUNT(CASE WHEN status = 'in_progress' THEN 1 END) as in_progress,
+        COUNT(CASE WHEN status = 'done' THEN 1 END) as done
+      FROM leader_requirements
+      WHERE activity_id IS NOT NULL
+      GROUP BY activity_id, city_id, area_id
+    `;
+    const leaderReqByLevelResult = await queryLocal(leaderReqByLevelQuery);
+    // Build lookup maps for each hierarchy level
+    const leaderReqByActivity = new Map<number, { leaders_required_total: number; total_requirements: number; not_picked: number; deprioritised: number; in_progress: number; done: number }>();
+    const leaderReqByCity = new Map<string, { leaders_required_total: number; total_requirements: number; not_picked: number; deprioritised: number; in_progress: number; done: number }>();
+    const leaderReqByArea = new Map<string, { leaders_required_total: number; total_requirements: number; not_picked: number; deprioritised: number; in_progress: number; done: number }>();
+
+    for (const r of leaderReqByLevelResult.rows) {
+      const actId = parseInt(r.activity_id) || 0;
+      const cityId = parseInt(r.city_id) || 0;
+      const areaId = parseInt(r.area_id) || 0;
+      const entry = {
+        leaders_required_total: parseInt(r.leaders_required_total) || 0,
+        total_requirements: parseInt(r.total_requirements) || 0,
+        not_picked: parseInt(r.not_picked) || 0,
+        deprioritised: parseInt(r.deprioritised) || 0,
+        in_progress: parseInt(r.in_progress) || 0,
+        done: parseInt(r.done) || 0
+      };
+
+      // Aggregate to activity level
+      const existing = leaderReqByActivity.get(actId);
+      if (existing) {
+        existing.leaders_required_total += entry.leaders_required_total;
+        existing.total_requirements += entry.total_requirements;
+        existing.not_picked += entry.not_picked;
+        existing.deprioritised += entry.deprioritised;
+        existing.in_progress += entry.in_progress;
+        existing.done += entry.done;
+      } else {
+        leaderReqByActivity.set(actId, { ...entry });
+      }
+
+      // Aggregate to city level (keyed by activity:city)
+      const cityKey = `${actId}:${cityId}`;
+      const existingCity = leaderReqByCity.get(cityKey);
+      if (existingCity) {
+        existingCity.leaders_required_total += entry.leaders_required_total;
+        existingCity.total_requirements += entry.total_requirements;
+        existingCity.not_picked += entry.not_picked;
+        existingCity.deprioritised += entry.deprioritised;
+        existingCity.in_progress += entry.in_progress;
+        existingCity.done += entry.done;
+      } else {
+        leaderReqByCity.set(cityKey, { ...entry });
+      }
+
+      // Area level (keyed by activity:city:area)
+      const areaKey = `${actId}:${cityId}:${areaId}`;
+      const existingArea = leaderReqByArea.get(areaKey);
+      if (existingArea) {
+        existingArea.leaders_required_total += entry.leaders_required_total;
+        existingArea.total_requirements += entry.total_requirements;
+        existingArea.not_picked += entry.not_picked;
+        existingArea.deprioritised += entry.deprioritised;
+        existingArea.in_progress += entry.in_progress;
+        existingArea.done += entry.done;
+      } else {
+        leaderReqByArea.set(areaKey, { ...entry });
+      }
+    }
+
     // Fetch planned launches if include_launches is true
     const includeLaunches = include_launches === 'true';
     let launchesData: any[] = [];
@@ -3500,6 +3577,43 @@ router.get('/v2/hierarchy', async (req, res) => {
       // Build and convert dynamic hierarchy
       const rootMap = buildDynamicHierarchy(processedClubs, processedLaunches, hierarchyLevels);
       hierarchy = convertDynamicHierarchyToArray(rootMap, hierarchyLevels);
+
+      // Override leader requirements with direct query data for all hierarchy nodes
+      // This ensures ALL requirements are counted, including those from private clubs,
+      // matched/deleted launches, and other entities not in the hierarchy tree
+      function overrideLeaderRequirements(nodes: any[]) {
+        for (const node of nodes) {
+          const actId = node.activity_id || 0;
+          const cityId = node.city_id || 0;
+          const areaId = node.area_id || 0;
+
+          // Determine which level of aggregation to use based on node type
+          let directReq;
+          if (node.type === 'area') {
+            directReq = leaderReqByArea.get(`${actId}:${cityId}:${areaId}`);
+          } else if (node.type === 'city') {
+            directReq = leaderReqByCity.get(`${actId}:${cityId}`);
+          } else if (node.type === 'activity') {
+            directReq = leaderReqByActivity.get(actId);
+          }
+
+          if (directReq) {
+            node.leaders_required_total = directReq.leaders_required_total;
+            node.leader_requirements_summary = {
+              total_requirements: directReq.total_requirements,
+              not_picked: directReq.not_picked,
+              deprioritised: directReq.deprioritised,
+              in_progress: directReq.in_progress,
+              done: directReq.done
+            };
+          }
+
+          if (node.children && Array.isArray(node.children)) {
+            overrideLeaderRequirements(node.children);
+          }
+        }
+      }
+      overrideLeaderRequirements(hierarchy);
 
       // Calculate overall summary
       const overallProgress = sumProgress(hierarchy.map(a => a.progress_summary));
@@ -4629,6 +4743,22 @@ router.get('/v2/hierarchy', async (req, res) => {
           delete areaNode.unique_club_ids;
           delete areaNode.rolled_up_leader_club_ids;
 
+          // Override leader requirements with direct query data
+          // This ensures ALL requirements are counted, including those from private clubs,
+          // matched/deleted launches, and other entities not in the hierarchy tree
+          const areaLeaderKey = `${areaNode.activity_id}:${areaNode.city_id}:${areaNode.area_id}`;
+          const areaLeaderReqDirect = leaderReqByArea.get(areaLeaderKey);
+          if (areaLeaderReqDirect) {
+            areaNode.leaders_required_total = areaLeaderReqDirect.leaders_required_total;
+            areaNode.leader_requirements_summary = {
+              total_requirements: areaLeaderReqDirect.total_requirements,
+              not_picked: areaLeaderReqDirect.not_picked,
+              deprioritised: areaLeaderReqDirect.deprioritised,
+              in_progress: areaLeaderReqDirect.in_progress,
+              done: areaLeaderReqDirect.done
+            };
+          }
+
           // Roll up health for area (excludes launches)
           const areaHealthRollup = rollupHealth(areaNode.children || []);
           areaNode.health_score = areaHealthRollup.health_score;
@@ -4662,6 +4792,20 @@ router.get('/v2/hierarchy', async (req, res) => {
         delete cityNode.unique_club_ids;
         delete cityNode.rolled_up_leader_club_ids;
 
+        // Override leader requirements with direct query data
+        const cityLeaderKey = `${activityNode.activity_id}:${cityNode.city_id}`;
+        const cityLeaderReqDirect = leaderReqByCity.get(cityLeaderKey);
+        if (cityLeaderReqDirect) {
+          cityNode.leaders_required_total = cityLeaderReqDirect.leaders_required_total;
+          cityNode.leader_requirements_summary = {
+            total_requirements: cityLeaderReqDirect.total_requirements,
+            not_picked: cityLeaderReqDirect.not_picked,
+            deprioritised: cityLeaderReqDirect.deprioritised,
+            in_progress: cityLeaderReqDirect.in_progress,
+            done: cityLeaderReqDirect.done
+          };
+        }
+
         // Roll up health for city (from areas)
         const cityHealthRollup = rollupHealth(areaNodes);
         cityNode.health_score = cityHealthRollup.health_score;
@@ -4694,6 +4838,19 @@ router.get('/v2/hierarchy', async (req, res) => {
       // MULTI-CITY: Clean up tracking Sets (not needed in response)
       delete activityNode.unique_club_ids;
       delete activityNode.rolled_up_leader_club_ids;
+
+      // Override leader requirements with direct query data
+      const activityLeaderReqDirect = leaderReqByActivity.get(activityNode.activity_id);
+      if (activityLeaderReqDirect) {
+        activityNode.leaders_required_total = activityLeaderReqDirect.leaders_required_total;
+        activityNode.leader_requirements_summary = {
+          total_requirements: activityLeaderReqDirect.total_requirements,
+          not_picked: activityLeaderReqDirect.not_picked,
+          deprioritised: activityLeaderReqDirect.deprioritised,
+          in_progress: activityLeaderReqDirect.in_progress,
+          done: activityLeaderReqDirect.done
+        };
+      }
 
       // Roll up health for activity (from cities)
       const activityHealthRollup = rollupHealth(cityNodes);
