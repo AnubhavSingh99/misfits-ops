@@ -1021,6 +1021,10 @@ export interface VenueRequirement extends BaseRequirement {
   // Priority fields (calculated based on age and SLA)
   age_days?: number;
   priority_level?: PriorityLevel;
+  // Venue completion info (captured when marking as done)
+  venue_name?: string;
+  venue_city?: string;
+  venue_area?: string;
 }
 
 // Request types for creating/updating requirements
@@ -1052,6 +1056,10 @@ export interface CreateRequirementRequest {
 
 export interface UpdateRequirementRequest extends Partial<CreateRequirementRequest> {
   status?: RequirementStatus | VenueRequirementStatus;
+  // Venue completion fields
+  venue_name?: string;
+  venue_city?: string;
+  venue_area?: string;
 }
 
 // Response types for requirement API

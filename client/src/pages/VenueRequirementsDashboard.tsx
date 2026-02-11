@@ -1077,12 +1077,32 @@ export default function VenueRequirementsDashboard() {
                     {req.description}
                   </span>
                 )}
+                {/* Venue info shown for done requirements */}
+                {req.status === 'done' && (req as any).venue_name && (
+                  <span className="text-xs text-emerald-600 mt-0.5 truncate flex items-center gap-1">
+                    <Building2 className="h-3 w-3 flex-shrink-0" />
+                    {(req as any).venue_name}
+                    {((req as any).venue_area || (req as any).venue_city) && (
+                      <span className="text-gray-400">
+                        ({[(req as any).venue_area, (req as any).venue_city].filter(Boolean).join(', ')})
+                      </span>
+                    )}
+                  </span>
+                )}
                 {/* Custom tooltip on hover */}
                 <div className="absolute left-0 top-full mt-1 z-50 hidden group-hover/tooltip:block">
                   <div className="bg-gray-900 text-white text-xs rounded-lg px-3 py-2 shadow-lg max-w-[300px] whitespace-normal">
                     <div className="font-medium">{displayName}</div>
                     {hasDescription && (
                       <div className="mt-1 text-gray-300 text-[11px]">{req.description}</div>
+                    )}
+                    {req.status === 'done' && (req as any).venue_name && (
+                      <div className="mt-1 text-emerald-300 text-[11px]">
+                        Venue: {(req as any).venue_name}
+                        {((req as any).venue_area || (req as any).venue_city) &&
+                          ` (${[(req as any).venue_area, (req as any).venue_city].filter(Boolean).join(', ')})`
+                        }
+                      </div>
                     )}
                   </div>
                 </div>
