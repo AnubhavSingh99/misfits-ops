@@ -35,7 +35,7 @@ import { initializeDatabase, getLocalPool } from './services/database';
 import { initializeRedis } from './services/redis';
 import { initializeDimensions } from './services/dimensionSync';
 import { initCSPolling, startPolling } from './services/csPollingService';
-import { initSlackService, checkSLABreaches } from './services/slackService';
+import { initSlackService, checkSLABreaches, checkStaleTickets } from './services/slackService';
 import { logger } from './utils/logger';
 import { errorHandler } from './middleware/errorHandler';
 
@@ -208,7 +208,7 @@ async function startServer() {
       initSlackService(localPool);
       logger.info('Slack service initialized');
 
-      // Check SLA breaches every hour (production only)
+      // Check SLA breaches and stale tickets every hour (production only)
       if (process.env.NODE_ENV === 'production') {
         slaInterval = setInterval(async () => {
           try {
@@ -216,10 +216,25 @@ async function startServer() {
           } catch (error) {
             logger.error('SLA breach check failed:', error);
           }
+          try {
+            await checkStaleTickets();
+          } catch (error) {
+            logger.error('Stale tickets check failed:', error);
+          }
         }, 60 * 60 * 1000); // 1 hour
-        logger.info('SLA breach check scheduled (every 1 hour)');
+        logger.info('SLA breach and stale tickets check scheduled (every 1 hour)');
+
+        // Also run stale tickets check once on startup
+        setTimeout(async () => {
+          try {
+            const result = await checkStaleTickets();
+            logger.info(`Startup stale tickets check: ${result.found} found, sent: ${result.sent}`);
+          } catch (error) {
+            logger.error('Startup stale tickets check failed:', error);
+          }
+        }, 10000); // 10 seconds after startup
       } else {
-        logger.info('SLA breach check disabled (non-production environment)');
+        logger.info('SLA breach and stale tickets check disabled (non-production environment)');
       }
     } catch (dbError) {
       logger.warn('Database initialization failed, continuing without database:', dbError.message);
