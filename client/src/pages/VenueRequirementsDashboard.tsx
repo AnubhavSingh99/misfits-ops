@@ -127,8 +127,8 @@ const STATUS_CONFIG = {
     }
   },
   leader_approval: {
-    label: 'Leader Approval',
-    shortLabel: 'LA',
+    label: 'Leader Approval Pending',
+    shortLabel: 'LAP',
     icon: UserCheck,
     color: {
       bg: 'bg-purple-100',
@@ -233,7 +233,11 @@ export default function VenueRequirementsDashboard() {
     clubs: [],
     teams: []
   });
-  const [statusFilter, setStatusFilter] = useState<VenueRequirementStatus | null>(null);
+  const [activeStatusFilters, setActiveStatusFilters] = useState<string[]>(
+    ['not_picked', 'picked', 'venue_aligned', 'leader_approval']
+  );
+  const [showDone, setShowDone] = useState(false);
+  const [showDeprioritised, setShowDeprioritised] = useState(false);
 
   // Filter options from API
   const [filterOptions, setFilterOptions] = useState<{
@@ -343,7 +347,6 @@ export default function VenueRequirementsDashboard() {
       if (filters.areas.length > 0) params.append('area_ids', filters.areas.join(','));
       if (filters.clubs.length > 0) params.append('club_ids', filters.clubs.join(','));
       if (filters.teams.length > 0) params.append('teams', filters.teams.join(','));
-      if (statusFilter) params.append('status', statusFilter);
 
       // Pass hierarchy order (only enabled levels)
       const enabledOrder = hierarchyLevels.filter(l => enabledLevels.has(l));
@@ -363,7 +366,7 @@ export default function VenueRequirementsDashboard() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [filters, statusFilter, hierarchyLevels, enabledLevels]);
+  }, [filters, hierarchyLevels, enabledLevels]);
 
   useEffect(() => {
     fetchData();
@@ -582,14 +585,7 @@ export default function VenueRequirementsDashboard() {
     return context;
   };
 
-  // Completed section collapse state
-  const [completedSectionExpanded, setCompletedSectionExpanded] = useState(false);
   const [requirementsSectionExpanded, setRequirementsSectionExpanded] = useState(true); // Default expanded
-
-  // Status categories for splitting the view
-  const ACTIVE_STATUSES: VenueRequirementStatus[] = ['not_picked', 'picked', 'venue_aligned', 'leader_approval'];
-  const DONE_STATUSES: VenueRequirementStatus[] = ['done'];
-  const DEPRIORITISED_STATUSES: VenueRequirementStatus[] = ['deprioritised'];
 
   // Helper function to filter hierarchy by status
   const filterHierarchyByStatus = useCallback((
@@ -622,32 +618,18 @@ export default function VenueRequirementsDashboard() {
     }).filter(node => node.count > 0); // Remove empty nodes
   }, []);
 
-  // Filtered hierarchies for Active, Done, and Deprioritised sections
-  const activeHierarchy = useMemo(() =>
-    filterHierarchyByStatus(hierarchy, ACTIVE_STATUSES),
-    [hierarchy, filterHierarchyByStatus]
-  );
-
-  const doneHierarchy = useMemo(() =>
-    filterHierarchyByStatus(hierarchy, DONE_STATUSES),
-    [hierarchy, filterHierarchyByStatus]
-  );
-
-  const deprioritisedHierarchy = useMemo(() =>
-    filterHierarchyByStatus(hierarchy, DEPRIORITISED_STATUSES),
-    [hierarchy, filterHierarchyByStatus]
-  );
+  // Single displayed hierarchy based on active filters + Done/Deprioritised toggles
+  const displayedHierarchy = useMemo(() => {
+    const visibleStatuses: VenueRequirementStatus[] = [
+      ...(activeStatusFilters as VenueRequirementStatus[]),
+      ...(showDone ? ['done' as VenueRequirementStatus] : []),
+      ...(showDeprioritised ? ['deprioritised' as VenueRequirementStatus] : [])
+    ];
+    return filterHierarchyByStatus(hierarchy, visibleStatuses);
+  }, [hierarchy, activeStatusFilters, showDone, showDeprioritised, filterHierarchyByStatus]);
 
   const doneCount = useMemo(() => summary?.done || 0, [summary]);
   const deprioritisedCount = useMemo(() => summary?.deprioritised || 0, [summary]);
-  const completedCount = useMemo(() => doneCount + deprioritisedCount, [doneCount, deprioritisedCount]);
-
-  // Auto-expand completed section when filtering to done or deprioritised
-  useEffect(() => {
-    if (statusFilter === 'done' || statusFilter === 'deprioritised') {
-      setCompletedSectionExpanded(true);
-    }
-  }, [statusFilter]);
 
   // Status badge component
   const StatusBadge = ({ status, count }: { status: VenueRequirementStatus; count: number }) => {
@@ -1642,7 +1624,7 @@ export default function VenueRequirementsDashboard() {
               color="cyan"
             />
             <SummaryTile
-              label="Leader Approval"
+              label="Leader Approval Pending"
               count={summary.leader_approval}
               icon={UserCheck}
               color="purple"
@@ -1771,50 +1753,59 @@ export default function VenueRequirementsDashboard() {
 
             <div className="h-6 w-px bg-gray-200" />
 
-            {/* Status Filter with Tooltips */}
-            <div className="flex items-center gap-1">
-              {(Object.keys(STATUS_CONFIG) as VenueRequirementStatus[]).map(status => {
-                const config = STATUS_CONFIG[status];
-                const isActive = statusFilter === status;
-                const tooltipText: Record<VenueRequirementStatus, string> = {
-                  not_picked: 'Not Picked — New, not yet assigned',
-                  picked: 'Picked — Being worked on',
-                  venue_aligned: 'Venue Aligned — Venue found, pending confirmation',
-                  leader_approval: 'Leader Approval — Awaiting sign-off',
-                  done: 'Done — Completed successfully',
-                  deprioritised: 'Deprioritised — On hold'
-                };
-                return (
-                  <div key={status} className="relative group">
-                    <button
-                      onClick={() => setStatusFilter(isActive ? null : status)}
-                      className={`px-2.5 py-1 text-xs font-medium rounded-lg transition-all ${
-                        isActive
-                          ? `${config.color.bg} ${config.color.text}`
-                          : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
-                      }`}
-                    >
-                      {config.shortLabel}
-                    </button>
-                    {/* Tooltip */}
-                    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2.5 py-1.5 bg-gray-900 text-white text-xs rounded-lg whitespace-nowrap opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-150 z-50 pointer-events-none">
-                      {tooltipText[status]}
-                      <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-gray-900" />
-                    </div>
-                  </div>
-                );
-              })}
+            {/* Status Filter - Multi-select dropdown */}
+            <div className="flex items-center gap-2">
+              <MultiSelectDropdown<string>
+                label="Status"
+                options={[
+                  { id: 'not_picked', name: 'Not Picked (NP)' },
+                  { id: 'picked', name: 'Picked (PK)' },
+                  { id: 'venue_aligned', name: 'Venue Aligned (VA)' },
+                  { id: 'leader_approval', name: 'Leader Approval Pending (LAP)' }
+                ]}
+                selected={activeStatusFilters}
+                onChange={(val) => setActiveStatusFilters(val)}
+                icon={<Clock size={14} />}
+                compact
+              />
+
+              {/* Done toggle button */}
+              <button
+                onClick={() => setShowDone(prev => !prev)}
+                className={`px-2.5 py-1 text-xs font-medium rounded-lg border transition-all ${
+                  showDone
+                    ? 'bg-emerald-50 text-emerald-700 border-emerald-300'
+                    : 'bg-white text-gray-500 border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                }`}
+              >
+                Done ({doneCount})
+              </button>
+
+              {/* Deprioritised toggle button */}
+              <button
+                onClick={() => setShowDeprioritised(prev => !prev)}
+                className={`px-2.5 py-1 text-xs font-medium rounded-lg border transition-all ${
+                  showDeprioritised
+                    ? 'bg-amber-50 text-amber-700 border-amber-300'
+                    : 'bg-white text-gray-500 border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                }`}
+              >
+                Deprioritised ({deprioritisedCount})
+              </button>
             </div>
 
             {/* Clear Filters */}
             {(filters.activities.length > 0 || filters.cities.length > 0 || filters.areas.length > 0 ||
-              filters.clubs.length > 0 || filters.teams.length > 0 || statusFilter) && (
+              filters.clubs.length > 0 || filters.teams.length > 0 ||
+              activeStatusFilters.length !== 4 || showDone || showDeprioritised) && (
               <>
                 <div className="h-6 w-px bg-gray-200" />
                 <button
                   onClick={() => {
                     setFilters({ activities: [], cities: [], areas: [], clubs: [], teams: [] });
-                    setStatusFilter(null);
+                    setActiveStatusFilters(['not_picked', 'picked', 'venue_aligned', 'leader_approval']);
+                    setShowDone(false);
+                    setShowDeprioritised(false);
                   }}
                   className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-500 hover:text-gray-700 hover:bg-gray-50 rounded-lg transition-colors"
                 >
@@ -1979,7 +1970,7 @@ export default function VenueRequirementsDashboard() {
           </div>
         </div>
 
-        {/* Active Requirements Section - Collapsible */}
+        {/* Requirements Section - Collapsible */}
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm">
           <button
             onClick={() => setRequirementsSectionExpanded(!requirementsSectionExpanded)}
@@ -1988,7 +1979,7 @@ export default function VenueRequirementsDashboard() {
             <div className="flex items-center gap-2">
               <MapPin className="h-5 w-5 text-teal-600" />
               <span className="font-medium text-gray-700">
-                Requirements ({summary?.total ? summary.total - (summary.done || 0) - (summary.deprioritised || 0) : 0})
+                Requirements ({displayedHierarchy.reduce((sum, n) => sum + n.count, 0)})
               </span>
             </div>
             {requirementsSectionExpanded ? <ChevronUp size={20} className="text-gray-400" /> : <ChevronDown size={20} className="text-gray-400" />}
@@ -2006,11 +1997,11 @@ export default function VenueRequirementsDashboard() {
                   <p className="text-lg font-medium">No venue requirements found</p>
                   <p className="text-sm mt-1">Create your first requirement to get started</p>
                 </div>
-              ) : activeHierarchy.length === 0 ? (
+              ) : displayedHierarchy.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-12 text-gray-400">
                   <CheckCircle className="h-10 w-10 mb-3 opacity-40" />
-                  <p className="text-sm font-medium">No active requirements</p>
-                  <p className="text-xs mt-1">All requirements are completed or deprioritised</p>
+                  <p className="text-sm font-medium">No requirements match current filters</p>
+                  <p className="text-xs mt-1">Try adjusting your status filters</p>
                 </div>
               ) : (
                 <div ref={tableContainerRef} className="overflow-x-auto max-h-[60vh] overflow-y-auto">
@@ -2050,8 +2041,8 @@ export default function VenueRequirementsDashboard() {
                     </tr>
                   </thead>
                   <tbody>
-                    {activeHierarchy.map(node => (
-                      <HierarchyRow key={`active-${node.id}`} node={node} sectionPrefix="active" />
+                    {displayedHierarchy.map(node => (
+                      <HierarchyRow key={node.id} node={node} />
                     ))}
                   </tbody>
                 </table>
@@ -2061,137 +2052,7 @@ export default function VenueRequirementsDashboard() {
           )}
         </div>
 
-        {/* Done & Deprioritised Section - Collapsible */}
-        {!loading && completedCount > 0 && (
-          <div className="mt-6 bg-white rounded-xl border border-gray-200 shadow-sm">
-            <button
-              onClick={() => setCompletedSectionExpanded(!completedSectionExpanded)}
-              className="w-full px-4 py-3 flex items-center justify-between bg-gray-50/80 hover:bg-gray-100 transition-colors"
-            >
-              <div className="flex items-center gap-2">
-                <CheckCircle className="h-5 w-5 text-emerald-500" />
-                <span className="font-medium text-gray-700">
-                  Done & Deprioritised ({completedCount})
-                </span>
-              </div>
-              {completedSectionExpanded ? <ChevronUp size={20} className="text-gray-400" /> : <ChevronDown size={20} className="text-gray-400" />}
-            </button>
-
-            {completedSectionExpanded && (
-              <div className="divide-y divide-gray-200">
-                {/* Done Sub-section */}
-                {doneCount > 0 && (
-                  <div>
-                    <div className="px-4 py-2 bg-emerald-50/50 border-b border-emerald-100">
-                      <div className="flex items-center gap-2">
-                        <CheckCircle className="h-4 w-4 text-emerald-500" />
-                        <span className="text-sm font-medium text-emerald-700">Done ({doneCount})</span>
-                      </div>
-                    </div>
-                    <div className="overflow-x-auto max-h-[40vh] overflow-y-auto"><table className="w-full min-w-[1200px]">
-                      <thead className="sticky top-0 z-10">
-                        <tr className="border-b border-gray-200 bg-gray-50 shadow-sm">
-                          <th className="text-left py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[200px]">
-                            Hierarchy
-                          </th>
-                          <th className="text-left py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[110px]">
-                            Status
-                          </th>
-                          <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[90px]">
-                            Day Type
-                          </th>
-                          <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[90px]">
-                            Capacity
-                          </th>
-                          <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[90px]">
-                            Time
-                          </th>
-                          <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[110px]">
-                            Amenities
-                          </th>
-                          <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[70px]">
-                            Age
-                          </th>
-                          <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[90px]">
-                            Completed
-                          </th>
-                          <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[60px]">
-                            TAT
-                          </th>
-                          <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[120px]">
-                            Actions
-                          </th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {doneHierarchy.map(node => (
-                          <HierarchyRow key={`done-${node.id}`} node={node} sectionPrefix="done" />
-                        ))}
-                      </tbody>
-                    </table>
-                    </div>
-                  </div>
-                )}
-
-                {/* Deprioritised Sub-section */}
-                {deprioritisedCount > 0 && (
-                  <div>
-                    <div className="px-4 py-2 bg-gray-100/50 border-b border-gray-200">
-                      <div className="flex items-center gap-2">
-                        <Pause className="h-4 w-4 text-gray-500" />
-                        <span className="text-sm font-medium text-gray-600">Deprioritised ({deprioritisedCount})</span>
-                      </div>
-                    </div>
-                    <div className="overflow-x-auto max-h-[40vh] overflow-y-auto"><table className="w-full min-w-[1200px]">
-                      <thead className="sticky top-0 z-10">
-                        <tr className="border-b border-gray-200 bg-gray-50 shadow-sm">
-                          <th className="text-left py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[200px]">
-                            Hierarchy
-                          </th>
-                          <th className="text-left py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[110px]">
-                            Status
-                          </th>
-                          <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[90px]">
-                            Day Type
-                          </th>
-                          <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[90px]">
-                            Capacity
-                          </th>
-                          <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[90px]">
-                            Time
-                          </th>
-                          <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[110px]">
-                            Amenities
-                          </th>
-                          <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[70px]">
-                            Age
-                          </th>
-                          <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[90px]">
-                            Completed
-                          </th>
-                          <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[60px]">
-                            TAT
-                          </th>
-                          <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[120px]">
-                            Actions
-                          </th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {deprioritisedHierarchy.map(node => (
-                          <HierarchyRow key={`deprioritised-${node.id}`} node={node} sectionPrefix="deprioritised" />
-                        ))}
-                      </tbody>
-                    </table>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Venue Repository - Collapsible Section (below Done & Deprioritised) */}
+        {/* Venue Repository - Collapsible Section */}
         <div className="mt-6">
           <VenueRepository />
         </div>
@@ -2397,9 +2258,9 @@ export default function VenueRequirementsDashboard() {
                     </div>
                   </div>
                   <div className="flex items-center gap-3">
-                    <span className="inline-flex items-center justify-center w-8 h-6 rounded text-xs font-semibold bg-purple-100 text-purple-700">LA</span>
+                    <span className="inline-flex items-center justify-center w-8 h-6 rounded text-xs font-semibold bg-purple-100 text-purple-700">LAP</span>
                     <div>
-                      <span className="font-medium text-gray-900">Leader Approval</span>
+                      <span className="font-medium text-gray-900">Leader Approval Pending</span>
                       <span className="text-gray-500 text-sm ml-2">— Awaiting leader sign-off before completion</span>
                     </div>
                   </div>

@@ -1,8 +1,58 @@
 import { Router, Request, Response } from 'express';
+import { exec } from 'child_process';
+import { promisify } from 'util';
 import { logger } from '../utils/logger';
 import { queryLocal, queryProduction } from '../services/database';
 
+const execAsync = promisify(exec);
+
 const router = Router();
+
+// URL validation helper - must be Google Maps, not share.google
+function validateMapsUrl(url: string): { valid: boolean; error?: string } {
+  if (!url) return { valid: true }; // URL is optional
+  const validPatterns = [
+    'maps.google.com',
+    'maps.app.goo.gl',
+    'www.google.com/maps',
+    'google.com/maps',
+    'goo.gl/maps'
+  ];
+  const isValid = validPatterns.some(pattern => url.includes(pattern));
+  if (!isValid) {
+    if (url.includes('share.google')) {
+      return { valid: false, error: 'Please use a Google Maps URL, not a share.google link. Open the link in Maps first and copy the URL from the address bar.' };
+    }
+    return { valid: false, error: 'URL must be a Google Maps link (maps.google.com or maps.app.goo.gl)' };
+  }
+  return { valid: true };
+}
+
+// Check URL duplicate across ops DB and production location table
+async function checkUrlDuplicate(url: string, excludeId?: number): Promise<{ duplicate: boolean; source?: string; existingName?: string }> {
+  if (!url) return { duplicate: false };
+
+  // Check ops DB
+  const opsQuery = excludeId
+    ? 'SELECT id, name FROM venue_repository WHERE url = $1 AND id != $2 LIMIT 1'
+    : 'SELECT id, name FROM venue_repository WHERE url = $1 LIMIT 1';
+  const opsParams = excludeId ? [url, excludeId] : [url];
+  const opsResult = await queryLocal(opsQuery, opsParams);
+  if (opsResult.rows.length > 0) {
+    return { duplicate: true, source: 'Venue Repository', existingName: opsResult.rows[0].name };
+  }
+
+  // Check production location table
+  const prodResult = await queryProduction(
+    'SELECT id, name FROM location WHERE url = $1 AND is_deleted = false LIMIT 1',
+    [url]
+  );
+  if (prodResult.rows.length > 0) {
+    return { duplicate: true, source: 'VMS (Production)', existingName: prodResult.rows[0].name };
+  }
+
+  return { duplicate: false };
+}
 
 // Status flow options
 const VALID_STATUSES = ['new', 'contacted', 'interested', 'negotiating', 'rejected', 'onboarded'];
@@ -182,7 +232,7 @@ async function buildFilterClauses(query: Record<string, any>, startIndex: number
   const params: any[] = [];
   let idx = startIndex;
 
-  const { status, area_id, search, city_names, area_names, activities, capacity_categories } = query;
+  const { status, area_id, search, city_names, area_names, activities, capacity_categories, not_transferred } = query;
 
   if (status) {
     clauses.push(`vr.status = $${idx++}`);
@@ -251,6 +301,11 @@ async function buildFilterClauses(query: Record<string, any>, startIndex: number
     const capList = (capacity_categories as string).split(',');
     clauses.push(`vr.venue_info->>'capacity_category' = ANY($${idx++})`);
     params.push(capList);
+  }
+
+  if (not_transferred === 'true') {
+    clauses.push(`(vr.transferred_to_vms IS NULL OR vr.transferred_to_vms = false)`);
+    clauses.push(`vr.status = 'onboarded'`);
   }
 
   return { clauses, params, nextIndex: idx };
@@ -389,6 +444,22 @@ router.post('/', async (req: Request, res: Response) => {
       return res.status(400).json({ error: `Invalid status. Must be one of: ${VALID_STATUSES.join(', ')}` });
     }
 
+    // Validate URL format (must be Google Maps, not share.google)
+    if (url) {
+      const urlValidation = validateMapsUrl(url);
+      if (!urlValidation.valid) {
+        return res.status(400).json({ error: urlValidation.error });
+      }
+
+      // Check for duplicate URL
+      const dupCheck = await checkUrlDuplicate(url);
+      if (dupCheck.duplicate) {
+        return res.status(400).json({
+          error: `This URL already exists in ${dupCheck.source} (venue: "${dupCheck.existingName}"). Each venue must have a unique Google Maps URL.`
+        });
+      }
+    }
+
     const query = `
       INSERT INTO venue_repository (
         name, url, area_id, custom_city, custom_area, venue_info, status,
@@ -443,11 +514,28 @@ router.patch('/:id', async (req: Request, res: Response) => {
       return res.status(400).json({ error: `Invalid status. Must be one of: ${VALID_STATUSES.join(', ')}` });
     }
 
+    // Validate URL format if being updated
+    if (updates.url) {
+      const urlValidation = validateMapsUrl(updates.url);
+      if (!urlValidation.valid) {
+        return res.status(400).json({ error: urlValidation.error });
+      }
+
+      // Check for duplicate URL (exclude current venue)
+      const dupCheck = await checkUrlDuplicate(updates.url, parseInt(id));
+      if (dupCheck.duplicate) {
+        return res.status(400).json({
+          error: `This URL already exists in ${dupCheck.source} (venue: "${dupCheck.existingName}"). Each venue must have a unique Google Maps URL.`
+        });
+      }
+    }
+
     // Build update query dynamically
     const allowedFields = [
       'name', 'url', 'area_id', 'custom_city', 'custom_area', 'venue_info', 'status',
       'contact_name', 'contact_phone', 'contacted_by', 'closed_by',
-      'rejection_reason', 'notes', 'vms_location_id'
+      'rejection_reason', 'notes', 'vms_location_id',
+      'transferred_to_vms', 'transferred_at', 'venue_manager_phone'
     ];
 
     const setClauses: string[] = [];
@@ -790,6 +878,208 @@ router.get('/stats/summary', async (req: Request, res: Response) => {
   } catch (error) {
     logger.error('Error fetching venue repository stats:', error);
     res.status(500).json({ error: 'Failed to fetch stats' });
+  }
+});
+
+// ============================================
+// VMS TRANSFER
+// ============================================
+
+/**
+ * POST /api/venue-repository/:id/transfer-to-vms
+ * Transfer a venue to VMS (production location table) via gRPC
+ */
+router.post('/:id/transfer-to-vms', async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { venue_manager_phone } = req.body;
+
+    // Get venue from ops DB
+    const venueResult = await queryLocal('SELECT * FROM venue_repository WHERE id = $1', [id]);
+    if (venueResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Venue not found' });
+    }
+
+    const venue = venueResult.rows[0];
+
+    if (venue.status !== 'onboarded') {
+      return res.status(400).json({ error: 'Venue must be in onboarded status to transfer to VMS' });
+    }
+
+    if (venue.transferred_to_vms) {
+      return res.status(400).json({ error: 'Venue has already been transferred to VMS' });
+    }
+
+    if (!venue.area_id) {
+      return res.status(400).json({ error: 'Venue must have an area_id to transfer to VMS' });
+    }
+
+    // Parse venue_info
+    const venueInfo = typeof venue.venue_info === 'string' ? JSON.parse(venue.venue_info) : (venue.venue_info || {});
+
+    // Build gRPC CreateVenue request
+    const grpcRequest: any = {
+      name: venue.name,
+      area_id: venue.area_id,
+      venue_info: {}
+    };
+
+    if (venue.url) grpcRequest.url = venue.url;
+
+    // Map venue_info fields
+    if (venueInfo.venue_category) grpcRequest.venue_info.venue_category = venueInfo.venue_category;
+    if (venueInfo.seating_category) grpcRequest.venue_info.seating_category = venueInfo.seating_category;
+    if (venueInfo.capacity_category) grpcRequest.venue_info.capacity_category = venueInfo.capacity_category;
+    if (venueInfo.amenities && venueInfo.amenities.length > 0) grpcRequest.venue_info.amenities = venueInfo.amenities;
+    if (venueInfo.full_address) grpcRequest.venue_info.full_address = venueInfo.full_address;
+    if (venueInfo.chargeable !== undefined) grpcRequest.venue_info.chargeable = venueInfo.chargeable;
+    if (venueInfo.reason_for_charge) grpcRequest.venue_info.reason_for_charge = venueInfo.reason_for_charge;
+    if (venueInfo.preferred_schedules && venueInfo.preferred_schedules.length > 0) {
+      grpcRequest.venue_info.preferred_schedules = venueInfo.preferred_schedules;
+    }
+
+    // Call gRPC CreateVenue
+    const grpcData = JSON.stringify(grpcRequest);
+    const escapedData = grpcData.replace(/'/g, "'\\''");
+    const grpcCmd = `grpcurl -plaintext -d '${escapedData}' 15.207.255.212:8001 LocationService.CreateVenue`;
+
+    logger.info(`Calling gRPC CreateVenue for venue ${id}: ${venue.name}`);
+
+    let grpcOutput: string;
+    try {
+      const { stdout, stderr } = await execAsync(grpcCmd, { timeout: 30000 });
+      grpcOutput = stdout;
+      if (stderr) logger.warn(`gRPC stderr: ${stderr}`);
+    } catch (grpcError: any) {
+      logger.error('gRPC CreateVenue failed:', grpcError);
+      return res.status(500).json({
+        error: 'Failed to create venue in VMS',
+        details: grpcError.stderr || grpcError.message
+      });
+    }
+
+    logger.info(`gRPC CreateVenue response: ${grpcOutput}`);
+
+    // Query production DB for the newly created venue (match by name + area_id)
+    let vmsLocationId: number | null = null;
+    try {
+      const findQuery = `
+        SELECT id FROM location
+        WHERE name = $1 AND area_id = $2 AND is_deleted = false
+        ORDER BY id DESC LIMIT 1
+      `;
+      const findResult = await queryProduction(findQuery, [venue.name, venue.area_id]);
+      if (findResult.rows.length > 0) {
+        vmsLocationId = parseInt(findResult.rows[0].id);
+      }
+    } catch (findError) {
+      logger.warn('Could not find newly created venue in VMS:', findError);
+    }
+
+    // Update ops DB with transfer info
+    const updateQuery = `
+      UPDATE venue_repository
+      SET transferred_to_vms = true,
+          transferred_at = NOW(),
+          venue_manager_phone = $1
+          ${vmsLocationId ? ', vms_location_id = ' + vmsLocationId : ''}
+      WHERE id = $2
+      RETURNING *
+    `;
+    const updateResult = await queryLocal(updateQuery, [venue_manager_phone || null, id]);
+
+    // If venue_manager_phone is provided, assign venue manager
+    if (venue_manager_phone && vmsLocationId) {
+      try {
+        // Step 1: Mark user as venue manager
+        const markCmd = `grpcurl -plaintext -d '{"phone_number": "${venue_manager_phone}"}' 15.207.255.212:8001 LocationService.MarkUserAsVenueManager`;
+        await execAsync(markCmd, { timeout: 15000 });
+        logger.info(`Marked user ${venue_manager_phone} as venue manager`);
+
+        // Step 2: Add venue manager to venue
+        const addCmd = `grpcurl -plaintext -d '{"venue_id": ${vmsLocationId}, "phone_number": "${venue_manager_phone}"}' 15.207.255.212:8001 LocationService.AddVenueManager`;
+        await execAsync(addCmd, { timeout: 15000 });
+        logger.info(`Added venue manager ${venue_manager_phone} to venue ${vmsLocationId}`);
+      } catch (managerError: any) {
+        logger.warn('Failed to assign venue manager (venue was still created):', managerError.message);
+      }
+    }
+
+    logger.info(`Transferred venue ${id} to VMS. VMS Location ID: ${vmsLocationId || 'unknown'}`);
+
+    res.json({
+      success: true,
+      venue: updateResult.rows[0],
+      vms_location_id: vmsLocationId,
+      message: `Venue transferred to VMS${vmsLocationId ? ` (ID: ${vmsLocationId})` : ''}`
+    });
+  } catch (error) {
+    logger.error('Error transferring venue to VMS:', error);
+    res.status(500).json({ error: 'Failed to transfer venue to VMS' });
+  }
+});
+
+/**
+ * GET /api/venue-repository/vms-sync
+ * Reverse sync: import venues from VMS that aren't in ops DB
+ */
+router.get('/vms-sync', async (req: Request, res: Response) => {
+  try {
+    // Get all venues from production location table (with venue_info)
+    const prodQuery = `
+      SELECT l.id, l.name, l.url, l.area_id, l.venue_info,
+             a.name as area_name, c.name as city_name
+      FROM location l
+      JOIN area a ON l.area_id = a.id
+      JOIN city c ON a.city_id = c.id
+      WHERE l.is_deleted = false
+        AND l.venue_info IS NOT NULL
+        AND l.venue_info != '{}'::jsonb
+    `;
+    const prodResult = await queryProduction(prodQuery);
+
+    // Get all vms_location_id values from ops DB
+    const opsResult = await queryLocal(
+      'SELECT vms_location_id FROM venue_repository WHERE vms_location_id IS NOT NULL'
+    );
+    const existingVmsIds = new Set(opsResult.rows.map(r => parseInt(r.vms_location_id)));
+
+    // Find venues in production that have no matching entry in ops DB
+    const missingVenues = prodResult.rows.filter(v => !existingVmsIds.has(parseInt(v.id)));
+
+    let syncedCount = 0;
+    for (const venue of missingVenues) {
+      try {
+        await queryLocal(`
+          INSERT INTO venue_repository (
+            name, url, area_id, venue_info, status,
+            transferred_to_vms, vms_location_id, transferred_at
+          ) VALUES ($1, $2, $3, $4, 'onboarded', true, $5, NOW())
+        `, [
+          venue.name,
+          venue.url || null,
+          venue.area_id,
+          JSON.stringify(venue.venue_info || {}),
+          parseInt(venue.id)
+        ]);
+        syncedCount++;
+      } catch (insertError) {
+        logger.warn(`Failed to sync venue ${venue.id} (${venue.name}):`, insertError);
+      }
+    }
+
+    logger.info(`VMS sync completed: ${syncedCount} venues imported from ${missingVenues.length} missing`);
+
+    res.json({
+      success: true,
+      synced_count: syncedCount,
+      total_in_vms: prodResult.rows.length,
+      already_tracked: existingVmsIds.size,
+      message: `Synced ${syncedCount} venues from VMS`
+    });
+  } catch (error) {
+    logger.error('Error syncing from VMS:', error);
+    res.status(500).json({ error: 'Failed to sync from VMS' });
   }
 });
 
