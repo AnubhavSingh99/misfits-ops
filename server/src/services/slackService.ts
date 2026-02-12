@@ -578,6 +578,69 @@ export async function checkSLABreaches(): Promise<{ checked: number; notified: n
 }
 
 /**
+ * Check for open tickets older than 6 days and DM Saurabh
+ * Runs alongside the SLA breach check on the same schedule
+ */
+export async function checkStaleTickets(): Promise<{ found: number; sent: boolean }> {
+  try {
+    const result = await pool.query(`
+      SELECT ticket_number, status, stakeholder_type, subject, sla_hours, created_at,
+        EXTRACT(DAY FROM NOW() - created_at)::int as age_days
+      FROM cs_queries
+      WHERE status NOT IN ('resolved', 'resolution_communicated')
+        AND created_at < NOW() - INTERVAL '6 days'
+      ORDER BY created_at
+    `);
+
+    if (result.rows.length === 0) {
+      logger.info('Stale ticket check: No open tickets older than 6 days');
+      return { found: 0, sent: false };
+    }
+
+    // Build summary message
+    const ticketLines = result.rows.map((t: any) => {
+      const typeLabel = t.stakeholder_type === 'leader' ? 'Leader' : t.stakeholder_type === 'venue' ? 'Venue' : 'User';
+      const subject = (t.subject || '').substring(0, 60).trim();
+      return `• *${t.ticket_number}* (${typeLabel}) — ${t.age_days}d old — _${subject}${(t.subject || '').length > 60 ? '...' : ''}_`;
+    }).join('\n');
+
+    const text = `🔴 *${result.rows.length} open ticket${result.rows.length > 1 ? 's' : ''} older than 6 days:*\n\n${ticketLines}\n\nPlease review and close or escalate.`;
+
+    // DM Saurabh (U0979N8FA10)
+    const token = getSlackBotToken();
+    if (!token) {
+      logger.warn('Stale ticket check: No Slack token, skipping DM');
+      return { found: result.rows.length, sent: false };
+    }
+
+    const response = await fetch(`${SLACK_API_URL}/chat.postMessage`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        channel: 'U0979N8FA10', // Saurabh Sharma - DM
+        text,
+        unfurl_links: false
+      })
+    });
+
+    const data = await response.json();
+    if (data.ok) {
+      logger.info(`Stale ticket check: Sent ${result.rows.length} tickets to Saurabh`);
+      return { found: result.rows.length, sent: true };
+    } else {
+      logger.error(`Stale ticket DM failed: ${data.error}`);
+      return { found: result.rows.length, sent: false };
+    }
+  } catch (error) {
+    logger.error('Error checking stale tickets:', error);
+    return { found: 0, sent: false };
+  }
+}
+
+/**
  * Slack user IDs for leader requirement closure notifications
  */
 const LEADER_REQ_SLACK_USERS = {
