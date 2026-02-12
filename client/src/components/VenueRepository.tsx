@@ -18,7 +18,9 @@ import {
   MessageSquare,
   Users,
   Trash2,
-  Activity
+  Activity,
+  Upload,
+  Check
 } from 'lucide-react';
 import { MultiSelectDropdown } from './ui/MultiSelectDropdown';
 
@@ -61,6 +63,9 @@ interface Venue {
   rejection_reason?: string;
   notes?: string;
   vms_location_id?: number;
+  transferred_to_vms?: boolean;
+  transferred_at?: string;
+  venue_manager_phone?: string;
   created_at: string;
   updated_at: string;
 }
@@ -143,8 +148,19 @@ export function VenueRepository() {
     cities: [] as number[],
     areas: [] as number[],
     activities: [] as number[],
-    capacities: [] as number[]
+    capacities: [] as number[],
+    notTransferred: false
   });
+
+  // Transfer modal state
+  const [transferModal, setTransferModal] = useState<{
+    venue: Venue;
+    managerPhone: string;
+    transferring: boolean;
+  } | null>(null);
+
+  // VMS sync state
+  const [syncing, setSyncing] = useState(false);
   const [filterOptions, setFilterOptions] = useState<FilterOptions>({
     cities: [], areas: [], activities: [], capacities: []
   });
@@ -180,7 +196,7 @@ export function VenueRepository() {
     if (isExpanded) {
       fetchVenues();
     }
-  }, [filter.cities, filter.areas, filter.activities, filter.capacities]);
+  }, [filter.cities, filter.areas, filter.activities, filter.capacities, filter.notTransferred]);
 
   // Cascading: clear orphaned area selections when city changes
   useEffect(() => {
@@ -262,6 +278,10 @@ export function VenueRepository() {
         if (capNames.length > 0) params.append('capacity_categories', capNames.join(','));
       }
 
+      if (filter.notTransferred) {
+        params.append('not_transferred', 'true');
+      }
+
       params.append('limit', '100');
 
       const res = await fetch(`${API_BASE}/venue-repository?${params}`);
@@ -291,30 +311,26 @@ export function VenueRepository() {
   };
 
   const handleSaveVenue = async (venueData: Partial<Venue>) => {
-    try {
-      const url = editingVenue
-        ? `${API_BASE}/venue-repository/${editingVenue.id}`
-        : `${API_BASE}/venue-repository`;
-      const method = editingVenue ? 'PATCH' : 'POST';
+    const url = editingVenue
+      ? `${API_BASE}/venue-repository/${editingVenue.id}`
+      : `${API_BASE}/venue-repository`;
+    const method = editingVenue ? 'PATCH' : 'POST';
 
-      const res = await fetch(url, {
-        method,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(venueData)
-      });
+    const res = await fetch(url, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(venueData)
+    });
 
-      const data = await res.json();
-      if (data.success) {
-        setShowModal(false);
-        fetchVenues();
-        fetchStats();
-        fetchFilterOptions();
-      } else {
-        alert(data.error || 'Failed to save venue');
-      }
-    } catch (error) {
-      console.error('Error saving venue:', error);
-      alert('Failed to save venue');
+    const data = await res.json();
+    if (data.success) {
+      setShowModal(false);
+      fetchVenues();
+      fetchStats();
+      fetchFilterOptions();
+    } else {
+      alert(data.error || 'Failed to save venue');
+      throw new Error(data.error || 'Failed to save venue');
     }
   };
 
@@ -335,8 +351,87 @@ export function VenueRepository() {
     }
   };
 
+  // Transfer venue to VMS
+  const handleTransferToVms = async () => {
+    if (!transferModal) return;
+    setTransferModal(prev => prev ? { ...prev, transferring: true } : null);
+    try {
+      const res = await fetch(`${API_BASE}/venue-repository/${transferModal.venue.id}/transfer-to-vms`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          venue_manager_phone: transferModal.managerPhone || undefined
+        })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setTransferModal(null);
+        fetchVenues();
+        fetchStats();
+        alert(`Venue transferred to VMS successfully!${data.vms_location_id ? ` (VMS ID: ${data.vms_location_id})` : ''}`);
+      } else {
+        alert(data.error || 'Failed to transfer venue to VMS');
+        setTransferModal(prev => prev ? { ...prev, transferring: false } : null);
+      }
+    } catch (error) {
+      console.error('Error transferring to VMS:', error);
+      alert('Failed to transfer venue to VMS');
+      setTransferModal(prev => prev ? { ...prev, transferring: false } : null);
+    }
+  };
+
+  // VMS Sync
+  const handleVmsSync = async () => {
+    setSyncing(true);
+    try {
+      const res = await fetch(`${API_BASE}/venue-repository/vms-sync`);
+      const data = await res.json();
+      if (data.success) {
+        alert(`Synced ${data.synced_count} venues from VMS (${data.total_in_vms} total in VMS, ${data.already_tracked} already tracked)`);
+        if (data.synced_count > 0) {
+          fetchVenues();
+          fetchStats();
+          fetchFilterOptions();
+        }
+      } else {
+        alert(data.error || 'Failed to sync from VMS');
+      }
+    } catch (error) {
+      console.error('Error syncing from VMS:', error);
+      alert('Failed to sync from VMS');
+    } finally {
+      setSyncing(false);
+    }
+  };
+
   const handleStatusChange = async (id: number, newStatus: string) => {
     const currentVenue = venues.find(v => v.id === id);
+
+    // Intercept onboarded status to offer VMS transfer
+    if (newStatus === 'onboarded' && currentVenue && !currentVenue.transferred_to_vms) {
+      // First update the status
+      try {
+        const res = await fetch(`${API_BASE}/venue-repository/${id}/status`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status: newStatus })
+        });
+        const data = await res.json();
+        if (data.success) {
+          fetchVenues();
+          fetchStats();
+          // Show transfer modal
+          setTransferModal({
+            venue: data.venue || { ...currentVenue, status: 'onboarded' },
+            managerPhone: '',
+            transferring: false
+          });
+        }
+      } catch (error) {
+        console.error('Error updating status:', error);
+      }
+      return;
+    }
 
     if (newStatus === 'rejected') {
       const reason = prompt('Please enter the rejection reason:');
@@ -408,13 +503,26 @@ export function VenueRepository() {
         </div>
         <div className="flex items-center gap-2">
           {isExpanded && (
-            <button
-              onClick={(e) => { e.stopPropagation(); openCreateModal(); }}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors"
-            >
-              <Plus className="h-4 w-4" />
-              Add Venue
-            </button>
+            <>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleVmsSync();
+                }}
+                disabled={syncing}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors disabled:opacity-50"
+              >
+                {syncing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                Sync from VMS
+              </button>
+              <button
+                onClick={(e) => { e.stopPropagation(); openCreateModal(); }}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors"
+              >
+                <Plus className="h-4 w-4" />
+                Add Venue
+              </button>
+            </>
           )}
           {isExpanded ? <ChevronUp size={20} className="text-gray-400" /> : <ChevronDown size={20} className="text-gray-400" />}
         </div>
@@ -473,9 +581,22 @@ export function VenueRepository() {
               icon={<Users className="h-3.5 w-3.5" />}
               compact
             />
-            {(filter.cities.length > 0 || filter.areas.length > 0 || filter.activities.length > 0 || filter.capacities.length > 0) && (
+            <div className="h-6 w-px bg-gray-200" />
+            <button
+              onClick={() => setFilter(f => ({ ...f, notTransferred: !f.notTransferred }))}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border transition-all ${
+                filter.notTransferred
+                  ? 'bg-orange-50 text-orange-700 border-orange-300'
+                  : 'bg-white text-gray-500 border-gray-200 hover:border-gray-300'
+              }`}
+            >
+              <Upload className="h-3.5 w-3.5" />
+              Not transferred
+            </button>
+
+            {(filter.cities.length > 0 || filter.areas.length > 0 || filter.activities.length > 0 || filter.capacities.length > 0 || filter.notTransferred) && (
               <button
-                onClick={() => setFilter(f => ({ ...f, cities: [], areas: [], activities: [], capacities: [] }))}
+                onClick={() => setFilter(f => ({ ...f, cities: [], areas: [], activities: [], capacities: [], notTransferred: false }))}
                 className="px-2 py-1 text-xs font-medium text-gray-500 hover:text-red-600 hover:bg-red-50 rounded transition-colors"
               >
                 Clear filters
@@ -527,7 +648,15 @@ export function VenueRepository() {
                   {venues.map((venue) => (
                     <tr key={venue.id} className="hover:bg-gray-50">
                       <td className="px-4 py-3">
-                        <div className="font-medium text-gray-900">{venue.name}</div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium text-gray-900">{venue.name}</span>
+                          {venue.transferred_to_vms && (
+                            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-green-100 text-green-700 border border-green-200" title={`Transferred to VMS${venue.vms_location_id ? ` (ID: ${venue.vms_location_id})` : ''}`}>
+                              <Check className="h-2.5 w-2.5" />
+                              VMS
+                            </span>
+                          )}
+                        </div>
                         {venue.url && (
                           <a
                             href={venue.url}
@@ -610,6 +739,90 @@ export function VenueRepository() {
           onSave={handleSaveVenue}
         />
       )}
+
+      {/* Transfer to VMS Modal */}
+      {transferModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full overflow-hidden">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 bg-green-50">
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+                  <Upload className="h-5 w-5 text-green-600" />
+                  Transfer to VMS
+                </h3>
+                <p className="text-sm text-gray-500">Transfer this venue to production</p>
+              </div>
+              <button
+                onClick={() => !transferModal.transferring && setTransferModal(null)}
+                disabled={transferModal.transferring}
+                className="p-1 hover:bg-green-100 rounded-lg transition-colors"
+              >
+                <X className="h-5 w-5 text-gray-500" />
+              </button>
+            </div>
+
+            <div className="px-6 py-4 space-y-4">
+              {/* Venue details preview */}
+              <div className="bg-gray-50 rounded-lg p-3 space-y-1">
+                <div className="text-sm font-medium text-gray-900">{transferModal.venue.name}</div>
+                {(transferModal.venue.area_name || transferModal.venue.city_name) && (
+                  <div className="text-xs text-gray-500">
+                    {[transferModal.venue.area_name, transferModal.venue.city_name].filter(Boolean).join(', ')}
+                  </div>
+                )}
+                {transferModal.venue.venue_info?.capacity_category && (
+                  <div className="text-xs text-gray-500">
+                    Capacity: {CAPACITY_LABELS[transferModal.venue.venue_info.capacity_category] || transferModal.venue.venue_info.capacity_category}
+                  </div>
+                )}
+              </div>
+
+              {/* Venue Manager Phone */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Venue Manager Phone <span className="text-gray-400">(optional)</span>
+                </label>
+                <input
+                  type="tel"
+                  value={transferModal.managerPhone}
+                  onChange={(e) => setTransferModal(prev => prev ? { ...prev, managerPhone: e.target.value } : null)}
+                  placeholder="e.g., 9876543210"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
+                  disabled={transferModal.transferring}
+                />
+                <p className="text-xs text-gray-400 mt-1">If provided, this person will be assigned as venue manager in VMS</p>
+              </div>
+            </div>
+
+            <div className="flex gap-3 px-6 py-4 border-t border-gray-200 bg-gray-50">
+              <button
+                onClick={() => setTransferModal(null)}
+                disabled={transferModal.transferring}
+                className="flex-1 px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
+              >
+                Skip
+              </button>
+              <button
+                onClick={handleTransferToVms}
+                disabled={transferModal.transferring}
+                className="flex-1 px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                {transferModal.transferring ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Transferring...
+                  </>
+                ) : (
+                  <>
+                    <Upload className="h-4 w-4" />
+                    Transfer
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -619,7 +832,7 @@ interface VenueModalProps {
   venue: Venue | null;
   options: Options;
   onClose: () => void;
-  onSave: (data: Partial<Venue>) => void;
+  onSave: (data: Partial<Venue>) => Promise<void>;
 }
 
 function VenueModal({ venue, options, onClose, onSave }: VenueModalProps) {
@@ -645,6 +858,8 @@ function VenueModal({ venue, options, onClose, onSave }: VenueModalProps) {
     }
   });
 
+  const [urlError, setUrlError] = useState('');
+  const [saving, setSaving] = useState(false);
   const [selectedCity, setSelectedCity] = useState<number | '' | 'custom'>('');
   const [isCustomCity, setIsCustomCity] = useState(false);
   const [isCustomArea, setIsCustomArea] = useState(false);
@@ -669,16 +884,47 @@ function VenueModal({ venue, options, onClose, onSave }: VenueModalProps) {
 
   const currentCity = options.cities.find(c => String(c.id) === String(selectedCity));
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const validateUrl = (url: string): string | null => {
+    if (!url) return null;
+    const validPatterns = ['maps.google.com', 'maps.app.goo.gl', 'www.google.com/maps', 'google.com/maps', 'goo.gl/maps'];
+    if (url.includes('share.google')) {
+      return 'Please use a Google Maps URL, not a share.google link. Open the link in Maps first and copy the URL from the address bar.';
+    }
+    if (!validPatterns.some(p => url.includes(p))) {
+      return 'URL must be a Google Maps link (maps.google.com or maps.app.goo.gl)';
+    }
+    return null;
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.name.trim()) {
       alert('Venue name is required');
       return;
     }
-    onSave({
-      ...formData,
-      area_id: formData.area_id ? Number(formData.area_id) : undefined
-    });
+
+    // Validate URL format
+    if (formData.url.trim()) {
+      const urlErr = validateUrl(formData.url.trim());
+      if (urlErr) {
+        setUrlError(urlErr);
+        alert(urlErr);
+        return;
+      }
+    }
+
+    setSaving(true);
+    setUrlError('');
+    try {
+      await onSave({
+        ...formData,
+        area_id: formData.area_id ? Number(formData.area_id) : undefined
+      });
+    } catch (err: any) {
+      // Error is handled by parent
+    } finally {
+      setSaving(false);
+    }
   };
 
   const toggleAmenity = (amenity: string) => {
@@ -731,10 +977,16 @@ function VenueModal({ venue, options, onClose, onSave }: VenueModalProps) {
               <input
                 type="url"
                 value={formData.url}
-                onChange={(e) => setFormData(f => ({ ...f, url: e.target.value }))}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                onChange={(e) => { setFormData(f => ({ ...f, url: e.target.value })); setUrlError(''); }}
+                className={`w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 ${urlError ? 'border-red-300 focus:ring-red-500 bg-red-50' : 'border-gray-300 focus:ring-indigo-500'}`}
                 placeholder="https://maps.google.com/..."
               />
+              {urlError && (
+                <p className="mt-1 text-xs text-red-600 flex items-center gap-1">
+                  <AlertCircle className="h-3 w-3 flex-shrink-0" />
+                  {urlError}
+                </p>
+              )}
             </div>
 
             <div className="grid grid-cols-2 gap-4">
@@ -1010,8 +1262,10 @@ function VenueModal({ venue, options, onClose, onSave }: VenueModalProps) {
           </button>
           <button
             onClick={handleSubmit}
-            className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors"
+            disabled={saving}
+            className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors disabled:opacity-50 flex items-center gap-2"
           >
+            {saving && <Loader2 className="h-4 w-4 animate-spin" />}
             {venue ? 'Update Venue' : 'Add Venue'}
           </button>
         </div>
