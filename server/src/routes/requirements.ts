@@ -1512,6 +1512,39 @@ router.put('/venues/:id', async (req: Request, res: Response) => {
       updates.push(`description = $${paramIndex++}`);
       params.push(data.description);
     }
+    // Hierarchy fields
+    if (data.activity_id !== undefined) {
+      updates.push(`activity_id = $${paramIndex++}`);
+      params.push(data.activity_id);
+    }
+    if (data.activity_name !== undefined) {
+      updates.push(`activity_name = $${paramIndex++}`);
+      params.push(data.activity_name);
+    }
+    if (data.city_id !== undefined) {
+      updates.push(`city_id = $${paramIndex++}`);
+      params.push(data.city_id);
+    }
+    if (data.city_name !== undefined) {
+      updates.push(`city_name = $${paramIndex++}`);
+      params.push(data.city_name);
+    }
+    if (data.area_id !== undefined) {
+      updates.push(`area_id = $${paramIndex++}`);
+      params.push(data.area_id);
+    }
+    if (data.area_name !== undefined) {
+      updates.push(`area_name = $${paramIndex++}`);
+      params.push(data.area_name);
+    }
+    if (data.club_id !== undefined) {
+      updates.push(`club_id = $${paramIndex++}`);
+      params.push(data.club_id);
+    }
+    if (data.club_name !== undefined) {
+      updates.push(`club_name = $${paramIndex++}`);
+      params.push(data.club_name);
+    }
     if (data.status !== undefined) {
       updates.push(`status = $${paramIndex++}`);
       params.push(data.status);
