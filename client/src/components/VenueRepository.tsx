@@ -1651,89 +1651,62 @@ function VenueModal({ venue, options, onClose, onSave }: VenueModalProps) {
                         </button>
                       </div>
 
-                      {/* Row 2: Days - multi-select chips */}
-                      <div className="flex items-center gap-1.5 flex-wrap">
+                      {/* Row 2: Days - toggle buttons */}
+                      <div className="flex items-center gap-1 flex-wrap">
                         <span className="text-[10px] text-gray-500 font-medium w-12">Days:</span>
-                        {currentDays.map(day => {
-                          const opt = DAY_OPTIONS.find(o => o.value === day);
+                        {DAY_OPTIONS.map(opt => {
+                          const isSelected = currentDays.includes(opt.value);
                           return (
-                            <span
-                              key={day}
-                              className="inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] bg-blue-50 text-blue-700 rounded-full border border-blue-200"
-                            >
-                              {opt?.short || day}
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  const newDays = currentDays.filter(d => d !== day);
-                                  const updated = [...formData.venue_info.preferred_schedules];
-                                  updated[idx] = { ...updated[idx], day: newDays.join(', ') };
-                                  setFormData(f => ({ ...f, venue_info: { ...f.venue_info, preferred_schedules: updated } }));
-                                }}
-                                className="hover:text-red-500"
-                              >
-                                <X className="h-2.5 w-2.5" />
-                              </button>
-                            </span>
-                          );
-                        })}
-                        <select
-                          value=""
-                          onChange={(e) => {
-                            if (!e.target.value) return;
-                            const newDays = [...currentDays, e.target.value];
-                            const updated = [...formData.venue_info.preferred_schedules];
-                            updated[idx] = { ...updated[idx], day: newDays.join(', ') };
-                            setFormData(f => ({ ...f, venue_info: { ...f.venue_info, preferred_schedules: updated } }));
-                          }}
-                          className="px-1.5 py-0.5 text-[10px] border border-dashed border-blue-300 rounded text-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white"
-                        >
-                          <option value="">+ Day</option>
-                          {DAY_OPTIONS.filter(o => !currentDays.includes(o.value)).map(o => (
-                            <option key={o.value} value={o.value}>{o.label}</option>
-                          ))}
-                        </select>
-                      </div>
-
-                      {/* Row 3: Activities - multi-select chips */}
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        <span className="text-[10px] text-gray-500 font-medium w-12">Activities:</span>
-                        {currentActivities.map(act => (
-                          <span
-                            key={act}
-                            className="inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] bg-indigo-50 text-indigo-700 rounded-full border border-indigo-200"
-                          >
-                            {act}
                             <button
+                              key={opt.value}
                               type="button"
                               onClick={() => {
-                                const newActivities = currentActivities.filter(a => a !== act);
+                                const newDays = isSelected
+                                  ? currentDays.filter(d => d !== opt.value)
+                                  : [...currentDays, opt.value];
+                                const updated = [...formData.venue_info.preferred_schedules];
+                                updated[idx] = { ...updated[idx], day: newDays.join(', ') };
+                                setFormData(f => ({ ...f, venue_info: { ...f.venue_info, preferred_schedules: updated } }));
+                              }}
+                              className={`px-1.5 py-0.5 text-[10px] font-medium rounded border transition-colors ${
+                                isSelected
+                                  ? 'bg-blue-100 text-blue-800 border-blue-300'
+                                  : 'bg-white text-gray-500 border-gray-200 hover:border-blue-300 hover:text-blue-600'
+                              }`}
+                            >
+                              {opt.short}
+                            </button>
+                          );
+                        })}
+                      </div>
+
+                      {/* Row 3: Activities - toggle buttons */}
+                      <div className="flex items-start gap-1 flex-wrap">
+                        <span className="text-[10px] text-gray-500 font-medium w-12 mt-1">Activities:</span>
+                        {ACTIVITY_OPTIONS.map(act => {
+                          const isSelected = currentActivities.includes(act);
+                          return (
+                            <button
+                              key={act}
+                              type="button"
+                              onClick={() => {
+                                const newActivities = isSelected
+                                  ? currentActivities.filter(a => a !== act)
+                                  : [...currentActivities, act];
                                 const updated = [...formData.venue_info.preferred_schedules];
                                 updated[idx] = { ...updated[idx], preferred_activity: newActivities.join(', ') };
                                 setFormData(f => ({ ...f, venue_info: { ...f.venue_info, preferred_schedules: updated } }));
                               }}
-                              className="hover:text-red-500"
+                              className={`px-1.5 py-0.5 text-[10px] font-medium rounded border transition-colors ${
+                                isSelected
+                                  ? 'bg-indigo-100 text-indigo-800 border-indigo-300'
+                                  : 'bg-white text-gray-500 border-gray-200 hover:border-indigo-300 hover:text-indigo-600'
+                              }`}
                             >
-                              <X className="h-2.5 w-2.5" />
+                              {act}
                             </button>
-                          </span>
-                        ))}
-                        <select
-                          value=""
-                          onChange={(e) => {
-                            if (!e.target.value) return;
-                            const newActivities = [...currentActivities, e.target.value];
-                            const updated = [...formData.venue_info.preferred_schedules];
-                            updated[idx] = { ...updated[idx], preferred_activity: newActivities.join(', ') };
-                            setFormData(f => ({ ...f, venue_info: { ...f.venue_info, preferred_schedules: updated } }));
-                          }}
-                          className="px-1.5 py-0.5 text-[10px] border border-dashed border-gray-300 rounded text-gray-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white"
-                        >
-                          <option value="">+ Activity</option>
-                          {ACTIVITY_OPTIONS.filter(a => !currentActivities.includes(a)).map(a => (
-                            <option key={a} value={a}>{a}</option>
-                          ))}
-                        </select>
+                          );
+                        })}
                       </div>
                     </div>
                   );
