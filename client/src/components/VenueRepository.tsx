@@ -18,7 +18,6 @@ import {
   MessageSquare,
   Users,
   Trash2,
-  Activity,
   Upload,
   Check,
   GripVertical,
@@ -150,7 +149,6 @@ export function VenueRepository() {
     search: '',
     cities: [] as number[],
     areas: [] as number[],
-    activities: [] as number[],
     capacities: [] as number[],
     notTransferred: false
   });
@@ -299,7 +297,7 @@ export function VenueRepository() {
     if (isExpanded) {
       fetchVenues();
     }
-  }, [filter.cities, filter.areas, filter.activities, filter.capacities, filter.notTransferred, activeStatusFilters, showOnboarded, showInactive]);
+  }, [filter.cities, filter.areas, filter.capacities, filter.notTransferred, activeStatusFilters, showOnboarded, showInactive]);
 
   // Cascading: clear orphaned area selections when city changes
   useEffect(() => {
@@ -375,12 +373,6 @@ export function VenueRepository() {
           .filter(a => filter.areas.includes(a.id))
           .map(a => a.name);
         if (areaNames.length > 0) params.append('area_names', areaNames.join(','));
-      }
-      if (filter.activities.length > 0) {
-        const activityNames = filterOptions.activities
-          .filter(a => filter.activities.includes(a.id))
-          .map(a => a.name);
-        if (activityNames.length > 0) params.append('activities', activityNames.join(','));
       }
       if (filter.capacities.length > 0) {
         const capNames = filterOptions.capacities
@@ -765,14 +757,6 @@ export function VenueRepository() {
               compact
             />
             <MultiSelectDropdown
-              label="Activity"
-              options={filterOptions.activities}
-              selected={filter.activities}
-              onChange={(ids) => setFilter(f => ({ ...f, activities: ids }))}
-              icon={<Activity className="h-3.5 w-3.5" />}
-              compact
-            />
-            <MultiSelectDropdown
               label="Capacity"
               options={capacityDisplayOptions}
               selected={filter.capacities}
@@ -793,9 +777,9 @@ export function VenueRepository() {
               Not transferred
             </button>
 
-            {(filter.cities.length > 0 || filter.areas.length > 0 || filter.activities.length > 0 || filter.capacities.length > 0 || filter.notTransferred) && (
+            {(filter.cities.length > 0 || filter.areas.length > 0 || filter.capacities.length > 0 || filter.notTransferred) && (
               <button
-                onClick={() => setFilter(f => ({ ...f, cities: [], areas: [], activities: [], capacities: [], notTransferred: false }))}
+                onClick={() => setFilter(f => ({ ...f, cities: [], areas: [], capacities: [], notTransferred: false }))}
                 className="px-2 py-1 text-xs font-medium text-gray-500 hover:text-red-600 hover:bg-red-50 rounded transition-colors"
               >
                 Clear filters

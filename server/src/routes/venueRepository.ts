@@ -383,6 +383,25 @@ router.get('/', async (req: Request, res: Response) => {
 });
 
 /**
+ * GET /api/venue-repository/vms-sync
+ * Reverse sync: import venues from VMS that aren't in ops DB
+ * NOTE: Must be defined before /:id to avoid being caught by the param route
+ */
+router.get('/vms-sync', async (req: Request, res: Response) => {
+  try {
+    const result = await runVmsSync();
+    res.json({
+      success: true,
+      ...result,
+      message: `Synced ${result.synced_count} venues from VMS`
+    });
+  } catch (error) {
+    logger.error('Error syncing from VMS:', error);
+    res.status(500).json({ error: 'Failed to sync from VMS' });
+  }
+});
+
+/**
  * GET /api/venue-repository/:id
  * Get single venue by ID
  */
@@ -1108,23 +1127,5 @@ export async function runVmsSync(): Promise<{ synced_count: number; total_in_vms
   logger.info(`VMS sync completed: ${syncedCount} venues imported from ${missingVenues.length} missing`);
   return { synced_count: syncedCount, total_in_vms: prodResult.rows.length, already_tracked: existingVmsIds.size };
 }
-
-/**
- * GET /api/venue-repository/vms-sync
- * Reverse sync: import venues from VMS that aren't in ops DB
- */
-router.get('/vms-sync', async (req: Request, res: Response) => {
-  try {
-    const result = await runVmsSync();
-    res.json({
-      success: true,
-      ...result,
-      message: `Synced ${result.synced_count} venues from VMS`
-    });
-  } catch (error) {
-    logger.error('Error syncing from VMS:', error);
-    res.status(500).json({ error: 'Failed to sync from VMS' });
-  }
-});
 
 export default router;
