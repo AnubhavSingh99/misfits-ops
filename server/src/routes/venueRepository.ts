@@ -967,11 +967,31 @@ router.post('/:id/transfer-to-vms', async (req: Request, res: Response) => {
     }
 
     if (!venue.area_id) {
-      return res.status(400).json({ error: 'Venue must have an area_id to transfer to VMS' });
+      return res.status(400).json({ error: 'Venue must have an area (area_id) to transfer to VMS' });
+    }
+
+    if (!venue.url) {
+      return res.status(400).json({ error: 'Venue must have a Google Maps URL to transfer to VMS' });
+    }
+
+    if (!venue.contact_name) {
+      return res.status(400).json({ error: 'Venue must have a contact name to transfer to VMS' });
+    }
+
+    if (!venue.contact_phone) {
+      return res.status(400).json({ error: 'Venue must have a contact phone to transfer to VMS' });
     }
 
     // Parse venue_info
     const venueInfo = typeof venue.venue_info === 'string' ? JSON.parse(venue.venue_info) : (venue.venue_info || {});
+
+    if (!venueInfo.venue_category) {
+      return res.status(400).json({ error: 'Venue must have a venue category to transfer to VMS' });
+    }
+
+    if (!venueInfo.capacity_category) {
+      return res.status(400).json({ error: 'Venue must have a capacity category to transfer to VMS' });
+    }
 
     // Build gRPC CreateVenue request
     const grpcRequest: any = {

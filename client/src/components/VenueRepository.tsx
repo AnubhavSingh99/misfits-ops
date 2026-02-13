@@ -454,27 +454,50 @@ export function VenueRepository() {
     }
   };
 
-  // Transfer venue to VMS
+  // Transfer venue to VMS (or just update venue manager phone if already transferred)
   const handleTransferToVms = async () => {
     if (!transferModal) return;
     setTransferModal(prev => prev ? { ...prev, transferring: true } : null);
     try {
-      const res = await fetch(`${API_BASE}/venue-repository/${transferModal.venue.id}/transfer-to-vms`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          venue_manager_phone: transferModal.managerPhone || undefined
-        })
-      });
-      const data = await res.json();
-      if (data.success) {
-        setTransferModal(null);
-        fetchVenues();
-        fetchStats();
-        alert(`Venue transferred to VMS successfully!${data.vms_location_id ? ` (VMS ID: ${data.vms_location_id})` : ''}`);
+      const alreadyTransferred = transferModal.venue.transferred_to_vms;
+
+      if (alreadyTransferred) {
+        // Already in VMS — just update venue manager phone
+        const res = await fetch(`${API_BASE}/venue-repository/${transferModal.venue.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            venue_manager_phone: transferModal.managerPhone || null
+          })
+        });
+        const data = await res.json();
+        if (data.success) {
+          setTransferModal(null);
+          fetchVenues();
+          alert('Venue manager phone updated successfully!');
+        } else {
+          alert(data.error || 'Failed to update venue');
+          setTransferModal(prev => prev ? { ...prev, transferring: false } : null);
+        }
       } else {
-        alert(data.error || 'Failed to transfer venue to VMS');
-        setTransferModal(prev => prev ? { ...prev, transferring: false } : null);
+        // Not yet in VMS — do full transfer
+        const res = await fetch(`${API_BASE}/venue-repository/${transferModal.venue.id}/transfer-to-vms`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            venue_manager_phone: transferModal.managerPhone || undefined
+          })
+        });
+        const data = await res.json();
+        if (data.success) {
+          setTransferModal(null);
+          fetchVenues();
+          fetchStats();
+          alert(`Venue transferred to VMS successfully!${data.vms_location_id ? ` (VMS ID: ${data.vms_location_id})` : ''}`);
+        } else {
+          alert(data.error || 'Failed to transfer venue to VMS');
+          setTransferModal(prev => prev ? { ...prev, transferring: false } : null);
+        }
       }
     } catch (error) {
       console.error('Error transferring to VMS:', error);
@@ -510,8 +533,8 @@ export function VenueRepository() {
   const handleStatusChange = async (id: number, newStatus: string) => {
     const currentVenue = venues.find(v => v.id === id);
 
-    // Intercept onboarded status to offer VMS transfer
-    if (newStatus === 'onboarded' && currentVenue && !currentVenue.transferred_to_vms) {
+    // Intercept onboarded status to offer VMS transfer / venue manager phone
+    if (newStatus === 'onboarded' && currentVenue) {
       // First update the status
       try {
         const res = await fetch(`${API_BASE}/venue-repository/${id}/status`, {
@@ -1005,9 +1028,11 @@ export function VenueRepository() {
               <div>
                 <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
                   <Upload className="h-5 w-5 text-green-600" />
-                  Transfer to VMS
+                  {transferModal.venue.transferred_to_vms ? 'Update Venue Manager' : 'Transfer to VMS'}
                 </h3>
-                <p className="text-sm text-gray-500">Transfer this venue to production</p>
+                <p className="text-sm text-gray-500">
+                  {transferModal.venue.transferred_to_vms ? 'Venue is already in VMS. Update venue manager phone.' : 'Transfer this venue to production'}
+                </p>
               </div>
               <button
                 onClick={() => !transferModal.transferring && setTransferModal(null)}
@@ -1033,6 +1058,31 @@ export function VenueRepository() {
                   </div>
                 )}
               </div>
+
+              {/* Missing fields warning (only for new transfers) */}
+              {!transferModal.venue.transferred_to_vms && (() => {
+                const v = transferModal.venue;
+                const info = v.venue_info || {};
+                const missing: string[] = [];
+                if (!v.area_id && !v.area_name) missing.push('Area');
+                if (!v.url) missing.push('Google Maps URL');
+                if (!v.contact_name) missing.push('Contact Name');
+                if (!v.contact_phone) missing.push('Contact Phone');
+                if (!info.venue_category) missing.push('Venue Category');
+                if (!info.capacity_category) missing.push('Capacity');
+                if (missing.length === 0) return null;
+                return (
+                  <div className="bg-red-50 border border-red-200 rounded-lg p-3">
+                    <div className="flex items-start gap-2">
+                      <AlertCircle className="h-4 w-4 text-red-500 mt-0.5 flex-shrink-0" />
+                      <div>
+                        <p className="text-sm font-medium text-red-700">Missing required fields</p>
+                        <p className="text-xs text-red-600 mt-1">Please edit the venue and fill in: {missing.join(', ')}</p>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
 
               {/* Venue Manager Phone */}
               <div>
@@ -1067,12 +1117,12 @@ export function VenueRepository() {
                 {transferModal.transferring ? (
                   <>
                     <Loader2 className="h-4 w-4 animate-spin" />
-                    Transferring...
+                    {transferModal.venue.transferred_to_vms ? 'Saving...' : 'Transferring...'}
                   </>
                 ) : (
                   <>
                     <Upload className="h-4 w-4" />
-                    Transfer
+                    {transferModal.venue.transferred_to_vms ? 'Save' : 'Transfer'}
                   </>
                 )}
               </button>
