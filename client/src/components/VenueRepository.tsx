@@ -255,6 +255,22 @@ export function VenueRepository() {
       });
   }, [venues, effectiveOrder]);
 
+  // Collapse all groups by default on initial data load only
+  const hasInitiallyCollapsed = React.useRef(false);
+  useEffect(() => {
+    if (groupedVenues && groupedVenues.length > 0 && !hasInitiallyCollapsed.current) {
+      hasInitiallyCollapsed.current = true;
+      const allKeys = new Set<string>();
+      for (const group of groupedVenues) {
+        allKeys.add(group.key);
+        for (const child of group.children) {
+          allKeys.add(child.key);
+        }
+      }
+      setCollapsedGroups(allKeys);
+    }
+  }, [groupedVenues]);
+
   const toggleGroup = (key: string) => {
     setCollapsedGroups(prev => {
       const next = new Set(prev);
@@ -583,11 +599,11 @@ export function VenueRepository() {
     }
   };
 
-  const renderVenueRow = (venue: Venue) => (
+  const renderVenueRow = (venue: Venue, indented = false) => (
     <tr key={venue.id} className="hover:bg-gray-50">
-      <td className="px-4 py-3 break-words">
+      <td className={`px-4 py-3 break-words ${indented ? 'pl-12' : ''}`}>
         <div className="flex items-start gap-2 flex-wrap">
-          <span className="font-medium text-gray-900">{venue.name}</span>
+          <span className="font-medium text-gray-900 text-sm">{venue.name}</span>
           {venue.transferred_to_vms && (
             <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-green-100 text-green-700 border border-green-200" title={`Transferred to VMS${venue.vms_location_id ? ` (ID: ${venue.vms_location_id})` : ''}`}>
               <Check className="h-2.5 w-2.5" />
@@ -944,12 +960,12 @@ export function VenueRepository() {
                                     </div>
                                   </td>
                                 </tr>
-                                {!childCollapsed && child.venues.map((venue) => renderVenueRow(venue))}
+                                {!childCollapsed && child.venues.map((venue) => renderVenueRow(venue, true))}
                               </React.Fragment>
                             );
                           })}
                           {/* Render direct venues (when no area sub-grouping) */}
-                          {group.venues.map((venue) => renderVenueRow(venue))}
+                          {group.venues.map((venue) => renderVenueRow(venue, true))}
                         </>
                       )}
                     </React.Fragment>
