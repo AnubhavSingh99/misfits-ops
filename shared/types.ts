@@ -1025,6 +1025,8 @@ export interface VenueRequirement extends BaseRequirement {
   venue_name?: string;
   venue_city?: string;
   venue_area?: string;
+  venue_categories?: string[];
+  amenities_list?: string[];
 }
 
 // Request types for creating/updating requirements
@@ -1052,6 +1054,8 @@ export interface CreateRequirementRequest {
   time_of_day?: TimeOfDay[];
   amenities_required?: string;
   capacity?: CapacityBucket;
+  venue_categories?: string[];
+  amenities_list?: string[];
 }
 
 export interface UpdateRequirementRequest extends Partial<CreateRequirementRequest> {

@@ -36,6 +36,7 @@ import { initializeRedis } from './services/redis';
 import { initializeDimensions } from './services/dimensionSync';
 import { initCSPolling, startPolling } from './services/csPollingService';
 import { initSlackService, checkSLABreaches, checkStaleTickets } from './services/slackService';
+import { runVmsSync } from './routes/venueRepository';
 import { logger } from './utils/logger';
 import { errorHandler } from './middleware/errorHandler';
 
@@ -186,6 +187,7 @@ app.use(errorHandler);
 // Track intervals for cleanup on shutdown
 let slaInterval: NodeJS.Timeout | null = null;
 let memoryInterval: NodeJS.Timeout | null = null;
+let vmsSyncInterval: NodeJS.Timeout | null = null;
 
 async function startServer() {
   try {
@@ -236,6 +238,29 @@ async function startServer() {
       } else {
         logger.info('SLA breach and stale tickets check disabled (non-production environment)');
       }
+
+      // VMS sync every 4 hours - import new VMS venues into ops DB
+      vmsSyncInterval = setInterval(async () => {
+        try {
+          const result = await runVmsSync();
+          if (result.synced_count > 0) {
+            logger.info(`Scheduled VMS sync: imported ${result.synced_count} new venues`);
+          }
+        } catch (error) {
+          logger.error('Scheduled VMS sync failed:', error);
+        }
+      }, 4 * 60 * 60 * 1000); // 4 hours
+      logger.info('VMS sync scheduled (every 4 hours)');
+
+      // Run VMS sync once on startup (after 15 seconds to let DB connections settle)
+      setTimeout(async () => {
+        try {
+          const result = await runVmsSync();
+          logger.info(`Startup VMS sync: ${result.synced_count} venues imported (${result.total_in_vms} in VMS, ${result.already_tracked} already tracked)`);
+        } catch (error) {
+          logger.error('Startup VMS sync failed:', error);
+        }
+      }, 15000);
     } catch (dbError) {
       logger.warn('Database initialization failed, continuing without database:', dbError.message);
     }
@@ -277,6 +302,7 @@ async function startServer() {
       // Clear intervals
       if (slaInterval) clearInterval(slaInterval);
       if (memoryInterval) clearInterval(memoryInterval);
+      if (vmsSyncInterval) clearInterval(vmsSyncInterval);
 
       // Stop CS polling
       const { stopPolling: stopCSPolling } = await import('./services/csPollingService');

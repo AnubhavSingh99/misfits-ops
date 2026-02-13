@@ -55,7 +55,7 @@ async function checkUrlDuplicate(url: string, excludeId?: number): Promise<{ dup
 }
 
 // Status flow options
-const VALID_STATUSES = ['new', 'contacted', 'interested', 'negotiating', 'rejected', 'onboarded'];
+const VALID_STATUSES = ['new', 'contacted', 'interested', 'negotiating', 'rejected', 'onboarded', 'inactive'];
 
 // Dropdown values from VMS
 const VENUE_CATEGORIES = ['CAFE', 'PUB_AND_BAR', 'STUDIO'];
@@ -232,9 +232,15 @@ async function buildFilterClauses(query: Record<string, any>, startIndex: number
   const params: any[] = [];
   let idx = startIndex;
 
-  const { status, area_id, search, city_names, area_names, activities, capacity_categories, not_transferred } = query;
+  const { status, statuses, area_id, search, city_names, area_names, activities, capacity_categories, not_transferred } = query;
 
-  if (status) {
+  if (statuses) {
+    const statusList = (statuses as string).split(',').filter(s => VALID_STATUSES.includes(s));
+    if (statusList.length > 0) {
+      clauses.push(`vr.status = ANY($${idx++})`);
+      params.push(statusList);
+    }
+  } else if (status) {
     clauses.push(`vr.status = $${idx++}`);
     params.push(status);
   }
@@ -583,6 +589,15 @@ router.delete('/:id', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
 
+    // Check if venue is onboarded — block deletion
+    const check = await queryLocal(
+      'SELECT status, transferred_to_vms FROM venue_repository WHERE id = $1',
+      [id]
+    );
+    if (check.rows.length > 0 && (check.rows[0].status === 'onboarded' || check.rows[0].transferred_to_vms)) {
+      return res.status(400).json({ error: 'Cannot delete an onboarded venue. It will reappear on next VMS sync.' });
+    }
+
     const result = await queryLocal(
       'DELETE FROM venue_repository WHERE id = $1 RETURNING *',
       [id]
@@ -713,13 +728,20 @@ router.get('/suggestions/:requirementId', async (req: Request, res: Response) =>
       }
     }
 
-    // Map capacity to VMS capacity category
+    // Map capacity bucket (e.g. '30-50', '<10', '>500') to VMS capacity category
     let capacityCategory: string | null = null;
     if (capacity) {
-      const cap = parseInt(capacity);
-      if (cap < 25) capacityCategory = 'LESS_THAN_25';
-      else if (cap <= 50) capacityCategory = 'CAPACITY_25_TO_50';
-      else capacityCategory = 'CAPACITY_50_PLUS';
+      const bucketToVms: Record<string, string> = {
+        '<10': 'LESS_THAN_25',
+        '10-20': 'LESS_THAN_25',
+        '20-30': 'CAPACITY_25_TO_50',
+        '30-50': 'CAPACITY_25_TO_50',
+        '50-100': 'CAPACITY_50_PLUS',
+        '100-200': 'CAPACITY_50_PLUS',
+        '200-500': 'CAPACITY_50_PLUS',
+        '>500': 'CAPACITY_50_PLUS'
+      };
+      capacityCategory = bucketToVms[capacity] || null;
     }
 
     const suggestions: any[] = [];
@@ -833,10 +855,24 @@ router.get('/suggestions/:requirementId', async (req: Request, res: Response) =>
       }
     }
 
+    // Deduplicate: if a venue appears in both repository and VMS, keep the VMS one
+    // Match by vms_location_id <-> vms_id, or by URL
+    const vmsIds = new Set(suggestions.filter(s => s.source === 'vms').map(s => parseInt(s.vms_id)));
+    const vmsUrls = new Set(suggestions.filter(s => s.source === 'vms' && s.url).map(s => s.url));
+
+    const deduped = suggestions.filter(s => {
+      if (s.source !== 'repository') return true;
+      // Remove repo venue if its vms_location_id matches a VMS suggestion
+      if (s.vms_location_id && vmsIds.has(parseInt(s.vms_location_id))) return false;
+      // Remove repo venue if its URL matches a VMS suggestion
+      if (s.url && vmsUrls.has(s.url)) return false;
+      return true;
+    });
+
     res.json({
       success: true,
       requirement: { id: requirement.id, city, area, activity, capacity },
-      suggestions
+      suggestions: deduped
     });
   } catch (error) {
     logger.error('Error fetching venue suggestions:', error);
@@ -866,6 +902,7 @@ router.get('/stats/summary', async (req: Request, res: Response) => {
       negotiating: 0,
       rejected: 0,
       onboarded: 0,
+      inactive: 0,
       total: 0
     };
 
@@ -1020,62 +1057,69 @@ router.post('/:id/transfer-to-vms', async (req: Request, res: Response) => {
 });
 
 /**
+ * Core VMS sync logic - reusable by both API endpoint and scheduled job
+ * Imports venues from production VMS that aren't in ops DB (excludes test venues)
+ */
+export async function runVmsSync(): Promise<{ synced_count: number; total_in_vms: number; already_tracked: number }> {
+  // Get all venues from production location table (with venue_info, excluding test venues)
+  const prodQuery = `
+    SELECT l.id, l.name, l.url, l.area_id, l.venue_info,
+           a.name as area_name, c.name as city_name
+    FROM location l
+    JOIN area a ON l.area_id = a.id
+    JOIN city c ON a.city_id = c.id
+    WHERE l.is_deleted = false
+      AND l.venue_info IS NOT NULL
+      AND l.venue_info != '{}'::jsonb
+      AND l.name NOT ILIKE '%test%'
+  `;
+  const prodResult = await queryProduction(prodQuery);
+
+  // Get all vms_location_id values from ops DB
+  const opsResult = await queryLocal(
+    'SELECT vms_location_id FROM venue_repository WHERE vms_location_id IS NOT NULL'
+  );
+  const existingVmsIds = new Set(opsResult.rows.map(r => parseInt(r.vms_location_id)));
+
+  // Find venues in production that have no matching entry in ops DB
+  const missingVenues = prodResult.rows.filter(v => !existingVmsIds.has(parseInt(v.id)));
+
+  let syncedCount = 0;
+  for (const venue of missingVenues) {
+    try {
+      await queryLocal(`
+        INSERT INTO venue_repository (
+          name, url, area_id, venue_info, status,
+          transferred_to_vms, vms_location_id, transferred_at
+        ) VALUES ($1, $2, $3, $4, 'onboarded', true, $5, NOW())
+      `, [
+        venue.name,
+        venue.url || null,
+        venue.area_id,
+        JSON.stringify(venue.venue_info || {}),
+        parseInt(venue.id)
+      ]);
+      syncedCount++;
+    } catch (insertError) {
+      logger.warn(`Failed to sync venue ${venue.id} (${venue.name}):`, insertError);
+    }
+  }
+
+  logger.info(`VMS sync completed: ${syncedCount} venues imported from ${missingVenues.length} missing`);
+  return { synced_count: syncedCount, total_in_vms: prodResult.rows.length, already_tracked: existingVmsIds.size };
+}
+
+/**
  * GET /api/venue-repository/vms-sync
  * Reverse sync: import venues from VMS that aren't in ops DB
  */
 router.get('/vms-sync', async (req: Request, res: Response) => {
   try {
-    // Get all venues from production location table (with venue_info)
-    const prodQuery = `
-      SELECT l.id, l.name, l.url, l.area_id, l.venue_info,
-             a.name as area_name, c.name as city_name
-      FROM location l
-      JOIN area a ON l.area_id = a.id
-      JOIN city c ON a.city_id = c.id
-      WHERE l.is_deleted = false
-        AND l.venue_info IS NOT NULL
-        AND l.venue_info != '{}'::jsonb
-    `;
-    const prodResult = await queryProduction(prodQuery);
-
-    // Get all vms_location_id values from ops DB
-    const opsResult = await queryLocal(
-      'SELECT vms_location_id FROM venue_repository WHERE vms_location_id IS NOT NULL'
-    );
-    const existingVmsIds = new Set(opsResult.rows.map(r => parseInt(r.vms_location_id)));
-
-    // Find venues in production that have no matching entry in ops DB
-    const missingVenues = prodResult.rows.filter(v => !existingVmsIds.has(parseInt(v.id)));
-
-    let syncedCount = 0;
-    for (const venue of missingVenues) {
-      try {
-        await queryLocal(`
-          INSERT INTO venue_repository (
-            name, url, area_id, venue_info, status,
-            transferred_to_vms, vms_location_id, transferred_at
-          ) VALUES ($1, $2, $3, $4, 'onboarded', true, $5, NOW())
-        `, [
-          venue.name,
-          venue.url || null,
-          venue.area_id,
-          JSON.stringify(venue.venue_info || {}),
-          parseInt(venue.id)
-        ]);
-        syncedCount++;
-      } catch (insertError) {
-        logger.warn(`Failed to sync venue ${venue.id} (${venue.name}):`, insertError);
-      }
-    }
-
-    logger.info(`VMS sync completed: ${syncedCount} venues imported from ${missingVenues.length} missing`);
-
+    const result = await runVmsSync();
     res.json({
       success: true,
-      synced_count: syncedCount,
-      total_in_vms: prodResult.rows.length,
-      already_tracked: existingVmsIds.size,
-      message: `Synced ${syncedCount} venues from VMS`
+      ...result,
+      message: `Synced ${result.synced_count} venues from VMS`
     });
   } catch (error) {
     logger.error('Error syncing from VMS:', error);
