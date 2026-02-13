@@ -1597,31 +1597,18 @@ function VenueModal({ venue, options, onClose, onSave }: VenueModalProps) {
                   const currentActivities = sched.preferred_activity
                     ? sched.preferred_activity.split(', ').filter(Boolean)
                     : [];
+                  const currentDays = sched.day
+                    ? sched.day.split(', ').filter(Boolean)
+                    : [];
+                  const DAY_OPTIONS = [
+                    { value: 'WEEKDAY', label: 'Weekdays', short: 'Wkday' },
+                    { value: 'WEEKEND', label: 'Weekends', short: 'Wkend' },
+                    ...DAYS_OF_WEEK.map(d => ({ value: d, label: d.charAt(0) + d.slice(1).toLowerCase(), short: d.slice(0, 3) }))
+                  ];
                   return (
                     <div key={idx} className="p-3 bg-gray-50 rounded-lg border border-gray-200 space-y-2">
+                      {/* Row 1: Time slots + remove */}
                       <div className="flex items-center gap-2">
-                        {/* Day - includes Weekday/Weekend groups */}
-                        <select
-                          value={sched.day}
-                          onChange={(e) => {
-                            const updated = [...formData.venue_info.preferred_schedules];
-                            updated[idx] = { ...updated[idx], day: e.target.value };
-                            setFormData(f => ({ ...f, venue_info: { ...f.venue_info, preferred_schedules: updated } }));
-                          }}
-                          className="px-2 py-1.5 text-xs border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                        >
-                          <optgroup label="Groups">
-                            <option value="WEEKDAY">Weekdays (Mon-Fri)</option>
-                            <option value="WEEKEND">Weekends (Sat-Sun)</option>
-                          </optgroup>
-                          <optgroup label="Specific Day">
-                            {DAYS_OF_WEEK.map(d => (
-                              <option key={d} value={d}>{d.charAt(0) + d.slice(1).toLowerCase()}</option>
-                            ))}
-                          </optgroup>
-                        </select>
-
-                        {/* Time slot buttons — matches requirement form */}
                         <div className="flex flex-wrap gap-1">
                           {Object.entries(TIME_SLOTS).map(([key, slot]) => (
                             <button
@@ -1647,15 +1634,11 @@ function VenueModal({ venue, options, onClose, onSave }: VenueModalProps) {
                             </button>
                           ))}
                         </div>
-
-                        {/* Time display */}
                         {sched.start_time && sched.end_time && (
                           <span className="text-[10px] text-gray-500 whitespace-nowrap">
                             {formatTimeObj(sched.start_time)} - {formatTimeObj(sched.end_time)}
                           </span>
                         )}
-
-                        {/* Remove row */}
                         <button
                           type="button"
                           onClick={() => {
@@ -1668,9 +1651,53 @@ function VenueModal({ venue, options, onClose, onSave }: VenueModalProps) {
                         </button>
                       </div>
 
-                      {/* Activities - multi-select with chips */}
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-[10px] text-gray-500 font-medium">Activities:</span>
+                      {/* Row 2: Days - multi-select chips */}
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-[10px] text-gray-500 font-medium w-12">Days:</span>
+                        {currentDays.map(day => {
+                          const opt = DAY_OPTIONS.find(o => o.value === day);
+                          return (
+                            <span
+                              key={day}
+                              className="inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] bg-blue-50 text-blue-700 rounded-full border border-blue-200"
+                            >
+                              {opt?.short || day}
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const newDays = currentDays.filter(d => d !== day);
+                                  const updated = [...formData.venue_info.preferred_schedules];
+                                  updated[idx] = { ...updated[idx], day: newDays.join(', ') };
+                                  setFormData(f => ({ ...f, venue_info: { ...f.venue_info, preferred_schedules: updated } }));
+                                }}
+                                className="hover:text-red-500"
+                              >
+                                <X className="h-2.5 w-2.5" />
+                              </button>
+                            </span>
+                          );
+                        })}
+                        <select
+                          value=""
+                          onChange={(e) => {
+                            if (!e.target.value) return;
+                            const newDays = [...currentDays, e.target.value];
+                            const updated = [...formData.venue_info.preferred_schedules];
+                            updated[idx] = { ...updated[idx], day: newDays.join(', ') };
+                            setFormData(f => ({ ...f, venue_info: { ...f.venue_info, preferred_schedules: updated } }));
+                          }}
+                          className="px-1.5 py-0.5 text-[10px] border border-dashed border-blue-300 rounded text-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white"
+                        >
+                          <option value="">+ Day</option>
+                          {DAY_OPTIONS.filter(o => !currentDays.includes(o.value)).map(o => (
+                            <option key={o.value} value={o.value}>{o.label}</option>
+                          ))}
+                        </select>
+                      </div>
+
+                      {/* Row 3: Activities - multi-select chips */}
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-[10px] text-gray-500 font-medium w-12">Activities:</span>
                         {currentActivities.map(act => (
                           <span
                             key={act}
@@ -1702,7 +1729,7 @@ function VenueModal({ venue, options, onClose, onSave }: VenueModalProps) {
                           }}
                           className="px-1.5 py-0.5 text-[10px] border border-dashed border-gray-300 rounded text-gray-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white"
                         >
-                          <option value="">+ Add activity</option>
+                          <option value="">+ Activity</option>
                           {ACTIVITY_OPTIONS.filter(a => !currentActivities.includes(a)).map(a => (
                             <option key={a} value={a}>{a}</option>
                           ))}
