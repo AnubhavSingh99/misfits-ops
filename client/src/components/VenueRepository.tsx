@@ -742,7 +742,16 @@ export function VenueRepository() {
             <div className="h-6 w-px bg-gray-200" />
             {/* Onboarded toggle */}
             <button
-              onClick={() => setShowOnboarded(v => !v)}
+              onClick={() => {
+                const turningOn = !showOnboarded;
+                setShowOnboarded(turningOn);
+                if (turningOn) {
+                  setActiveStatusFilters([]);
+                  setShowInactive(false);
+                } else if (!showInactive) {
+                  setActiveStatusFilters(['new', 'contacted', 'interested', 'negotiating', 'rejected']);
+                }
+              }}
               className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border transition-all ${
                 showOnboarded
                   ? 'bg-green-50 text-green-700 border-green-300'
@@ -753,7 +762,16 @@ export function VenueRepository() {
             </button>
             {/* Inactive toggle */}
             <button
-              onClick={() => setShowInactive(v => !v)}
+              onClick={() => {
+                const turningOn = !showInactive;
+                setShowInactive(turningOn);
+                if (turningOn) {
+                  setActiveStatusFilters([]);
+                  setShowOnboarded(false);
+                } else if (!showOnboarded) {
+                  setActiveStatusFilters(['new', 'contacted', 'interested', 'negotiating', 'rejected']);
+                }
+              }}
               className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border transition-all ${
                 showInactive
                   ? 'bg-gray-100 text-gray-700 border-gray-400'
