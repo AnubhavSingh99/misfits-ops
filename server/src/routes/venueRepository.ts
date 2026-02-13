@@ -881,7 +881,7 @@ router.get('/suggestions/:requirementId', async (req: Request, res: Response) =>
     if (dayMatchValues.length > 0) {
       repoScoreClauses.push(`CASE WHEN EXISTS (
         SELECT 1 FROM jsonb_array_elements(vr.venue_info->'preferred_schedules') AS ps
-        WHERE ps->>'day' = ANY($${paramIdx})
+        WHERE string_to_array(ps->>'day', ', ') && $${paramIdx}::text[]
       ) THEN 0 ELSE 1 END`);
       repoParams.push(dayMatchValues);
       paramIdx++;
@@ -955,7 +955,7 @@ router.get('/suggestions/:requirementId', async (req: Request, res: Response) =>
         SELECT 1 FROM jsonb_array_elements(
           CASE WHEN jsonb_typeof(l.venue_info->'preferred_schedules') = 'array'
                THEN l.venue_info->'preferred_schedules' ELSE '[]'::jsonb END
-        ) AS ps WHERE ps->>'day' = ANY($${vmsParamIdx})
+        ) AS ps WHERE string_to_array(ps->>'day', ', ') && $${vmsParamIdx}::text[]
       ) THEN 0 ELSE 1 END`);
       vmsParams.push(dayMatchValues);
       vmsParamIdx++;
@@ -1130,12 +1130,17 @@ router.post('/:id/transfer-to-vms', async (req: Request, res: Response) => {
     if (venueInfo.chargeable !== undefined) grpcRequest.venue_info.chargeable = venueInfo.chargeable;
     if (venueInfo.reason_for_charge) grpcRequest.venue_info.reason_for_charge = venueInfo.reason_for_charge;
     if (venueInfo.preferred_schedules && venueInfo.preferred_schedules.length > 0) {
-      // Expand WEEKDAY/WEEKEND and comma-separated activities into individual VMS-compatible entries
+      // Expand comma-separated days, WEEKDAY/WEEKEND groups, and comma-separated activities into individual VMS entries
       const expandedSchedules: any[] = [];
       for (const sched of venueInfo.preferred_schedules) {
-        const days = sched.day === 'WEEKDAY' ? ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY']
-                   : sched.day === 'WEEKEND' ? ['SATURDAY', 'SUNDAY']
-                   : [sched.day];
+        // Split comma-separated days, then expand WEEKDAY/WEEKEND groups
+        const rawDays = sched.day ? sched.day.split(', ').filter((d: string) => d) : [''];
+        const days: string[] = [];
+        for (const d of rawDays) {
+          if (d === 'WEEKDAY') days.push('MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY');
+          else if (d === 'WEEKEND') days.push('SATURDAY', 'SUNDAY');
+          else days.push(d);
+        }
         const activities = sched.preferred_activity
           ? sched.preferred_activity.split(', ').filter((a: string) => a)
           : [''];
