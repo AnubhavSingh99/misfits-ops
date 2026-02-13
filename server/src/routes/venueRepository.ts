@@ -539,8 +539,8 @@ router.patch('/:id', async (req: Request, res: Response) => {
       return res.status(400).json({ error: `Invalid status. Must be one of: ${VALID_STATUSES.join(', ')}` });
     }
 
-    // Validate URL format if being updated
-    if (updates.url) {
+    // Validate URL format if being updated and actually changed
+    if (updates.url && updates.url !== existingResult.rows[0].url) {
       const urlValidation = validateMapsUrl(updates.url);
       if (!urlValidation.valid) {
         return res.status(400).json({ error: urlValidation.error });
@@ -682,6 +682,59 @@ router.patch('/:id/status', async (req: Request, res: Response) => {
 });
 
 // ============================================
+// SUGGESTION MATCHING HELPERS
+// ============================================
+
+/**
+ * Convert a day_type name (from dim_day_types) to VMS-compatible day names
+ * e.g. "weekday" -> ['MONDAY','TUESDAY','WEDNESDAY','THURSDAY','FRIDAY']
+ */
+function dayTypeToVmsDays(dayType: string): string[] {
+  if (!dayType) return [];
+  const lower = dayType.toLowerCase();
+  switch (lower) {
+    case 'weekday':
+      return ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY'];
+    case 'weekend':
+      return ['SATURDAY', 'SUNDAY'];
+    case 'monday': return ['MONDAY'];
+    case 'tuesday': return ['TUESDAY'];
+    case 'wednesday': return ['WEDNESDAY'];
+    case 'thursday': return ['THURSDAY'];
+    case 'friday': return ['FRIDAY'];
+    case 'saturday': return ['SATURDAY'];
+    case 'sunday': return ['SUNDAY'];
+    default: return [];
+  }
+}
+
+/**
+ * Convert time_of_day array (e.g. ['evening','night']) to hour range
+ * Returns { minHour, maxHour } for overlap checking with preferred_schedules
+ */
+function timeOfDayToHourRange(slots: string[]): { minHour: number; maxHour: number } | null {
+  if (!slots || slots.length === 0) return null;
+  const slotRanges: Record<string, { start: number; end: number }> = {
+    early_morning: { start: 5, end: 8 },
+    morning:       { start: 8, end: 12 },
+    afternoon:     { start: 12, end: 16 },
+    evening:       { start: 16, end: 20 },
+    night:         { start: 20, end: 24 },
+    all_nighter:   { start: 0, end: 5 }
+  };
+  let minHour = 24;
+  let maxHour = 0;
+  for (const slot of slots) {
+    const range = slotRanges[slot.toLowerCase()];
+    if (range) {
+      minHour = Math.min(minHour, range.start);
+      maxHour = Math.max(maxHour, range.end);
+    }
+  }
+  return minHour < maxHour ? { minHour, maxHour } : null;
+}
+
+// ============================================
 // VENUE SUGGESTIONS FOR REQUIREMENTS
 // ============================================
 
@@ -693,9 +746,12 @@ router.get('/suggestions/:requirementId', async (req: Request, res: Response) =>
   try {
     const { requirementId } = req.params;
 
-    // Get requirement details
+    // Get requirement details with day_type joined
     const reqResult = await queryLocal(
-      `SELECT * FROM venue_requirements WHERE id = $1`,
+      `SELECT vr.*, dt.day_type as day_type_name
+       FROM venue_requirements vr
+       LEFT JOIN dim_day_types dt ON vr.day_type_id = dt.id
+       WHERE vr.id = $1`,
       [requirementId]
     );
 
@@ -708,6 +764,21 @@ router.get('/suggestions/:requirementId', async (req: Request, res: Response) =>
     const area = requirement.area_name || requirement.area;
     const activity = requirement.activity_name || requirement.activity;
     const capacity = requirement.capacity;
+    const dayTypeName = requirement.day_type_name;
+    const timeOfDay: string[] = requirement.time_of_day || [];
+
+    // Convert requirement day/time to VMS-compatible formats for scoring
+    const vmsDays = dayTypeToVmsDays(dayTypeName);
+    const hourRange = timeOfDayToHourRange(timeOfDay);
+
+    // Build expanded day match values (include WEEKDAY/WEEKEND group labels for matching venue schedules)
+    const dayMatchValues = [...vmsDays];
+    if (vmsDays.some(d => ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY'].includes(d))) {
+      dayMatchValues.push('WEEKDAY');
+    }
+    if (vmsDays.some(d => ['SATURDAY', 'SUNDAY'].includes(d))) {
+      dayMatchValues.push('WEEKEND');
+    }
 
     // Sports activities - these need sports venues
     const SPORTS_ACTIVITIES = ['Badminton', 'Basketball', 'Box Cricket', 'Football', 'Pickleball', 'Table Tennis', 'Volleyball', 'Cycling', 'Running', 'Cricket'];
@@ -796,6 +867,31 @@ router.get('/suggestions/:requirementId', async (req: Request, res: Response) =>
       repoParams.push(capacityCategory);
     }
 
+    // Score and sort: activity match > day match > no match
+    // Activity field may be comma-separated (multi-select), so use string_to_array for exact matching
+    const repoScoreClauses: string[] = [];
+    if (activity) {
+      repoScoreClauses.push(`CASE WHEN EXISTS (
+        SELECT 1 FROM jsonb_array_elements(vr.venue_info->'preferred_schedules') AS ps
+        WHERE $${paramIdx} = ANY(string_to_array(ps->>'preferred_activity', ', '))
+      ) THEN 0 ELSE 2 END`);
+      repoParams.push(activity);
+      paramIdx++;
+    }
+    if (dayMatchValues.length > 0) {
+      repoScoreClauses.push(`CASE WHEN EXISTS (
+        SELECT 1 FROM jsonb_array_elements(vr.venue_info->'preferred_schedules') AS ps
+        WHERE ps->>'day' = ANY($${paramIdx})
+      ) THEN 0 ELSE 1 END`);
+      repoParams.push(dayMatchValues);
+      paramIdx++;
+    }
+
+    if (repoScoreClauses.length > 0) {
+      repoQuery += ` ORDER BY (${repoScoreClauses.join(' + ')}), vr.name`;
+    } else {
+      repoQuery += ` ORDER BY vr.name`;
+    }
     repoQuery += ` LIMIT 10`;
     const repoResult = await queryLocal(repoQuery, repoParams);
     suggestions.push(...repoResult.rows);
@@ -840,14 +936,37 @@ router.get('/suggestions/:requirementId', async (req: Request, res: Response) =>
       vmsQuery += ` AND l.name !~* '(sport|badminton|cricket|football|basketball|tennis|volleyball|gym|fitness)'`;
     }
 
-    // If activity is specified, prefer venues that have it in preferred_schedules
-    // But don't require it (venue might support activity but not have schedules set)
+    // Multi-factor scoring: activity match (weight 3) + day match (weight 1)
+    // Venues without schedules still show, just ranked lower
+    // Activity field may be comma-separated (multi-select), so use string_to_array for exact matching
+    const vmsScoreClauses: string[] = [];
+    if (activity) {
+      vmsScoreClauses.push(`CASE WHEN EXISTS (
+        SELECT 1 FROM jsonb_array_elements(
+          CASE WHEN jsonb_typeof(l.venue_info->'preferred_schedules') = 'array'
+               THEN l.venue_info->'preferred_schedules' ELSE '[]'::jsonb END
+        ) AS ps WHERE $${vmsParamIdx} = ANY(string_to_array(ps->>'preferred_activity', ', '))
+      ) THEN 0 ELSE 3 END`);
+      vmsParams.push(activity);
+      vmsParamIdx++;
+    }
+    if (dayMatchValues.length > 0) {
+      vmsScoreClauses.push(`CASE WHEN EXISTS (
+        SELECT 1 FROM jsonb_array_elements(
+          CASE WHEN jsonb_typeof(l.venue_info->'preferred_schedules') = 'array'
+               THEN l.venue_info->'preferred_schedules' ELSE '[]'::jsonb END
+        ) AS ps WHERE ps->>'day' = ANY($${vmsParamIdx})
+      ) THEN 0 ELSE 1 END`);
+      vmsParams.push(dayMatchValues);
+      vmsParamIdx++;
+    }
 
-    vmsQuery += ` ORDER BY
-      CASE WHEN l.venue_info->'preferred_schedules' @> $${vmsParamIdx}::jsonb THEN 0 ELSE 1 END,
-      l.name
-      LIMIT 10`;
-    vmsParams.push(JSON.stringify([{ preferred_activity: activity || '' }]));
+    if (vmsScoreClauses.length > 0) {
+      vmsQuery += ` ORDER BY (${vmsScoreClauses.join(' + ')}), l.name`;
+    } else {
+      vmsQuery += ` ORDER BY l.name`;
+    }
+    vmsQuery += ` LIMIT 10`;
 
     const vmsResult = await queryProduction(vmsQuery, vmsParams);
     suggestions.push(...vmsResult.rows);
@@ -890,7 +1009,7 @@ router.get('/suggestions/:requirementId', async (req: Request, res: Response) =>
 
     res.json({
       success: true,
-      requirement: { id: requirement.id, city, area, activity, capacity },
+      requirement: { id: requirement.id, city, area, activity, capacity, day_type: dayTypeName, time_of_day: timeOfDay },
       suggestions: deduped
     });
   } catch (error) {
@@ -1011,7 +1130,28 @@ router.post('/:id/transfer-to-vms', async (req: Request, res: Response) => {
     if (venueInfo.chargeable !== undefined) grpcRequest.venue_info.chargeable = venueInfo.chargeable;
     if (venueInfo.reason_for_charge) grpcRequest.venue_info.reason_for_charge = venueInfo.reason_for_charge;
     if (venueInfo.preferred_schedules && venueInfo.preferred_schedules.length > 0) {
-      grpcRequest.venue_info.preferred_schedules = venueInfo.preferred_schedules;
+      // Expand WEEKDAY/WEEKEND and comma-separated activities into individual VMS-compatible entries
+      const expandedSchedules: any[] = [];
+      for (const sched of venueInfo.preferred_schedules) {
+        const days = sched.day === 'WEEKDAY' ? ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY']
+                   : sched.day === 'WEEKEND' ? ['SATURDAY', 'SUNDAY']
+                   : [sched.day];
+        const activities = sched.preferred_activity
+          ? sched.preferred_activity.split(', ').filter((a: string) => a)
+          : [''];
+        for (const day of days) {
+          for (const act of activities) {
+            expandedSchedules.push({
+              day,
+              preferred_activity: act,
+              ...(sched.start_time ? { start_time: sched.start_time } : {}),
+              ...(sched.end_time ? { end_time: sched.end_time } : {}),
+              ...(sched.notes ? { notes: sched.notes } : {})
+            });
+          }
+        }
+      }
+      grpcRequest.venue_info.preferred_schedules = expandedSchedules;
     }
 
     // Call gRPC CreateVenue
