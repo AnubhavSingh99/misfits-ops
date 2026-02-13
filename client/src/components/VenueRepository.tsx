@@ -20,7 +20,9 @@ import {
   Trash2,
   Activity,
   Upload,
-  Check
+  Check,
+  GripVertical,
+  Layers
 } from 'lucide-react';
 import { MultiSelectDropdown } from './ui/MultiSelectDropdown';
 
@@ -92,6 +94,7 @@ interface Stats {
   negotiating: number;
   rejected: number;
   onboarded: number;
+  inactive: number;
   total: number;
 }
 
@@ -121,7 +124,8 @@ const STATUS_CONFIG: Record<string, { label: string; color: string; bgColor: str
   interested: { label: 'Interested', color: 'text-cyan-600', bgColor: 'bg-cyan-50', borderColor: 'border-cyan-200' },
   negotiating: { label: 'Negotiating', color: 'text-purple-600', bgColor: 'bg-purple-50', borderColor: 'border-purple-200' },
   rejected: { label: 'Rejected', color: 'text-red-600', bgColor: 'bg-red-50', borderColor: 'border-red-200' },
-  onboarded: { label: 'Onboarded', color: 'text-green-600', bgColor: 'bg-green-50', borderColor: 'border-green-200' }
+  onboarded: { label: 'Onboarded', color: 'text-green-600', bgColor: 'bg-green-50', borderColor: 'border-green-200' },
+  inactive: { label: 'Inactive', color: 'text-gray-600', bgColor: 'bg-gray-50', borderColor: 'border-gray-200' }
 };
 
 // Capacity label mapping
@@ -143,7 +147,6 @@ export function VenueRepository() {
   const [showModal, setShowModal] = useState(false);
   const [editingVenue, setEditingVenue] = useState<Venue | null>(null);
   const [filter, setFilter] = useState({
-    status: '',
     search: '',
     cities: [] as number[],
     areas: [] as number[],
@@ -151,6 +154,22 @@ export function VenueRepository() {
     capacities: [] as number[],
     notTransferred: false
   });
+  const [activeStatusFilters, setActiveStatusFilters] = useState<string[]>(
+    ['new', 'contacted', 'interested', 'negotiating', 'rejected']
+  );
+  const [showOnboarded, setShowOnboarded] = useState(false);
+  const [showInactive, setShowInactive] = useState(false);
+
+  // Hierarchy order state (like requirements page)
+  type HierarchyLevel = 'city' | 'area';
+  const [hierarchyLevels, setHierarchyLevels] = useState<HierarchyLevel[]>(['city', 'area']);
+  const [enabledLevels, setEnabledLevels] = useState<Set<HierarchyLevel>>(new Set(['city', 'area']));
+  const [draggingLevel, setDraggingLevel] = useState<HierarchyLevel | null>(null);
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+  const groupByCity = enabledLevels.has('city');
+  const groupByArea = enabledLevels.has('area');
+  // Determine effective order: only enabled levels, in their drag order
+  const effectiveOrder = hierarchyLevels.filter(l => enabledLevels.has(l));
 
   // Transfer modal state
   const [transferModal, setTransferModal] = useState<{
@@ -177,6 +196,74 @@ export function VenueRepository() {
     [filterOptions.capacities]
   );
 
+  // Compute grouped venue hierarchy
+  type VenueGroup = {
+    key: string;
+    label: string;
+    level: 'city' | 'area';
+    count: number;
+    venues: Venue[];
+    children: VenueGroup[];
+  };
+
+  const groupedVenues = useMemo((): VenueGroup[] | null => {
+    if (effectiveOrder.length === 0) return null; // flat list
+
+    const getField = (v: Venue, level: HierarchyLevel) =>
+      level === 'city' ? (v.city_name || 'Unknown City') : (v.area_name || 'Unknown Area');
+
+    const primary = effectiveOrder[0];
+    const secondary = effectiveOrder.length > 1 ? effectiveOrder[1] : null;
+
+    const primaryMap = new Map<string, Venue[]>();
+    for (const v of venues) {
+      const key = getField(v, primary);
+      if (!primaryMap.has(key)) primaryMap.set(key, []);
+      primaryMap.get(key)!.push(v);
+    }
+
+    return Array.from(primaryMap.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([label, groupVenues]) => {
+        const children: VenueGroup[] = [];
+        if (secondary) {
+          const secondaryMap = new Map<string, Venue[]>();
+          for (const v of groupVenues) {
+            const key = getField(v, secondary);
+            if (!secondaryMap.has(key)) secondaryMap.set(key, []);
+            secondaryMap.get(key)!.push(v);
+          }
+          for (const [subLabel, subVenues] of Array.from(secondaryMap.entries()).sort(([a], [b]) => a.localeCompare(b))) {
+            children.push({
+              key: `${label}::${subLabel}`,
+              label: subLabel,
+              level: secondary,
+              count: subVenues.length,
+              venues: subVenues,
+              children: []
+            });
+          }
+        }
+        return {
+          key: label,
+          label,
+          level: primary,
+          count: groupVenues.length,
+          venues: secondary ? [] : groupVenues,
+          children
+        };
+      });
+  }, [venues, effectiveOrder]);
+
+  const toggleGroup = (key: string) => {
+    setCollapsedGroups(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
   // Fetch options on mount
   useEffect(() => {
     fetchOptions();
@@ -196,7 +283,7 @@ export function VenueRepository() {
     if (isExpanded) {
       fetchVenues();
     }
-  }, [filter.cities, filter.areas, filter.activities, filter.capacities, filter.notTransferred]);
+  }, [filter.cities, filter.areas, filter.activities, filter.capacities, filter.notTransferred, activeStatusFilters, showOnboarded, showInactive]);
 
   // Cascading: clear orphaned area selections when city changes
   useEffect(() => {
@@ -249,7 +336,15 @@ export function VenueRepository() {
     setLoading(true);
     try {
       const params = new URLSearchParams();
-      if (filter.status) params.append('status', filter.status);
+      // Build combined statuses from multi-select + toggle buttons
+      const combinedStatuses = [
+        ...activeStatusFilters,
+        ...(showOnboarded ? ['onboarded'] : []),
+        ...(showInactive ? ['inactive'] : [])
+      ];
+      if (combinedStatuses.length > 0) {
+        params.append('statuses', combinedStatuses.join(','));
+      }
       if (filter.search) params.append('search', filter.search);
 
       // Map selected IDs back to names for API
@@ -488,6 +583,70 @@ export function VenueRepository() {
     }
   };
 
+  const renderVenueRow = (venue: Venue) => (
+    <tr key={venue.id} className="hover:bg-gray-50">
+      <td className="px-4 py-3 break-words">
+        <div className="flex items-start gap-2 flex-wrap">
+          <span className="font-medium text-gray-900">{venue.name}</span>
+          {venue.transferred_to_vms && (
+            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-green-100 text-green-700 border border-green-200" title={`Transferred to VMS${venue.vms_location_id ? ` (ID: ${venue.vms_location_id})` : ''}`}>
+              <Check className="h-2.5 w-2.5" />
+              VMS
+            </span>
+          )}
+        </div>
+        {venue.url && (
+          <a href={venue.url} target="_blank" rel="noopener noreferrer" className="text-xs text-indigo-600 hover:underline flex items-center gap-1">
+            <ExternalLink className="h-3 w-3" /> Maps
+          </a>
+        )}
+      </td>
+      <td className="px-4 py-3 text-gray-600">
+        {venue.venue_info?.capacity_category
+          ? CAPACITY_LABELS[venue.venue_info.capacity_category] || venue.venue_info.capacity_category
+          : '-'}
+      </td>
+      <td className="px-4 py-3 text-xs text-gray-900">
+        {venue.contact_name || <span className="text-gray-400">-</span>}
+      </td>
+      <td className="px-4 py-3">
+        {venue.contact_phone ? (
+          <a href={`tel:${venue.contact_phone}`} className="text-xs text-indigo-600 hover:text-indigo-800 flex items-center gap-0.5">
+            <Phone className="h-3 w-3" />{venue.contact_phone}
+          </a>
+        ) : <span className="text-gray-400 text-xs">-</span>}
+      </td>
+      <td className="px-4 py-3">
+        <select
+          value={venue.status}
+          onChange={(e) => handleStatusChange(venue.id, e.target.value)}
+          className={`text-xs px-2 py-1 rounded-full border ${STATUS_CONFIG[venue.status]?.bgColor || 'bg-gray-50'} ${STATUS_CONFIG[venue.status]?.color || 'text-gray-600'} ${STATUS_CONFIG[venue.status]?.borderColor || 'border-gray-200'}`}
+        >
+          {options?.statuses.map((s) => (
+            <option key={s} value={s}>{STATUS_CONFIG[s]?.label || s}</option>
+          ))}
+        </select>
+        {venue.status === 'rejected' && venue.rejection_reason && (
+          <div className="text-xs text-red-500 mt-1" title={venue.rejection_reason}>
+            {venue.rejection_reason.substring(0, 20)}...
+          </div>
+        )}
+      </td>
+      <td className="px-4 py-3">
+        <div className="flex items-center gap-2">
+          <button onClick={() => openEditModal(venue)} className="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition-colors" title="Edit">
+            <Edit3 className="h-4 w-4" />
+          </button>
+          {venue.status !== 'onboarded' && !venue.transferred_to_vms && (
+            <button onClick={() => handleDeleteVenue(venue.id)} className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors" title="Delete">
+              <Trash2 className="h-4 w-4" />
+            </button>
+          )}
+        </div>
+      </td>
+    </tr>
+  );
+
   return (
     <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
       {/* Header - Always visible, styled like Done & Deprioritised */}
@@ -531,24 +690,48 @@ export function VenueRepository() {
       {/* Expanded Content */}
       {isExpanded && (
         <div className="border-t border-gray-200">
-          {/* Stats Row */}
-          {stats && (
-            <div className="grid grid-cols-6 gap-2 p-4 bg-gray-50 border-b border-gray-200">
-              {Object.entries(STATUS_CONFIG).map(([key, config]) => (
-                <div
-                  key={key}
-                  onClick={() => { setFilter(f => ({ ...f, status: f.status === key ? '' : key })); setTimeout(fetchVenues, 0); }}
-                  className={`px-3 py-2 rounded-lg cursor-pointer transition-all ${filter.status === key ? `${config.bgColor} ${config.borderColor} border-2` : 'bg-white border border-gray-200 hover:border-gray-300'}`}
-                >
-                  <div className={`text-xs font-medium ${config.color}`}>{config.label}</div>
-                  <div className={`text-xl font-bold ${config.color}`}>{stats[key as keyof Stats]}</div>
-                </div>
-              ))}
-            </div>
-          )}
-
           {/* Filter Dropdowns */}
           <div className="flex items-center gap-2 px-4 py-3 border-b border-gray-200 bg-white flex-wrap">
+            {/* Status Filter Dropdown */}
+            <MultiSelectDropdown<string>
+              label="Status"
+              options={[
+                { id: 'new', name: 'New' },
+                { id: 'contacted', name: 'Contacted' },
+                { id: 'interested', name: 'Interested' },
+                { id: 'negotiating', name: 'Negotiating' },
+                { id: 'rejected', name: 'Rejected' }
+              ]}
+              selected={activeStatusFilters}
+              onChange={(val) => setActiveStatusFilters(val)}
+              icon={<Clock className="h-3.5 w-3.5" />}
+              compact
+            />
+            {/* Divider */}
+            <div className="h-6 w-px bg-gray-200" />
+            {/* Onboarded toggle */}
+            <button
+              onClick={() => setShowOnboarded(v => !v)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border transition-all ${
+                showOnboarded
+                  ? 'bg-green-50 text-green-700 border-green-300'
+                  : 'bg-white text-gray-500 border-gray-200 hover:border-gray-300'
+              }`}
+            >
+              Onboarded ({stats?.onboarded || 0})
+            </button>
+            {/* Inactive toggle */}
+            <button
+              onClick={() => setShowInactive(v => !v)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border transition-all ${
+                showInactive
+                  ? 'bg-gray-100 text-gray-700 border-gray-400'
+                  : 'bg-white text-gray-500 border-gray-200 hover:border-gray-300'
+              }`}
+            >
+              Inactive ({stats?.inactive || 0})
+            </button>
+            <div className="h-6 w-px bg-gray-200" />
             <MultiSelectDropdown
               label="City"
               options={filterOptions.cities}
@@ -604,7 +787,7 @@ export function VenueRepository() {
             )}
           </div>
 
-          {/* Search */}
+          {/* Search + Hierarchy */}
           <div className="flex items-center gap-3 p-4 border-b border-gray-200">
             <input
               type="text"
@@ -620,10 +803,67 @@ export function VenueRepository() {
             >
               <RefreshCw className="h-4 w-4" />
             </button>
+            <div className="h-6 w-px bg-gray-200" />
+            <Layers size={14} className="text-gray-400" />
+            <span className="text-xs font-medium text-gray-500">Hierarchy Order:</span>
+            {hierarchyLevels.map((level, index) => {
+              const isEnabled = enabledLevels.has(level);
+              const isDragging = draggingLevel === level;
+              const isDragTarget = draggingLevel && draggingLevel !== level;
+              const config = level === 'city'
+                ? { icon: MapPin, color: 'blue', label: 'City', enabled: 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100', disabled: 'bg-gray-50 text-gray-400 border-gray-200 hover:bg-gray-100' }
+                : { icon: Building2, color: 'cyan', label: 'Area', enabled: 'bg-cyan-50 text-cyan-700 border-cyan-200 hover:bg-cyan-100', disabled: 'bg-gray-50 text-gray-400 border-gray-200 hover:bg-gray-100' };
+              const Icon = config.icon;
+              return (
+                <div
+                  key={level}
+                  draggable
+                  onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; setDraggingLevel(level); }}
+                  onDragEnd={() => setDraggingLevel(null)}
+                  onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    if (draggingLevel && draggingLevel !== level) {
+                      const newLevels = [...hierarchyLevels];
+                      const dragIdx = newLevels.indexOf(draggingLevel);
+                      const dropIdx = newLevels.indexOf(level);
+                      newLevels.splice(dragIdx, 1);
+                      newLevels.splice(dropIdx, 0, draggingLevel);
+                      setHierarchyLevels(newLevels);
+                    }
+                  }}
+                  style={{
+                    transform: isDragging ? 'scale(1.05) rotate(-2deg)' : isDragTarget ? 'scale(0.98)' : 'scale(1)',
+                    opacity: isDragging ? 0.7 : 1,
+                    boxShadow: isDragging ? '0 8px 20px -4px rgba(0,0,0,0.15)' : 'none'
+                  }}
+                  className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg cursor-grab active:cursor-grabbing border text-xs font-medium select-none transition-all duration-200 hover:shadow-md hover:-translate-y-0.5 ${isEnabled ? config.enabled : config.disabled}`}
+                >
+                  <GripVertical size={12} className={`transition-all ${isDragging ? 'opacity-70' : 'opacity-30'}`} />
+                  <Icon size={12} />
+                  <span>{config.label}</span>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      e.preventDefault();
+                      setEnabledLevels(prev => {
+                        const next = new Set(prev);
+                        if (next.has(level)) next.delete(level);
+                        else next.add(level);
+                        return next;
+                      });
+                    }}
+                    className={`ml-0.5 p-0.5 rounded-full transition-all ${isEnabled ? 'bg-green-100/80 hover:bg-green-200 text-green-600' : 'bg-gray-200/80 hover:bg-gray-300 text-gray-400'}`}
+                  >
+                    {isEnabled ? <Check size={10} strokeWidth={3} /> : <X size={10} strokeWidth={2.5} />}
+                  </button>
+                </div>
+              );
+            })}
           </div>
 
           {/* Venues List */}
-          <div className="max-h-[500px] overflow-y-auto">
+          <div className="max-h-[600px] overflow-y-auto">
             {loading ? (
               <div className="flex items-center justify-center py-12">
                 <Loader2 className="h-6 w-6 animate-spin text-indigo-500" />
@@ -632,97 +872,114 @@ export function VenueRepository() {
               <div className="text-center py-12 text-gray-500">
                 No venues found. Add your first venue to get started.
               </div>
-            ) : (
-              <table className="w-full text-sm">
-                <thead className="bg-gray-50 sticky top-0">
+            ) : groupedVenues ? (
+              /* Grouped view */
+              <table className="w-full text-sm table-fixed">
+                <colgroup>
+                  <col className="w-[30%]" />
+                  <col className="w-[12%]" />
+                  <col className="w-[15%]" />
+                  <col className="w-[15%]" />
+                  <col className="w-[14%]" />
+                  <col className="w-[14%]" />
+                </colgroup>
+                <thead className="bg-gray-50 sticky top-0 z-10">
                   <tr>
                     <th className="text-left px-4 py-3 font-medium text-gray-600">Venue</th>
-                    <th className="text-left px-4 py-3 font-medium text-gray-600">Location</th>
                     <th className="text-left px-4 py-3 font-medium text-gray-600">Capacity</th>
-                    <th className="text-left px-4 py-3 font-medium text-gray-600">Contact</th>
+                    <th className="text-left px-4 py-3 font-medium text-gray-600">Contact Name</th>
+                    <th className="text-left px-4 py-3 font-medium text-gray-600">Contact Number</th>
                     <th className="text-left px-4 py-3 font-medium text-gray-600">Status</th>
                     <th className="text-left px-4 py-3 font-medium text-gray-600">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {venues.map((venue) => (
-                    <tr key={venue.id} className="hover:bg-gray-50">
-                      <td className="px-4 py-3">
-                        <div className="flex items-center gap-2">
-                          <span className="font-medium text-gray-900">{venue.name}</span>
-                          {venue.transferred_to_vms && (
-                            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-green-100 text-green-700 border border-green-200" title={`Transferred to VMS${venue.vms_location_id ? ` (ID: ${venue.vms_location_id})` : ''}`}>
-                              <Check className="h-2.5 w-2.5" />
-                              VMS
+                {groupedVenues.map((group) => {
+                  const isCollapsed = collapsedGroups.has(group.key);
+                  return (
+                    <React.Fragment key={group.key}>
+                      {/* City/Area group header */}
+                      <tr
+                        onClick={() => toggleGroup(group.key)}
+                        className={`cursor-pointer ${
+                          group.level === 'city'
+                            ? 'bg-blue-50/60 hover:bg-blue-50'
+                            : 'bg-cyan-50/40 hover:bg-cyan-50/60'
+                        }`}
+                      >
+                        <td colSpan={6} className={`px-4 py-2.5 ${group.level !== 'city' ? 'pl-8' : ''}`}>
+                          <div className="flex items-center gap-2">
+                            {isCollapsed ? <ChevronDown className="h-3.5 w-3.5 text-gray-400" /> : <ChevronUp className="h-3.5 w-3.5 text-gray-400" />}
+                            {group.level === 'city'
+                              ? <MapPin className="h-3.5 w-3.5 text-blue-500" />
+                              : <Building2 className="h-3.5 w-3.5 text-cyan-500" />}
+                            <span className={`text-sm font-medium ${group.level === 'city' ? 'text-blue-800' : 'text-cyan-800'}`}>
+                              {group.label}
                             </span>
-                          )}
-                        </div>
-                        {venue.url && (
-                          <a
-                            href={venue.url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-xs text-indigo-600 hover:underline flex items-center gap-1"
-                          >
-                            <ExternalLink className="h-3 w-3" /> Maps
-                          </a>
-                        )}
-                      </td>
-                      <td className="px-4 py-3 text-gray-600">
-                        {venue.area_name && venue.city_name
-                          ? `${venue.area_name}, ${venue.city_name}`
-                          : venue.city_name || '-'}
-                      </td>
-                      <td className="px-4 py-3 text-gray-600">
-                        {venue.venue_info?.capacity_category
-                          ? CAPACITY_LABELS[venue.venue_info.capacity_category] || venue.venue_info.capacity_category
-                          : '-'}
-                      </td>
-                      <td className="px-4 py-3">
-                        {venue.contact_name && (
-                          <div className="text-gray-900">{venue.contact_name}</div>
-                        )}
-                        {venue.contact_phone && (
-                          <div className="text-xs text-gray-500">{venue.contact_phone}</div>
-                        )}
-                        {!venue.contact_name && !venue.contact_phone && '-'}
-                      </td>
-                      <td className="px-4 py-3">
-                        <select
-                          value={venue.status}
-                          onChange={(e) => handleStatusChange(venue.id, e.target.value)}
-                          className={`text-xs px-2 py-1 rounded-full border ${STATUS_CONFIG[venue.status]?.bgColor || 'bg-gray-50'} ${STATUS_CONFIG[venue.status]?.color || 'text-gray-600'} ${STATUS_CONFIG[venue.status]?.borderColor || 'border-gray-200'}`}
-                        >
-                          {options?.statuses.map((s) => (
-                            <option key={s} value={s}>{STATUS_CONFIG[s]?.label || s}</option>
-                          ))}
-                        </select>
-                        {venue.status === 'rejected' && venue.rejection_reason && (
-                          <div className="text-xs text-red-500 mt-1" title={venue.rejection_reason}>
-                            {venue.rejection_reason.substring(0, 20)}...
+                            <span className={`text-xs px-1.5 py-0.5 rounded-full ${
+                              group.level === 'city' ? 'bg-blue-100 text-blue-600' : 'bg-cyan-100 text-cyan-600'
+                            }`}>
+                              {group.count}
+                            </span>
                           </div>
-                        )}
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="flex items-center gap-2">
-                          <button
-                            onClick={() => openEditModal(venue)}
-                            className="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition-colors"
-                            title="Edit"
-                          >
-                            <Edit3 className="h-4 w-4" />
-                          </button>
-                          <button
-                            onClick={() => handleDeleteVenue(venue.id)}
-                            className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors"
-                            title="Delete"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
+                        </td>
+                      </tr>
+                      {!isCollapsed && (
+                        <>
+                          {/* Render children (area sub-groups) */}
+                          {group.children.map((child) => {
+                            const childCollapsed = collapsedGroups.has(child.key);
+                            return (
+                              <React.Fragment key={child.key}>
+                                <tr
+                                  onClick={() => toggleGroup(child.key)}
+                                  className="cursor-pointer bg-cyan-50/40 hover:bg-cyan-50/60"
+                                >
+                                  <td colSpan={6} className="px-4 pl-8 py-2">
+                                    <div className="flex items-center gap-2">
+                                      {childCollapsed ? <ChevronDown className="h-3 w-3 text-gray-400" /> : <ChevronUp className="h-3 w-3 text-gray-400" />}
+                                      <Building2 className="h-3.5 w-3.5 text-cyan-500" />
+                                      <span className="text-sm font-medium text-cyan-800">{child.label}</span>
+                                      <span className="text-xs px-1.5 py-0.5 rounded-full bg-cyan-100 text-cyan-600">{child.count}</span>
+                                    </div>
+                                  </td>
+                                </tr>
+                                {!childCollapsed && child.venues.map((venue) => renderVenueRow(venue))}
+                              </React.Fragment>
+                            );
+                          })}
+                          {/* Render direct venues (when no area sub-grouping) */}
+                          {group.venues.map((venue) => renderVenueRow(venue))}
+                        </>
+                      )}
+                    </React.Fragment>
+                  );
+                })}
+                </tbody>
+              </table>
+            ) : (
+              /* Flat table view */
+              <table className="w-full text-sm table-fixed">
+                <colgroup>
+                  <col className="w-[30%]" />
+                  <col className="w-[12%]" />
+                  <col className="w-[15%]" />
+                  <col className="w-[15%]" />
+                  <col className="w-[14%]" />
+                  <col className="w-[14%]" />
+                </colgroup>
+                <thead className="bg-gray-50 sticky top-0">
+                  <tr>
+                    <th className="text-left px-4 py-3 font-medium text-gray-600">Venue</th>
+                    <th className="text-left px-4 py-3 font-medium text-gray-600">Capacity</th>
+                    <th className="text-left px-4 py-3 font-medium text-gray-600">Contact Name</th>
+                    <th className="text-left px-4 py-3 font-medium text-gray-600">Contact Number</th>
+                    <th className="text-left px-4 py-3 font-medium text-gray-600">Status</th>
+                    <th className="text-left px-4 py-3 font-medium text-gray-600">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {venues.map((venue) => renderVenueRow(venue))}
                 </tbody>
               </table>
             )}

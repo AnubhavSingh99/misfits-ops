@@ -52,6 +52,18 @@ function formatDate(dateString: string | undefined | null): string {
   return date.toLocaleDateString('en-US', options);
 }
 
+const VENUE_CATEGORY_OPTIONS = [
+  { value: 'CAFE', label: 'Cafe' },
+  { value: 'PUB_AND_BAR', label: 'Pub & Bar' },
+  { value: 'STUDIO', label: 'Studio' }
+];
+
+const VMS_AMENITIES = [
+  'Alcohol Served', 'Big Tables', 'Clean Washrooms', 'Comfortable Seating',
+  'Disable Friendly', 'First-aid facilities', 'Free Drinking Water', 'Free Wifi',
+  'Good Lighting', 'Indoor seating', 'Music System', 'Outdoor seating', 'Smoking Area'
+];
+
 // Helper function to calculate TAT (Turn Around Time) in days
 function calculateTAT(createdAt: string | undefined | null, completedAt: string | undefined | null): string {
   if (!createdAt || !completedAt) return '-';
@@ -585,7 +597,7 @@ export default function VenueRequirementsDashboard() {
     return context;
   };
 
-  const [requirementsSectionExpanded, setRequirementsSectionExpanded] = useState(true); // Default expanded
+  const [requirementsSectionExpanded, setRequirementsSectionExpanded] = useState(false); // Default collapsed
 
   // Helper function to filter hierarchy by status
   const filterHierarchyByStatus = useCallback((
@@ -734,6 +746,9 @@ export default function VenueRequirementsDashboard() {
               <StatusBadge status="deprioritised" count={node.status_counts.deprioritised} />
             </div>
           </td>
+
+          {/* Venue Type (empty for hierarchy rows) */}
+          <td className="py-2.5 px-4"></td>
 
           {/* Day Type (empty for hierarchy rows) */}
           <td className="py-3 px-4 text-center">
@@ -1107,6 +1122,21 @@ export default function VenueRequirementsDashboard() {
             </select>
           </td>
 
+          {/* Venue Category */}
+          <td className="py-2.5 px-4 text-center">
+            {req.venue_categories && req.venue_categories.length > 0 ? (
+              <div className="flex flex-wrap justify-center gap-0.5">
+                {req.venue_categories.map((cat: string) => (
+                  <span key={cat} className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-violet-50 text-violet-600 border border-violet-200">
+                    {cat === 'PUB_AND_BAR' ? 'Pub' : cat === 'CAFE' ? 'Cafe' : 'Studio'}
+                  </span>
+                ))}
+              </div>
+            ) : (
+              <span className="text-xs text-gray-400">-</span>
+            )}
+          </td>
+
           {/* Day Type */}
           <td className="py-2.5 px-4 text-center">
             {req.day_type_name ? (
@@ -1166,7 +1196,17 @@ export default function VenueRequirementsDashboard() {
 
           {/* Amenities */}
           <td className="py-2.5 px-4 text-center max-w-[120px]">
-            {req.amenities_required ? (
+            {(req.amenities_list && req.amenities_list.length > 0) ? (
+              <div className="relative group/amenity cursor-help">
+                <span className="text-xs text-gray-600 truncate block max-w-[100px]">
+                  {req.amenities_list.length} amenities
+                </span>
+                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-2 bg-gray-900 text-white text-xs rounded-lg max-w-[200px] opacity-0 invisible group-hover/amenity:opacity-100 group-hover/amenity:visible z-50 shadow-lg">
+                  {req.amenities_list.join(', ')}
+                  <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-gray-900"></div>
+                </div>
+              </div>
+            ) : req.amenities_required ? (
               <div className="relative group/amenity cursor-help">
                 <span className="text-xs text-gray-600 truncate block max-w-[100px]">
                   {req.amenities_required.length > 15 ? req.amenities_required.slice(0, 15) + '...' : req.amenities_required}
@@ -1682,8 +1722,25 @@ export default function VenueRequirementsDashboard() {
           </div>
         )}
 
-        {/* Filters and Hierarchy Controls */}
-        <div className="bg-white rounded-xl border border-gray-200 p-4 mb-6 shadow-sm">
+        {/* Requirements Section - Collapsible (includes filters) */}
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm">
+          <button
+            onClick={() => setRequirementsSectionExpanded(!requirementsSectionExpanded)}
+            className="w-full px-4 py-3 flex items-center justify-between bg-teal-50/50 hover:bg-teal-100/50 transition-colors rounded-t-xl"
+          >
+            <div className="flex items-center gap-2">
+              <MapPin className="h-5 w-5 text-teal-600" />
+              <span className="font-medium text-gray-700">
+                Requirements ({displayedHierarchy.reduce((sum, n) => sum + n.count, 0)})
+              </span>
+            </div>
+            {requirementsSectionExpanded ? <ChevronUp size={20} className="text-gray-400" /> : <ChevronDown size={20} className="text-gray-400" />}
+          </button>
+
+          {requirementsSectionExpanded && (
+            <>
+          {/* Filters and Hierarchy Controls */}
+          <div className="p-4 border-b border-gray-200">
           <div className="flex flex-wrap items-center gap-3">
             {/* Multiselect Filters */}
             <MultiSelectDropdown
@@ -1968,25 +2025,8 @@ export default function VenueRequirementsDashboard() {
               </button>
             </div>
           </div>
-        </div>
+          </div>
 
-        {/* Requirements Section - Collapsible */}
-        <div className="bg-white rounded-xl border border-gray-200 shadow-sm">
-          <button
-            onClick={() => setRequirementsSectionExpanded(!requirementsSectionExpanded)}
-            className="w-full px-4 py-3 flex items-center justify-between bg-teal-50/50 hover:bg-teal-100/50 transition-colors rounded-t-xl"
-          >
-            <div className="flex items-center gap-2">
-              <MapPin className="h-5 w-5 text-teal-600" />
-              <span className="font-medium text-gray-700">
-                Requirements ({displayedHierarchy.reduce((sum, n) => sum + n.count, 0)})
-              </span>
-            </div>
-            {requirementsSectionExpanded ? <ChevronUp size={20} className="text-gray-400" /> : <ChevronDown size={20} className="text-gray-400" />}
-          </button>
-
-          {requirementsSectionExpanded && (
-            <>
               {loading ? (
                 <div className="flex items-center justify-center py-20">
                   <Loader2 className="h-8 w-8 text-teal-500 animate-spin" />
@@ -2014,6 +2054,7 @@ export default function VenueRequirementsDashboard() {
                       <th className="text-left py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[110px]">
                         Status
                       </th>
+                      <th className="py-3 px-4 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider">Venue Type</th>
                       <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[90px]">
                         Day Type
                       </th>
@@ -3003,7 +3044,7 @@ function EditRequirementModal({
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 <Users className="inline h-4 w-4 mr-1" />
-                Capacity (Optional)
+                Capacity <span className="text-red-500">*</span>
               </label>
               <select
                 value={capacity || ''}
@@ -3106,6 +3147,8 @@ function CreateRequirementModal({
   const [selectedTimeSlots, setSelectedTimeSlots] = useState<TimeOfDay[]>([]);
   const [amenitiesRequired, setAmenitiesRequired] = useState('');
   const [capacity, setCapacity] = useState<CapacityBucket | undefined>(undefined);
+  const [venueCategories, setVenueCategories] = useState<string[]>([]);
+  const [amenitiesList, setAmenitiesList] = useState<string[]>([]);
 
   // Day types from API
   const [dayTypes, setDayTypes] = useState<{ id: number; name: string }[]>([]);
@@ -3390,7 +3433,9 @@ function CreateRequirementModal({
       time_of_day: selectedTimeSlots,
       amenities_required: amenitiesRequired.trim() || undefined,
       capacity,
-      team
+      team,
+      venue_categories: venueCategories.length > 0 ? venueCategories : undefined,
+      amenities_list: amenitiesList.length > 0 ? amenitiesList : undefined,
     });
     if (errorMsg) {
       setError(errorMsg);
@@ -3690,23 +3735,57 @@ function CreateRequirementModal({
               )}
             </div>
 
+            {/* Venue Category */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Venue Category (Optional)</label>
+              <div className="flex flex-wrap gap-2">
+                {VENUE_CATEGORY_OPTIONS.map(cat => (
+                  <button
+                    key={cat.value}
+                    type="button"
+                    onClick={() => setVenueCategories(prev =>
+                      prev.includes(cat.value) ? prev.filter(c => c !== cat.value) : [...prev, cat.value]
+                    )}
+                    className={`px-3 py-1.5 text-xs rounded-full border transition-colors ${
+                      venueCategories.includes(cat.value)
+                        ? 'bg-violet-100 text-violet-700 border-violet-300'
+                        : 'bg-gray-50 text-gray-600 border-gray-200 hover:border-gray-300'
+                    }`}
+                  >
+                    {cat.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
             {/* Amenities */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Amenities Required (Optional)</label>
-              <textarea
-                value={amenitiesRequired}
-                onChange={(e) => setAmenitiesRequired(e.target.value)}
-                rows={2}
-                placeholder="e.g., Parking, AC, Changing rooms..."
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-teal-500 text-sm resize-none"
-              />
+              <div className="flex flex-wrap gap-1.5">
+                {VMS_AMENITIES.map(amenity => (
+                  <button
+                    key={amenity}
+                    type="button"
+                    onClick={() => setAmenitiesList(prev =>
+                      prev.includes(amenity) ? prev.filter(a => a !== amenity) : [...prev, amenity]
+                    )}
+                    className={`px-2.5 py-1 text-[11px] rounded-full border transition-colors ${
+                      amenitiesList.includes(amenity)
+                        ? 'bg-teal-100 text-teal-700 border-teal-300'
+                        : 'bg-gray-50 text-gray-600 border-gray-200 hover:border-gray-300'
+                    }`}
+                  >
+                    {amenity}
+                  </button>
+                ))}
+              </div>
             </div>
 
             {/* Capacity */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 <Users className="inline h-4 w-4 mr-1" />
-                Capacity (Optional)
+                Capacity <span className="text-red-500">*</span>
               </label>
               <select
                 value={capacity || ''}

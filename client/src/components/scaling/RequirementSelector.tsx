@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { Search, Plus, X, User, MapPin, ChevronDown, Check, Loader2, Users, Calendar, Sun } from 'lucide-react';
-import type { LeaderRequirement, VenueRequirement, CreateRequirementRequest, TimeOfDay } from '../../../../shared/types';
-import { TIME_OF_DAY_OPTIONS } from '../../../../shared/types';
+import type { LeaderRequirement, VenueRequirement, CreateRequirementRequest, TimeOfDay, CapacityBucket } from '../../../../shared/types';
+import { TIME_OF_DAY_OPTIONS, CAPACITY_BUCKET_OPTIONS } from '../../../../shared/types';
 import { getTeamForClub } from '../../../../shared/teamConfig';
 
 const API_BASE = import.meta.env.VITE_API_URL
@@ -362,6 +362,20 @@ function CreateRequirementModal({ type, context, onClose, onCreate }: CreateRequ
   const [selectedTimeSlots, setSelectedTimeSlots] = useState<TimeOfDay[]>([]);
   const [amenitiesRequired, setAmenitiesRequired] = useState('');
   const [dayTypes, setDayTypes] = useState<{ id: number; name: string }[]>([]);
+  const [capacity, setCapacity] = useState<CapacityBucket | undefined>(undefined);
+  const [venueCategories, setVenueCategories] = useState<string[]>([]);
+  const [amenitiesList, setAmenitiesList] = useState<string[]>([]);
+
+  const VENUE_CATEGORY_OPTIONS = [
+    { value: 'CAFE', label: 'Cafe' },
+    { value: 'PUB_AND_BAR', label: 'Pub & Bar' },
+    { value: 'STUDIO', label: 'Studio' }
+  ];
+  const VMS_AMENITIES = [
+    'Alcohol Served', 'Big Tables', 'Clean Washrooms', 'Comfortable Seating',
+    'Disable Friendly', 'First-aid facilities', 'Free Drinking Water', 'Free Wifi',
+    'Good Lighting', 'Indoor seating', 'Music System', 'Outdoor seating', 'Smoking Area'
+  ];
 
   // Fetch day types for venue requirements
   useEffect(() => {
@@ -392,8 +406,8 @@ function CreateRequirementModal({ type, context, onClose, onCreate }: CreateRequ
     ? getTeamForClub(context.activity_name, context.city_name)
     : null;
 
-  // Validation: venue requires day_type and time_of_day
-  const isVenueValid = type !== 'venue' || (dayTypeId && selectedTimeSlots.length > 0);
+  // Validation: venue requires day_type, time_of_day, and capacity
+  const isVenueValid = type !== 'venue' || (dayTypeId && selectedTimeSlots.length > 0 && capacity);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -422,6 +436,9 @@ function CreateRequirementModal({ type, context, onClose, onCreate }: CreateRequ
       day_type_id: type === 'venue' ? dayTypeId : undefined,
       time_of_day: type === 'venue' ? selectedTimeSlots : undefined,
       amenities_required: type === 'venue' ? (amenitiesRequired.trim() || undefined) : undefined,
+      capacity: type === 'venue' ? capacity : undefined,
+      venue_categories: type === 'venue' && venueCategories.length > 0 ? venueCategories : undefined,
+      amenities_list: type === 'venue' && amenitiesList.length > 0 ? amenitiesList : undefined,
       team: autoTeam || undefined
     });
     setCreating(false);
@@ -579,16 +596,75 @@ function CreateRequirementModal({ type, context, onClose, onCreate }: CreateRequ
                   )}
                 </div>
 
+                {/* Capacity */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    <Users className="inline h-4 w-4 mr-1" />
+                    Capacity <span className="text-red-500">*</span>
+                  </label>
+                  <select
+                    value={capacity || ''}
+                    onChange={(e) => setCapacity(e.target.value as CapacityBucket || undefined)}
+                    className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-teal-500 text-sm bg-white
+                      ${!capacity ? 'border-gray-300' : 'border-teal-300'}`}
+                  >
+                    <option value="">Select capacity...</option>
+                    {CAPACITY_BUCKET_OPTIONS.map(opt => (
+                      <option key={opt} value={opt}>{opt}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Venue Category */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Venue Category (Optional)</label>
+                  <div className="flex flex-wrap gap-2">
+                    {VENUE_CATEGORY_OPTIONS.map(opt => {
+                      const isSelected = venueCategories.includes(opt.value);
+                      return (
+                        <button
+                          key={opt.value}
+                          type="button"
+                          onClick={() => setVenueCategories(prev =>
+                            isSelected ? prev.filter(v => v !== opt.value) : [...prev, opt.value]
+                          )}
+                          className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all border
+                            ${isSelected
+                              ? 'bg-violet-100 text-violet-800 border-violet-300'
+                              : 'bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100'
+                            }`}
+                        >
+                          {opt.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
                 {/* Amenities */}
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Amenities Required (Optional)</label>
-                  <textarea
-                    value={amenitiesRequired}
-                    onChange={(e) => setAmenitiesRequired(e.target.value)}
-                    rows={2}
-                    placeholder="e.g., Parking, AC, Changing rooms..."
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-teal-500 text-sm resize-none"
-                  />
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Amenities Required (Optional)</label>
+                  <div className="flex flex-wrap gap-1.5">
+                    {VMS_AMENITIES.map(amenity => {
+                      const isSelected = amenitiesList.includes(amenity);
+                      return (
+                        <button
+                          key={amenity}
+                          type="button"
+                          onClick={() => setAmenitiesList(prev =>
+                            isSelected ? prev.filter(a => a !== amenity) : [...prev, amenity]
+                          )}
+                          className={`px-2 py-0.5 rounded text-[11px] font-medium transition-all border
+                            ${isSelected
+                              ? 'bg-teal-100 text-teal-800 border-teal-300'
+                              : 'bg-gray-50 text-gray-500 border-gray-200 hover:bg-gray-100'
+                            }`}
+                        >
+                          {amenity}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
               </>
             )}

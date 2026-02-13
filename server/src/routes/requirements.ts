@@ -1446,8 +1446,9 @@ router.post('/venues', async (req: Request, res: Response) => {
         club_id, club_name,
         growth_team_effort, platform_team_effort,
         day_type_id, time_of_day, amenities_required,
-        capacity, comments, team, created_by
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+        capacity, comments, team, created_by,
+        venue_categories, amenities_list
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
       RETURNING *`,
       [
         data.name,
@@ -1468,7 +1469,9 @@ router.post('/venues', async (req: Request, res: Response) => {
         data.capacity || null,
         data.comments || null,
         team || null,
-        'system'
+        'system',
+        data.venue_categories || null,
+        data.amenities_list || null
       ]
     );
 
@@ -1607,6 +1610,14 @@ router.put('/venues/:id', async (req: Request, res: Response) => {
     if (data.venue_area !== undefined) {
       updates.push(`venue_area = $${paramIndex++}`);
       params.push(data.venue_area);
+    }
+    if ((data as any).venue_categories !== undefined) {
+      updates.push(`venue_categories = $${paramIndex++}`);
+      params.push((data as any).venue_categories);
+    }
+    if ((data as any).amenities_list !== undefined) {
+      updates.push(`amenities_list = $${paramIndex++}`);
+      params.push((data as any).amenities_list);
     }
 
     updates.push(`updated_at = CURRENT_TIMESTAMP`);
