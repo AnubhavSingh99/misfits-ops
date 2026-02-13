@@ -1578,7 +1578,7 @@ function VenueModal({ venue, options, onClose, onSave }: VenueModalProps) {
                     ...f.venue_info,
                     preferred_schedules: [
                       ...f.venue_info.preferred_schedules,
-                      { day: 'WEEKDAY', preferred_activity: '', start_time: undefined, end_time: undefined }
+                      { day: '', preferred_activity: '', start_time: undefined, end_time: undefined }
                     ]
                   }
                 }))}
