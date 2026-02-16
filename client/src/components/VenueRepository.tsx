@@ -1593,7 +1593,10 @@ function VenueModal({ venue, options, onClose, onSave }: VenueModalProps) {
             ) : (
               <div className="space-y-3">
                 {formData.venue_info.preferred_schedules.map((sched, idx) => {
-                  const activeSlot = getActiveTimeSlot(sched.start_time, sched.end_time);
+                  // Multi-select time slots: use time_slots field, or backward-compat from start_time/end_time
+                  const currentTimeSlots: string[] = sched.time_slots
+                    ? sched.time_slots.split(', ').filter(Boolean)
+                    : (() => { const s = getActiveTimeSlot(sched.start_time, sched.end_time); return s ? [s] : []; })();
                   const currentActivities = sched.preferred_activity
                     ? sched.preferred_activity.split(', ').filter(Boolean)
                     : [];
@@ -1607,36 +1610,38 @@ function VenueModal({ venue, options, onClose, onSave }: VenueModalProps) {
                   ];
                   return (
                     <div key={idx} className="p-3 bg-gray-50 rounded-lg border border-gray-200 space-y-2">
-                      {/* Row 1: Time slots + remove */}
+                      {/* Row 1: Time slots (multi-select toggles) + remove */}
                       <div className="flex items-center gap-2">
                         <div className="flex flex-wrap gap-1">
-                          {Object.entries(TIME_SLOTS).map(([key, slot]) => (
-                            <button
-                              key={key}
-                              type="button"
-                              onClick={() => {
-                                const updated = [...formData.venue_info.preferred_schedules];
-                                if (activeSlot === key) {
-                                  updated[idx] = { ...updated[idx], start_time: undefined, end_time: undefined };
-                                } else {
-                                  updated[idx] = { ...updated[idx], start_time: slot.start, end_time: slot.end };
-                                }
-                                setFormData(f => ({ ...f, venue_info: { ...f.venue_info, preferred_schedules: updated } }));
-                              }}
-                              className={`px-2 py-1 text-[10px] font-medium rounded border transition-colors ${
-                                activeSlot === key
-                                  ? 'bg-amber-100 text-amber-800 border-amber-300'
-                                  : 'bg-white text-gray-500 border-gray-200 hover:border-gray-300'
-                              }`}
-                              title={slot.display}
-                            >
-                              {slot.icon} {slot.label}
-                            </button>
-                          ))}
+                          {Object.entries(TIME_SLOTS).map(([key, slot]) => {
+                            const isSelected = currentTimeSlots.includes(key);
+                            return (
+                              <button
+                                key={key}
+                                type="button"
+                                onClick={() => {
+                                  const newSlots = isSelected
+                                    ? currentTimeSlots.filter(s => s !== key)
+                                    : [...currentTimeSlots, key];
+                                  const updated = [...formData.venue_info.preferred_schedules];
+                                  updated[idx] = { ...updated[idx], time_slots: newSlots.join(', '), start_time: undefined, end_time: undefined };
+                                  setFormData(f => ({ ...f, venue_info: { ...f.venue_info, preferred_schedules: updated } }));
+                                }}
+                                className={`px-2 py-1 text-[10px] font-medium rounded border transition-colors ${
+                                  isSelected
+                                    ? 'bg-amber-100 text-amber-800 border-amber-300'
+                                    : 'bg-white text-gray-500 border-gray-200 hover:border-gray-300'
+                                }`}
+                                title={slot.display}
+                              >
+                                {slot.icon} {slot.label}
+                              </button>
+                            );
+                          })}
                         </div>
-                        {sched.start_time && sched.end_time && (
+                        {currentTimeSlots.length > 0 && (
                           <span className="text-[10px] text-gray-500 whitespace-nowrap">
-                            {formatTimeObj(sched.start_time)} - {formatTimeObj(sched.end_time)}
+                            {currentTimeSlots.map(s => TIME_SLOTS[s]?.display).filter(Boolean).join(', ')}
                           </span>
                         )}
                         <button

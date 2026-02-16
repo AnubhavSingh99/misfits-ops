@@ -1130,7 +1130,17 @@ router.post('/:id/transfer-to-vms', async (req: Request, res: Response) => {
     if (venueInfo.chargeable !== undefined) grpcRequest.venue_info.chargeable = venueInfo.chargeable;
     if (venueInfo.reason_for_charge) grpcRequest.venue_info.reason_for_charge = venueInfo.reason_for_charge;
     if (venueInfo.preferred_schedules && venueInfo.preferred_schedules.length > 0) {
-      // Expand comma-separated days, WEEKDAY/WEEKEND groups, and comma-separated activities into individual VMS entries
+      // Time slot name → VMS start_time/end_time mapping
+      const TIME_SLOT_HOURS: Record<string, { start: { hour: number; minute: number; second: number }; end: { hour: number; minute: number; second: number } }> = {
+        early_morning: { start: { hour: 5, minute: 0, second: 0 },  end: { hour: 8, minute: 0, second: 0 } },
+        morning:       { start: { hour: 8, minute: 0, second: 0 },  end: { hour: 12, minute: 0, second: 0 } },
+        afternoon:     { start: { hour: 12, minute: 0, second: 0 }, end: { hour: 16, minute: 0, second: 0 } },
+        evening:       { start: { hour: 16, minute: 0, second: 0 }, end: { hour: 20, minute: 0, second: 0 } },
+        night:         { start: { hour: 20, minute: 0, second: 0 }, end: { hour: 0, minute: 0, second: 0 } },
+        all_nighter:   { start: { hour: 0, minute: 0, second: 0 },  end: { hour: 5, minute: 0, second: 0 } }
+      };
+
+      // Expand days, activities, AND time slots into individual VMS entries
       const expandedSchedules: any[] = [];
       for (const sched of venueInfo.preferred_schedules) {
         // Split comma-separated days, then expand WEEKDAY/WEEKEND groups
@@ -1144,15 +1154,35 @@ router.post('/:id/transfer-to-vms', async (req: Request, res: Response) => {
         const activities = sched.preferred_activity
           ? sched.preferred_activity.split(', ').filter((a: string) => a)
           : [''];
+
+        // Resolve time slots: use time_slots field if present, else fall back to raw start_time/end_time
+        const timeEntries: { start_time?: any; end_time?: any }[] = [];
+        if (sched.time_slots) {
+          const slots = sched.time_slots.split(', ').filter((s: string) => s);
+          for (const slot of slots) {
+            const hours = TIME_SLOT_HOURS[slot];
+            if (hours) timeEntries.push({ start_time: hours.start, end_time: hours.end });
+          }
+        }
+        if (timeEntries.length === 0 && sched.start_time && sched.end_time) {
+          // Backward compat: old entries with raw start_time/end_time
+          timeEntries.push({ start_time: sched.start_time, end_time: sched.end_time });
+        }
+        if (timeEntries.length === 0) {
+          timeEntries.push({}); // No time info — still create entries for day+activity
+        }
+
         for (const day of days) {
           for (const act of activities) {
-            expandedSchedules.push({
-              day,
-              preferred_activity: act,
-              ...(sched.start_time ? { start_time: sched.start_time } : {}),
-              ...(sched.end_time ? { end_time: sched.end_time } : {}),
-              ...(sched.notes ? { notes: sched.notes } : {})
-            });
+            for (const time of timeEntries) {
+              expandedSchedules.push({
+                day,
+                preferred_activity: act,
+                ...(time.start_time ? { start_time: time.start_time } : {}),
+                ...(time.end_time ? { end_time: time.end_time } : {}),
+                ...(sched.notes ? { notes: sched.notes } : {})
+              });
+            }
           }
         }
       }
