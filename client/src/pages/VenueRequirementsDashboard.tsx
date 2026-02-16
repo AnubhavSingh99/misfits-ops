@@ -3269,7 +3269,7 @@ function CreateRequirementModal({
     if (selectedCityId) {
       const fetchAreas = async () => {
         try {
-          const res = await fetch(`${API_BASE}/scaling-tasks/filters/areas?city_id=${selectedCityId}`);
+          const res = await fetch(`${API_BASE}/scaling-tasks/filters/areas?city_ids=${selectedCityId}&include_all=true`);
           const data = await res.json();
           if (data.success) setAreas(data.options || []);
         } catch (err) {
