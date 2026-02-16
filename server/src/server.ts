@@ -210,7 +210,7 @@ async function startServer() {
       initSlackService(localPool);
       logger.info('Slack service initialized');
 
-      // Check SLA breaches and stale tickets every hour (production only)
+      // Check SLA breaches every hour (production only)
       if (process.env.NODE_ENV === 'production') {
         slaInterval = setInterval(async () => {
           try {
@@ -218,23 +218,32 @@ async function startServer() {
           } catch (error) {
             logger.error('SLA breach check failed:', error);
           }
-          try {
-            await checkStaleTickets();
-          } catch (error) {
-            logger.error('Stale tickets check failed:', error);
-          }
         }, 60 * 60 * 1000); // 1 hour
-        logger.info('SLA breach and stale tickets check scheduled (every 1 hour)');
+        logger.info('SLA breach check scheduled (every 1 hour)');
 
-        // Also run stale tickets check once on startup
-        setTimeout(async () => {
-          try {
-            const result = await checkStaleTickets();
-            logger.info(`Startup stale tickets check: ${result.found} found, sent: ${result.sent}`);
-          } catch (error) {
-            logger.error('Startup stale tickets check failed:', error);
+        // Stale tickets DM to Saurabh — daily at 11:00 AM IST (5:30 AM UTC)
+        const scheduleStaleTicketsAt11AM = () => {
+          const now = new Date();
+          const nextRun = new Date(now);
+          // IST = UTC+5:30, so 11:00 AM IST = 5:30 AM UTC
+          nextRun.setUTCHours(5, 30, 0, 0);
+          if (nextRun <= now) {
+            nextRun.setUTCDate(nextRun.getUTCDate() + 1); // next day if already past 11 AM IST
           }
-        }, 10000); // 10 seconds after startup
+          const msUntilNext = nextRun.getTime() - now.getTime();
+          logger.info(`Stale tickets DM scheduled for 11:00 AM IST (in ${Math.round(msUntilNext / 60000)} minutes)`);
+          setTimeout(async () => {
+            try {
+              const result = await checkStaleTickets();
+              logger.info(`Daily stale tickets check: ${result.found} found, sent: ${result.sent}`);
+            } catch (error) {
+              logger.error('Daily stale tickets check failed:', error);
+            }
+            // Schedule next run (tomorrow 11 AM IST)
+            scheduleStaleTicketsAt11AM();
+          }, msUntilNext);
+        };
+        scheduleStaleTicketsAt11AM();
       } else {
         logger.info('SLA breach and stale tickets check disabled (non-production environment)');
       }
