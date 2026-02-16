@@ -842,6 +842,7 @@ export default function VenueRequirementsDashboard() {
     const [suggestions, setSuggestions] = useState<any[]>([]);
     const [loadingSuggestions, setLoadingSuggestions] = useState(false);
     const [suggestionsFetched, setSuggestionsFetched] = useState(false);
+    const [expandedScoreId, setExpandedScoreId] = useState<string | null>(null);
 
     // Comments tooltip position
     const commentsButtonRef = useRef<HTMLButtonElement>(null);
@@ -1261,20 +1262,27 @@ export default function VenueRequirementsDashboard() {
           {/* Actions */}
           <td className="py-2.5 px-4 text-center">
             <div className="flex items-center justify-center gap-1">
-              {/* Venues button - always visible */}
+              {/* Venues button - shows count after first load */}
               <button
                 onClick={(e) => {
                   e.stopPropagation();
                   setSuggestionsExpanded(true);
                 }}
-                className={`p-1.5 rounded-md flex items-center gap-0.5 transition-colors ${
+                className={`px-2 py-1 rounded-md flex items-center gap-1 transition-colors text-xs font-medium ${
                   suggestionsExpanded
                     ? 'bg-indigo-100 text-indigo-600'
-                    : 'bg-indigo-50 text-indigo-500 hover:bg-indigo-100 hover:text-indigo-600'
+                    : suggestionsFetched && suggestions.length > 0
+                      ? 'bg-indigo-100 text-indigo-700 hover:bg-indigo-200'
+                      : 'bg-indigo-50 text-indigo-500 hover:bg-indigo-100 hover:text-indigo-600'
                 }`}
                 title="View venue suggestions"
               >
                 <MapPin className="h-3.5 w-3.5" />
+                {suggestionsFetched ? (
+                  <span>{suggestions.length}</span>
+                ) : (
+                  <span>Venues</span>
+                )}
               </button>
               {/* Comments button - always visible */}
               <button
@@ -1334,6 +1342,9 @@ export default function VenueRequirementsDashboard() {
                   <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
                     <MapPin className="h-5 w-5 text-indigo-600" />
                     Suggested Venues
+                    {!loadingSuggestions && suggestions.length > 0 && (
+                      <span className="text-sm font-normal text-gray-500">({suggestions.length})</span>
+                    )}
                   </h3>
                   <p className="text-sm text-gray-500 mt-0.5">
                     {req.city}{req.area ? ` / ${req.area}` : ''}{req.activity ? ` / ${req.activity}` : ''}
@@ -1355,68 +1366,86 @@ export default function VenueRequirementsDashboard() {
                 ) : suggestions.length === 0 ? (
                   <div className="text-center py-8">
                     <MapPin className="h-12 w-12 text-gray-300 mx-auto mb-3" />
-                    <p className="text-gray-500">No matching venues found</p>
-                    <p className="text-sm text-gray-400 mt-1">Try adding venues to the repository below</p>
+                    <p className="text-gray-500">No venues found in this city</p>
+                    <p className="text-sm text-gray-400 mt-1">Try adding venues to the repository</p>
                   </div>
                 ) : (
-                  <div className="space-y-3">
-                    {suggestions.map((venue, idx) => (
-                      <div
-                        key={`${venue.source}-${venue.id || venue.vms_id || idx}`}
-                        className="flex items-center justify-between p-3 rounded-lg border border-gray-200 hover:border-indigo-300 hover:bg-indigo-50/30 transition-colors"
-                      >
-                        <div className="flex items-center gap-3">
-                          <div className="flex flex-col gap-1">
-                            <span className={`text-xs px-2 py-0.5 rounded font-medium ${
-                              venue.source === 'vms'
-                                ? 'bg-green-100 text-green-700'
-                                : 'bg-indigo-100 text-indigo-700'
-                            }`}>
-                              {venue.source === 'vms' ? 'VMS' : 'Repository'}
-                            </span>
-                            {venue.source === 'repository' && venue.status && (
-                              <span className={`text-xs px-2 py-0.5 rounded font-medium ${
-                                venue.status === 'new' ? 'bg-blue-100 text-blue-700' :
-                                venue.status === 'contacted' ? 'bg-yellow-100 text-yellow-700' :
-                                venue.status === 'interested' ? 'bg-cyan-100 text-cyan-700' :
-                                venue.status === 'negotiating' ? 'bg-purple-100 text-purple-700' :
-                                'bg-gray-100 text-gray-700'
-                              }`}>
-                                {venue.status.charAt(0).toUpperCase() + venue.status.slice(1)}
-                              </span>
+                  <div className="space-y-2">
+                    {suggestions.map((venue, idx) => {
+                      const venueKey = `${venue.source}-${venue.id || venue.vms_id || idx}`;
+                      const score = venue.score ?? 0;
+                      const scoreColor = score >= 10 ? 'bg-green-500' : score >= 5 ? 'bg-yellow-500' : 'bg-gray-400';
+                      const isBreakdownOpen = expandedScoreId === venueKey;
+                      return (
+                        <div key={venueKey} className="rounded-lg border border-gray-200 hover:border-indigo-300 transition-colors overflow-hidden">
+                          <div className="flex items-center gap-3 p-3">
+                            {/* Score badge - clickable */}
+                            <button
+                              onClick={() => setExpandedScoreId(isBreakdownOpen ? null : venueKey)}
+                              className={`flex-shrink-0 w-10 h-10 rounded-full ${scoreColor} text-white flex items-center justify-center text-sm font-bold cursor-pointer hover:opacity-80 transition-opacity`}
+                              title="Click to see score breakdown"
+                            >
+                              {score}
+                            </button>
+                            {/* Venue info */}
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2">
+                                <span className="font-medium text-gray-800 truncate">{venue.name}</span>
+                                <span className={`text-xs px-1.5 py-0.5 rounded font-medium flex-shrink-0 ${
+                                  venue.source === 'vms' ? 'bg-green-100 text-green-700' : 'bg-indigo-100 text-indigo-700'
+                                }`}>
+                                  {venue.source === 'vms' ? 'VMS' : 'Repo'}
+                                </span>
+                                {venue.source === 'repository' && venue.status && (
+                                  <span className={`text-xs px-1.5 py-0.5 rounded font-medium flex-shrink-0 ${
+                                    venue.status === 'new' ? 'bg-blue-100 text-blue-700' :
+                                    venue.status === 'contacted' ? 'bg-yellow-100 text-yellow-700' :
+                                    venue.status === 'interested' ? 'bg-cyan-100 text-cyan-700' :
+                                    venue.status === 'negotiating' ? 'bg-purple-100 text-purple-700' :
+                                    'bg-gray-100 text-gray-700'
+                                  }`}>
+                                    {venue.status.charAt(0).toUpperCase() + venue.status.slice(1)}
+                                  </span>
+                                )}
+                              </div>
+                              <div className="text-sm text-gray-500">
+                                {venue.area_name || venue.custom_area || ''}{venue.area_name || venue.custom_area ? ', ' : ''}{venue.city_name || venue.custom_city || ''}
+                              </div>
+                            </div>
+                            {/* Maps link */}
+                            {venue.url && (
+                              <a
+                                href={venue.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="flex-shrink-0 px-2.5 py-1 text-xs text-indigo-600 hover:bg-indigo-100 rounded-lg transition-colors"
+                              >
+                                Maps ↗
+                              </a>
                             )}
                           </div>
-                          <div>
-                            <div className="font-medium text-gray-800">{venue.name}</div>
-                            <div className="text-sm text-gray-500">
-                              {venue.area_name && venue.city_name
-                                ? `${venue.area_name}, ${venue.city_name}`
-                                : venue.city_name || '-'}
-                              {venue.venue_info?.capacity_category && (
-                                <span className="ml-2">
-                                  • {
-                                    venue.venue_info.capacity_category === 'LESS_THAN_25' ? '<25 pax' :
-                                    venue.venue_info.capacity_category === 'CAPACITY_25_TO_50' ? '25-50 pax' :
-                                    venue.venue_info.capacity_category === 'CAPACITY_50_PLUS' ? '50+ pax' :
-                                    venue.venue_info.capacity_category
-                                  }
-                                </span>
-                              )}
+                          {/* Score breakdown - expandable */}
+                          {isBreakdownOpen && venue.score_breakdown && (
+                            <div className="px-3 pb-3 pt-1 border-t border-gray-100 bg-gray-50">
+                              <div className="space-y-1">
+                                {venue.score_breakdown.map((item: any, i: number) => (
+                                  <div key={i} className="flex items-center gap-2 text-xs">
+                                    <span className={item.matched ? 'text-green-600' : 'text-gray-400'}>
+                                      {item.matched ? '✓' : '✗'}
+                                    </span>
+                                    <span className="font-medium text-gray-600 w-20">{item.factor}</span>
+                                    <span className="text-gray-500 flex-1">{item.detail}</span>
+                                    <span className={`font-medium ${item.points > 0 ? 'text-green-600' : 'text-gray-400'}`}>
+                                      {item.points > 0 ? `+${item.points}` : '0'}
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
                             </div>
-                          </div>
+                          )}
                         </div>
-                        {venue.url && (
-                          <a
-                            href={venue.url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="px-3 py-1.5 text-sm text-indigo-600 hover:bg-indigo-100 rounded-lg transition-colors flex items-center gap-1"
-                          >
-                            Maps ↗
-                          </a>
-                        )}
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
               </div>

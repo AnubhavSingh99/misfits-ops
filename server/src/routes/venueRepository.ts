@@ -735,12 +735,145 @@ function timeOfDayToHourRange(slots: string[]): { minHour: number; maxHour: numb
 }
 
 // ============================================
-// VENUE SUGGESTIONS FOR REQUIREMENTS
+// VENUE SUGGESTIONS FOR REQUIREMENTS (Scoring-Based)
 // ============================================
 
 /**
+ * Compute a match score for a venue against a requirement.
+ * Returns total points and a breakdown of each scoring factor.
+ */
+interface ScoreBreakdown {
+  factor: string;
+  points: number;
+  matched: boolean;
+  detail: string;
+}
+
+function computeVenueScore(
+  venue: any,
+  config: {
+    area: string | null;
+    areaId: number | null;
+    activity: string | null;
+    capacityCategory: string | null;
+    dayMatchValues: string[];
+    hourRange: { minHour: number; maxHour: number } | null;
+    amenitiesList: string[];
+    venueCategories: string[];
+  }
+): { total: number; breakdown: ScoreBreakdown[] } {
+  const breakdown: ScoreBreakdown[] = [];
+  let total = 0;
+  const venueInfo = typeof venue.venue_info === 'string' ? JSON.parse(venue.venue_info) : (venue.venue_info || {});
+  const schedules: any[] = Array.isArray(venueInfo.preferred_schedules) ? venueInfo.preferred_schedules : [];
+
+  // 1. Area match (+3)
+  if (config.area) {
+    const venueAreaName = venue.area_name || venue.custom_area || '';
+    const areaMatched = config.areaId
+      ? (venue.area_id === config.areaId || (venue.custom_area && venue.custom_area.toLowerCase() === config.area.toLowerCase()))
+      : (venue.custom_area && venue.custom_area.toLowerCase() === config.area.toLowerCase());
+    const pts = areaMatched ? 3 : 0;
+    total += pts;
+    breakdown.push({ factor: 'Area', points: pts, matched: !!areaMatched, detail: areaMatched ? `${venueAreaName} matches` : `${venueAreaName || 'Unknown area'}` });
+  }
+
+  // 2. Activity match (+4)
+  if (config.activity) {
+    const activityLower = config.activity.toLowerCase();
+    const activityMatched = schedules.some((s: any) => {
+      const acts = (s.preferred_activity || '').split(', ').map((a: string) => a.trim().toLowerCase());
+      return acts.includes(activityLower);
+    });
+    const pts = activityMatched ? 4 : 0;
+    total += pts;
+    breakdown.push({ factor: 'Activity', points: pts, matched: activityMatched, detail: activityMatched ? `${config.activity} available` : `${config.activity} not listed` });
+  }
+
+  // 3. Capacity match (+2)
+  if (config.capacityCategory) {
+    const venueCapacity = venueInfo.capacity_category || '';
+    const capMatched = venueCapacity === config.capacityCategory;
+    const pts = capMatched ? 2 : 0;
+    total += pts;
+    const capLabel = venueCapacity === 'LESS_THAN_25' ? '<25 pax' : venueCapacity === 'CAPACITY_25_TO_50' ? '25-50 pax' : venueCapacity === 'CAPACITY_50_PLUS' ? '50+ pax' : 'Unknown';
+    breakdown.push({ factor: 'Capacity', points: pts, matched: capMatched, detail: capMatched ? `${capLabel} matches` : capLabel });
+  }
+
+  // 4. Day match (+2)
+  if (config.dayMatchValues.length > 0) {
+    const dayMatched = schedules.some((s: any) => {
+      const days = (s.day || '').split(', ').map((d: string) => d.trim().toUpperCase());
+      return days.some((d: string) => config.dayMatchValues.includes(d));
+    });
+    const pts = dayMatched ? 2 : 0;
+    total += pts;
+    breakdown.push({ factor: 'Day', points: pts, matched: dayMatched, detail: dayMatched ? 'Schedule on matching day' : 'No matching day' });
+  }
+
+  // 5. Time match (+2)
+  if (config.hourRange) {
+    const slotRanges: Record<string, { start: number; end: number }> = {
+      early_morning: { start: 5, end: 8 }, morning: { start: 8, end: 12 },
+      afternoon: { start: 12, end: 16 }, evening: { start: 16, end: 20 },
+      night: { start: 20, end: 24 }, all_nighter: { start: 0, end: 5 }
+    };
+    const timeMatched = schedules.some((s: any) => {
+      if (s.time_slots) {
+        const slots = s.time_slots.split(', ').map((t: string) => t.trim().toLowerCase());
+        return slots.some((slot: string) => {
+          const range = slotRanges[slot];
+          return range && range.start < config.hourRange!.maxHour && range.end > config.hourRange!.minHour;
+        });
+      }
+      if (s.start_time && s.end_time) {
+        const startH = typeof s.start_time === 'object' ? s.start_time.hour : parseInt(s.start_time);
+        const endH = typeof s.end_time === 'object' ? s.end_time.hour : parseInt(s.end_time);
+        return startH < config.hourRange!.maxHour && (endH === 0 ? 24 : endH) > config.hourRange!.minHour;
+      }
+      return false;
+    });
+    const pts = timeMatched ? 2 : 0;
+    total += pts;
+    breakdown.push({ factor: 'Time', points: pts, matched: timeMatched, detail: timeMatched ? 'Time slot overlaps' : 'No time overlap' });
+  }
+
+  // 6. Amenities match (+1 each)
+  if (config.amenitiesList.length > 0) {
+    const venueAmenities = (venueInfo.amenities || []).map((a: string) => a.toLowerCase());
+    let amenityPts = 0;
+    const matched: string[] = [];
+    for (const reqA of config.amenitiesList) {
+      if (venueAmenities.includes(reqA.toLowerCase())) {
+        amenityPts++;
+        matched.push(reqA);
+      }
+    }
+    total += amenityPts;
+    breakdown.push({
+      factor: 'Amenities', points: amenityPts, matched: amenityPts > 0,
+      detail: amenityPts > 0 ? `${matched.join(', ')} (${amenityPts}/${config.amenitiesList.length})` : `0/${config.amenitiesList.length} match`
+    });
+  }
+
+  // 7. Venue category match (+2)
+  if (config.venueCategories.length > 0) {
+    const venueCat = (venueInfo.venue_category || '').toUpperCase();
+    const catMatched = config.venueCategories.some(c => c.toUpperCase() === venueCat);
+    const pts = catMatched ? 2 : 0;
+    total += pts;
+    const catLabel = venueCat === 'PUB_AND_BAR' ? 'Pub/Bar' : venueCat === 'CAFE' ? 'Cafe' : venueCat === 'STUDIO' ? 'Studio' : venueCat || 'Unknown';
+    breakdown.push({ factor: 'Venue Type', points: pts, matched: catMatched, detail: catMatched ? `${catLabel} matches` : catLabel });
+  }
+
+  return { total, breakdown };
+}
+
+/**
  * GET /api/venue-repository/suggestions/:requirementId
- * Get venue suggestions for a requirement based on city, area, capacity, activity
+ * Get scored venue suggestions for a requirement. Only city is a hard filter;
+ * all other factors (area, activity, capacity, day, time, amenities, category)
+ * contribute bonus points. Venues with meetup conflicts are excluded.
  */
 router.get('/suggestions/:requirementId', async (req: Request, res: Response) => {
   try {
@@ -766,12 +899,14 @@ router.get('/suggestions/:requirementId', async (req: Request, res: Response) =>
     const capacity = requirement.capacity;
     const dayTypeName = requirement.day_type_name;
     const timeOfDay: string[] = requirement.time_of_day || [];
+    const amenitiesList: string[] = requirement.amenities_list || [];
+    const venueCategories: string[] = requirement.venue_categories || [];
 
     // Convert requirement day/time to VMS-compatible formats for scoring
     const vmsDays = dayTypeToVmsDays(dayTypeName);
     const hourRange = timeOfDayToHourRange(timeOfDay);
 
-    // Build expanded day match values (include WEEKDAY/WEEKEND group labels for matching venue schedules)
+    // Build expanded day match values (include WEEKDAY/WEEKEND group labels)
     const dayMatchValues = [...vmsDays];
     if (vmsDays.some(d => ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY'].includes(d))) {
       dayMatchValues.push('WEEKDAY');
@@ -780,23 +915,27 @@ router.get('/suggestions/:requirementId', async (req: Request, res: Response) =>
       dayMatchValues.push('WEEKEND');
     }
 
-    // Sports activities - these need sports venues
-    const SPORTS_ACTIVITIES = ['Badminton', 'Basketball', 'Box Cricket', 'Football', 'Pickleball', 'Table Tennis', 'Volleyball', 'Cycling', 'Running', 'Cricket'];
-    const isSportsActivity = activity && SPORTS_ACTIVITIES.some(s => activity.toLowerCase().includes(s.toLowerCase()));
+    // Map capacity bucket to VMS capacity category
+    let capacityCategory: string | null = null;
+    if (capacity) {
+      const bucketToVms: Record<string, string> = {
+        '<10': 'LESS_THAN_25', '10-20': 'LESS_THAN_25',
+        '20-30': 'CAPACITY_25_TO_50', '30-50': 'CAPACITY_25_TO_50',
+        '50-100': 'CAPACITY_50_PLUS', '100-200': 'CAPACITY_50_PLUS',
+        '200-500': 'CAPACITY_50_PLUS', '>500': 'CAPACITY_50_PLUS'
+      };
+      capacityCategory = bucketToVms[capacity] || null;
+    }
 
-    // Get city_id from production (REQUIRED for suggestions)
+    // Get city_id from production (REQUIRED — only hard filter)
     let cityId: number | null = null;
     let areaId: number | null = null;
 
     if (city) {
-      const cityQuery = `SELECT id FROM city WHERE name ILIKE $1`;
-      const cityResult = await queryProduction(cityQuery, [city]);
-      if (cityResult.rows.length > 0) {
-        cityId = cityResult.rows[0].id;
-      }
+      const cityResult = await queryProduction(`SELECT id FROM city WHERE name ILIKE $1`, [city]);
+      if (cityResult.rows.length > 0) cityId = cityResult.rows[0].id;
     }
 
-    // If we can't match the city, don't show any suggestions
     if (!cityId) {
       return res.json({
         success: true,
@@ -806,211 +945,177 @@ router.get('/suggestions/:requirementId', async (req: Request, res: Response) =>
       });
     }
 
-    // Get area_id if area is specified
     if (area && cityId) {
-      const areaQuery = `
-        SELECT a.id FROM area a
-        WHERE a.name ILIKE $1 AND a.city_id = $2
-      `;
-      const areaResult = await queryProduction(areaQuery, [area, cityId]);
-      if (areaResult.rows.length > 0) {
-        areaId = areaResult.rows[0].id;
-      }
+      const areaResult = await queryProduction(`SELECT a.id FROM area a WHERE a.name ILIKE $1 AND a.city_id = $2`, [area, cityId]);
+      if (areaResult.rows.length > 0) areaId = areaResult.rows[0].id;
     }
 
-    // Map capacity bucket (e.g. '30-50', '<10', '>500') to VMS capacity category
-    let capacityCategory: string | null = null;
-    if (capacity) {
-      const bucketToVms: Record<string, string> = {
-        '<10': 'LESS_THAN_25',
-        '10-20': 'LESS_THAN_25',
-        '20-30': 'CAPACITY_25_TO_50',
-        '30-50': 'CAPACITY_25_TO_50',
-        '50-100': 'CAPACITY_50_PLUS',
-        '100-200': 'CAPACITY_50_PLUS',
-        '200-500': 'CAPACITY_50_PLUS',
-        '>500': 'CAPACITY_50_PLUS'
-      };
-      capacityCategory = bucketToVms[capacity] || null;
-    }
+    // Scoring config
+    const scoreConfig = { area, areaId, activity, capacityCategory, dayMatchValues, hourRange, amenitiesList, venueCategories };
 
     const suggestions: any[] = [];
 
-    // 1. Search in venue_repository (local) - MUST match city
-    let repoQuery = `
-      SELECT vr.*, 'repository' as source
-      FROM venue_repository vr
-      WHERE vr.status NOT IN ('rejected', 'onboarded')
-    `;
+    // 1. Fetch ALL repository venues in this city (city = only hard filter)
+    const cityAreasResult = await queryProduction(`SELECT id FROM area WHERE city_id = $1`, [cityId]);
+    const cityAreaIds = cityAreasResult.rows.map((r: any) => r.id);
+
+    let repoQuery = `SELECT vr.*, 'repository' as source FROM venue_repository vr WHERE vr.status NOT IN ('rejected', 'onboarded')`;
     const repoParams: any[] = [];
     let paramIdx = 1;
 
-    // Get all area IDs in this city to filter repository venues
-    const cityAreasQuery = `SELECT id FROM area WHERE city_id = $1`;
-    const cityAreasResult = await queryProduction(cityAreasQuery, [cityId]);
-    const cityAreaIds = cityAreasResult.rows.map(r => r.id);
-
     if (cityAreaIds.length > 0) {
-      if (areaId) {
-        // If specific area, filter by area
-        repoQuery += ` AND vr.area_id = $${paramIdx++}`;
-        repoParams.push(areaId);
-      } else {
-        // Otherwise, filter by any area in the city
-        repoQuery += ` AND vr.area_id = ANY($${paramIdx++})`;
-        repoParams.push(cityAreaIds);
-      }
-    }
-
-    if (capacityCategory) {
-      repoQuery += ` AND vr.venue_info->>'capacity_category' = $${paramIdx++}`;
-      repoParams.push(capacityCategory);
-    }
-
-    // Score and sort: activity match > day match > no match
-    // Activity field may be comma-separated (multi-select), so use string_to_array for exact matching
-    const repoScoreClauses: string[] = [];
-    if (activity) {
-      repoScoreClauses.push(`CASE WHEN EXISTS (
-        SELECT 1 FROM jsonb_array_elements(vr.venue_info->'preferred_schedules') AS ps
-        WHERE $${paramIdx} = ANY(string_to_array(ps->>'preferred_activity', ', '))
-      ) THEN 0 ELSE 2 END`);
-      repoParams.push(activity);
-      paramIdx++;
-    }
-    if (dayMatchValues.length > 0) {
-      repoScoreClauses.push(`CASE WHEN EXISTS (
-        SELECT 1 FROM jsonb_array_elements(vr.venue_info->'preferred_schedules') AS ps
-        WHERE string_to_array(ps->>'day', ', ') && $${paramIdx}::text[]
-      ) THEN 0 ELSE 1 END`);
-      repoParams.push(dayMatchValues);
-      paramIdx++;
-    }
-
-    if (repoScoreClauses.length > 0) {
-      repoQuery += ` ORDER BY (${repoScoreClauses.join(' + ')}), vr.name`;
+      repoQuery += ` AND (vr.area_id = ANY($${paramIdx++}) OR (vr.area_id IS NULL AND vr.custom_city ILIKE $${paramIdx++}))`;
+      repoParams.push(cityAreaIds, city);
     } else {
-      repoQuery += ` ORDER BY vr.name`;
+      repoQuery += ` AND vr.custom_city ILIKE $${paramIdx++}`;
+      repoParams.push(city);
     }
-    repoQuery += ` LIMIT 10`;
+    repoQuery += ` ORDER BY vr.name`;
+
     const repoResult = await queryLocal(repoQuery, repoParams);
     suggestions.push(...repoResult.rows);
 
-    // 2. Search in VMS (production location table with venue_info) - MUST match city
-    let vmsQuery = `
-      SELECT
-        l.id as vms_id,
-        l.name,
-        l.url,
-        l.area_id,
-        l.venue_info,
-        a.name as area_name,
-        c.name as city_name,
-        'vms' as source
+    // 2. Fetch ALL VMS venues in this city (city = only hard filter)
+    // For non-sports activities, exclude sports venues by name
+    const SPORTS_ACTIVITIES = ['Badminton', 'Basketball', 'Box Cricket', 'Football', 'Pickleball', 'Table Tennis', 'Volleyball', 'Cycling', 'Running', 'Cricket'];
+    const isSportsActivity = activity && SPORTS_ACTIVITIES.some(s => activity.toLowerCase().includes(s.toLowerCase()));
+    const sportsFilter = !isSportsActivity
+      ? `AND l.name !~* '(sport|badminton|cricket|football|basketball|tennis|volleyball|gym|fitness|coplay|play maximus|spuddy|smash)'`
+      : '';
+
+    const vmsQuery = `
+      SELECT l.id as vms_id, l.name, l.url, l.area_id, l.venue_info,
+             a.name as area_name, c.name as city_name, 'vms' as source
       FROM location l
       JOIN area a ON l.area_id = a.id
       JOIN city c ON a.city_id = c.id
       WHERE l.is_deleted = false
-        AND l.venue_info IS NOT NULL
-        AND l.venue_info != '{}'::jsonb
         AND c.id = $1
+        ${sportsFilter}
+      ORDER BY l.name
     `;
-    const vmsParams: any[] = [cityId];
-    let vmsParamIdx = 2;
-
-    // Filter by specific area if provided
-    if (areaId) {
-      vmsQuery += ` AND l.area_id = $${vmsParamIdx++}`;
-      vmsParams.push(areaId);
-    }
-
-    if (capacityCategory) {
-      vmsQuery += ` AND l.venue_info->>'capacity_category' = $${vmsParamIdx++}`;
-      vmsParams.push(capacityCategory);
-    }
-
-    // Filter by activity - only show venues that support this activity
-    // For non-sports activities, exclude sports venues (check venue name for sports keywords)
-    if (!isSportsActivity) {
-      // Exclude venues with sports-related names
-      vmsQuery += ` AND l.name !~* '(sport|badminton|cricket|football|basketball|tennis|volleyball|gym|fitness)'`;
-    }
-
-    // Multi-factor scoring: activity match (weight 3) + day match (weight 1)
-    // Venues without schedules still show, just ranked lower
-    // Activity field may be comma-separated (multi-select), so use string_to_array for exact matching
-    const vmsScoreClauses: string[] = [];
-    if (activity) {
-      vmsScoreClauses.push(`CASE WHEN EXISTS (
-        SELECT 1 FROM jsonb_array_elements(
-          CASE WHEN jsonb_typeof(l.venue_info->'preferred_schedules') = 'array'
-               THEN l.venue_info->'preferred_schedules' ELSE '[]'::jsonb END
-        ) AS ps WHERE $${vmsParamIdx} = ANY(string_to_array(ps->>'preferred_activity', ', '))
-      ) THEN 0 ELSE 3 END`);
-      vmsParams.push(activity);
-      vmsParamIdx++;
-    }
-    if (dayMatchValues.length > 0) {
-      vmsScoreClauses.push(`CASE WHEN EXISTS (
-        SELECT 1 FROM jsonb_array_elements(
-          CASE WHEN jsonb_typeof(l.venue_info->'preferred_schedules') = 'array'
-               THEN l.venue_info->'preferred_schedules' ELSE '[]'::jsonb END
-        ) AS ps WHERE string_to_array(ps->>'day', ', ') && $${vmsParamIdx}::text[]
-      ) THEN 0 ELSE 1 END`);
-      vmsParams.push(dayMatchValues);
-      vmsParamIdx++;
-    }
-
-    if (vmsScoreClauses.length > 0) {
-      vmsQuery += ` ORDER BY (${vmsScoreClauses.join(' + ')}), l.name`;
-    } else {
-      vmsQuery += ` ORDER BY l.name`;
-    }
-    vmsQuery += ` LIMIT 10`;
-
-    const vmsResult = await queryProduction(vmsQuery, vmsParams);
+    const vmsResult = await queryProduction(vmsQuery, [cityId]);
     suggestions.push(...vmsResult.rows);
 
-    // Enrich repository venues with area/city names
-    const areaIds = [...new Set(suggestions.filter(s => s.area_id && s.source === 'repository').map(s => s.area_id))];
-    if (areaIds.length > 0) {
-      const areaInfoQuery = `
-        SELECT a.id, a.name as area_name, c.name as city_name
-        FROM area a JOIN city c ON a.city_id = c.id
-        WHERE a.id = ANY($1)
-      `;
-      const areaInfo = await queryProduction(areaInfoQuery, [areaIds]);
-      const areaMap = new Map(areaInfo.rows.map(r => [r.id, { area_name: r.area_name, city_name: r.city_name }]));
-
+    // Enrich repository venues with area/city names from production
+    const enrichAreaIds = [...new Set(suggestions.filter(s => s.area_id && s.source === 'repository').map(s => s.area_id))];
+    if (enrichAreaIds.length > 0) {
+      const areaInfo = await queryProduction(
+        `SELECT a.id, a.name as area_name, c.name as city_name FROM area a JOIN city c ON a.city_id = c.id WHERE a.id = ANY($1)`,
+        [enrichAreaIds]
+      );
+      const areaMap = new Map(areaInfo.rows.map((r: any) => [r.id, { area_name: r.area_name, city_name: r.city_name }]));
       for (const s of suggestions) {
         if (s.source === 'repository' && s.area_id) {
           const info = areaMap.get(s.area_id);
-          if (info) {
-            s.area_name = info.area_name;
-            s.city_name = info.city_name;
-          }
+          if (info) { s.area_name = info.area_name; s.city_name = info.city_name; }
         }
       }
     }
 
-    // Deduplicate: if a venue appears in both repository and VMS, keep the VMS one
-    // Match by vms_location_id <-> vms_id, or by URL
-    const vmsIds = new Set(suggestions.filter(s => s.source === 'vms').map(s => parseInt(s.vms_id)));
-    const vmsUrls = new Set(suggestions.filter(s => s.source === 'vms' && s.url).map(s => s.url));
+    // Deduplicate: when a venue exists in both repo and VMS, keep the one with richer data.
+    // Repository venues often have detailed venue_info (schedules, amenities) while VMS may be empty.
+    const vmsMap = new Map<number, any>(); // vms_id -> venue
+    const vmsUrlMap = new Map<string, any>(); // url -> venue
+    for (const s of suggestions) {
+      if (s.source === 'vms') {
+        vmsMap.set(parseInt(s.vms_id), s);
+        if (s.url) vmsUrlMap.set(s.url, s);
+      }
+    }
 
-    const deduped = suggestions.filter(s => {
-      if (s.source !== 'repository') return true;
-      // Remove repo venue if its vms_location_id matches a VMS suggestion
-      if (s.vms_location_id && vmsIds.has(parseInt(s.vms_location_id))) return false;
-      // Remove repo venue if its URL matches a VMS suggestion
-      if (s.url && vmsUrls.has(s.url)) return false;
+    const removedVmsIds = new Set<number>();
+    let deduped = suggestions.filter(s => {
+      if (s.source === 'repository') {
+        // Find matching VMS venue
+        const matchByLocId = s.vms_location_id ? vmsMap.get(parseInt(s.vms_location_id)) : null;
+        const matchByUrl = s.url ? vmsUrlMap.get(s.url) : null;
+        const vmsMatch = matchByLocId || matchByUrl;
+        if (vmsMatch) {
+          const repoInfo = typeof s.venue_info === 'string' ? JSON.parse(s.venue_info) : (s.venue_info || {});
+          const vmsInfo = typeof vmsMatch.venue_info === 'string' ? JSON.parse(vmsMatch.venue_info) : (vmsMatch.venue_info || {});
+          const repoHasSchedules = Array.isArray(repoInfo.preferred_schedules) && repoInfo.preferred_schedules.length > 0;
+          const vmsHasSchedules = Array.isArray(vmsInfo.preferred_schedules) && vmsInfo.preferred_schedules.length > 0;
+          if (repoHasSchedules && !vmsHasSchedules) {
+            // Repo has richer data — keep repo, mark VMS for removal
+            removedVmsIds.add(parseInt(vmsMatch.vms_id));
+            // Enrich repo venue with area info from VMS if missing
+            if (!s.area_name && vmsMatch.area_name) s.area_name = vmsMatch.area_name;
+            if (!s.city_name && vmsMatch.city_name) s.city_name = vmsMatch.city_name;
+            return true;
+          } else {
+            // VMS has data or both empty — keep VMS, drop repo
+            return false;
+          }
+        }
+      }
+      return true;
+    });
+    // Remove VMS venues that were superseded by richer repo versions
+    deduped = deduped.filter(s => {
+      if (s.source === 'vms' && removedVmsIds.has(parseInt(s.vms_id))) return false;
       return true;
     });
 
+    // 3. Meetup conflict detection — exclude venues with events at same day/time
+    const locationIdsForConflict: number[] = [];
+    for (const s of deduped) {
+      const locId = s.source === 'vms' ? parseInt(s.vms_id) : (s.vms_location_id ? parseInt(s.vms_location_id) : null);
+      if (locId) locationIdsForConflict.push(locId);
+    }
+
+    const conflictLocationIds = new Set<number>();
+    if (locationIdsForConflict.length > 0 && vmsDays.length > 0) {
+      const dayOfWeekMap: Record<string, number> = {
+        'SUNDAY': 0, 'MONDAY': 1, 'TUESDAY': 2, 'WEDNESDAY': 3, 'THURSDAY': 4, 'FRIDAY': 5, 'SATURDAY': 6
+      };
+      const targetDaysOfWeek = vmsDays.map(d => dayOfWeekMap[d]).filter(d => d !== undefined);
+
+      if (targetDaysOfWeek.length > 0) {
+        try {
+          const eventQuery = `
+            SELECT DISTINCT location_id FROM event
+            WHERE location_id = ANY($1)
+              AND state NOT IN ('cancelled', 'deleted')
+              AND start_time >= NOW()
+              AND start_time <= NOW() + INTERVAL '4 weeks'
+              AND EXTRACT(DOW FROM start_time AT TIME ZONE 'Asia/Kolkata') = ANY($2::int[])
+              ${hourRange ? `AND EXTRACT(HOUR FROM start_time AT TIME ZONE 'Asia/Kolkata') >= $3 AND EXTRACT(HOUR FROM start_time AT TIME ZONE 'Asia/Kolkata') < $4` : ''}
+          `;
+          const eventParams: any[] = [locationIdsForConflict, targetDaysOfWeek];
+          if (hourRange) { eventParams.push(hourRange.minHour, hourRange.maxHour); }
+
+          const eventResult = await queryProduction(eventQuery, eventParams);
+          for (const row of eventResult.rows) {
+            conflictLocationIds.add(parseInt(row.location_id));
+          }
+        } catch (err) {
+          logger.warn('Meetup conflict check failed (non-fatal):', err);
+        }
+      }
+    }
+
+    // Exclude conflicting venues
+    deduped = deduped.filter(s => {
+      const locId = s.source === 'vms' ? parseInt(s.vms_id) : (s.vms_location_id ? parseInt(s.vms_location_id) : null);
+      return !locId || !conflictLocationIds.has(locId);
+    });
+
+    // 4. Score each venue and sort by score descending
+    const scored = deduped.map(s => {
+      const { total, breakdown } = computeVenueScore(s, scoreConfig);
+      return { ...s, score: total, score_breakdown: breakdown };
+    });
+    scored.sort((a, b) => b.score - a.score || (a.name || '').localeCompare(b.name || ''));
+
     res.json({
       success: true,
-      requirement: { id: requirement.id, city, area, activity, capacity, day_type: dayTypeName, time_of_day: timeOfDay },
-      suggestions: deduped
+      requirement: {
+        id: requirement.id, city, area, activity, capacity,
+        day_type: dayTypeName, time_of_day: timeOfDay,
+        amenities_list: amenitiesList, venue_categories: venueCategories
+      },
+      suggestions: scored
     });
   } catch (error) {
     logger.error('Error fetching venue suggestions:', error);
