@@ -1312,10 +1312,23 @@ router.post('/:id/transfer-to-vms', async (req: Request, res: Response) => {
       grpcRequest.preferred_schedules = expandedSchedules;
     }
 
+    // Get auth token for gRPC calls
+    let authToken: string;
+    try {
+      const authCmd = `/home/ec2-user/go/bin/grpcurl -plaintext -d '{"phone":"917388712897","auth_type":"LOGIN"}' 15.207.255.212:8001 AuthService.AuthWithoutOTP`;
+      const { stdout: authOut } = await execAsync(authCmd, { timeout: 15000 });
+      const authResponse = JSON.parse(authOut);
+      authToken = authResponse.token;
+      if (!authToken) throw new Error('No token in auth response');
+    } catch (authError: any) {
+      logger.error('Failed to get gRPC auth token:', authError);
+      return res.status(500).json({ error: 'Failed to authenticate with VMS', details: authError.message });
+    }
+
     // Call gRPC CreateVenue
     const grpcData = JSON.stringify(grpcRequest);
     const escapedData = grpcData.replace(/'/g, "'\\''");
-    const grpcCmd = `/home/ec2-user/go/bin/grpcurl -plaintext -d '${escapedData}' 15.207.255.212:8001 LocationService.CreateVenue`;
+    const grpcCmd = `/home/ec2-user/go/bin/grpcurl -plaintext -H 'authorization: bearer ${authToken}' -d '${escapedData}' 15.207.255.212:8001 LocationService.CreateVenue`;
 
     logger.info(`Calling gRPC CreateVenue for venue ${id}: ${venue.name}`, { grpcRequest: JSON.stringify(grpcRequest).substring(0, 500) });
 
@@ -1366,12 +1379,12 @@ router.post('/:id/transfer-to-vms', async (req: Request, res: Response) => {
     if (venue_manager_phone && vmsLocationId) {
       try {
         // Step 1: Mark user as venue manager
-        const markCmd = `/home/ec2-user/go/bin/grpcurl -plaintext -d '{"phone_number": "${venue_manager_phone}"}' 15.207.255.212:8001 LocationService.MarkUserAsVenueManager`;
+        const markCmd = `/home/ec2-user/go/bin/grpcurl -plaintext -H 'authorization: bearer ${authToken}' -d '{"phone_number": "${venue_manager_phone}"}' 15.207.255.212:8001 LocationService.MarkUserAsVenueManager`;
         await execAsync(markCmd, { timeout: 15000 });
         logger.info(`Marked user ${venue_manager_phone} as venue manager`);
 
         // Step 2: Add venue manager to venue
-        const addCmd = `/home/ec2-user/go/bin/grpcurl -plaintext -d '{"venue_id": ${vmsLocationId}, "phone_number": "${venue_manager_phone}"}' 15.207.255.212:8001 LocationService.AddVenueManager`;
+        const addCmd = `/home/ec2-user/go/bin/grpcurl -plaintext -H 'authorization: bearer ${authToken}' -d '{"venue_id": ${vmsLocationId}, "phone_number": "${venue_manager_phone}"}' 15.207.255.212:8001 LocationService.AddVenueManager`;
         await execAsync(addCmd, { timeout: 15000 });
         logger.info(`Added venue manager ${venue_manager_phone} to venue ${vmsLocationId}`);
       } catch (managerError: any) {
