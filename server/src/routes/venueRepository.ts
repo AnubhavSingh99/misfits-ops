@@ -1217,23 +1217,46 @@ router.post('/:id/transfer-to-vms', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Venue must have a capacity category to transfer to VMS' });
     }
 
-    // Build gRPC CreateVenue request
+    // Look up area name and city from production DB
+    let areaName = '';
+    let cityName = '';
+    let cityId = 0;
+    try {
+      const areaResult = await queryProduction(
+        `SELECT a.id, a.name as area_name, c.id as city_id, c.name as city_name
+         FROM area a JOIN city c ON a.city_id = c.id WHERE a.id = $1`,
+        [venue.area_id]
+      );
+      if (areaResult.rows.length > 0) {
+        areaName = areaResult.rows[0].area_name;
+        cityId = parseInt(areaResult.rows[0].city_id);
+        cityName = areaResult.rows[0].city_name;
+      } else {
+        return res.status(400).json({ error: 'Area not found in production DB' });
+      }
+    } catch (areaError) {
+      logger.error('Failed to look up area/city:', areaError);
+      return res.status(500).json({ error: 'Failed to look up area and city information' });
+    }
+
+    // Build gRPC CreateVenue request (all fields are top-level per protobuf schema)
     const grpcRequest: any = {
       name: venue.name,
-      area_id: venue.area_id,
-      venue_info: {}
+      city: { name: cityName, id: cityId },
+      area: { name: areaName, id: parseInt(venue.area_id) },
     };
 
-    if (venue.url) grpcRequest.url = venue.url;
+    if (venue.url) grpcRequest.map_link = venue.url;
+    if (venueInfo.full_address) grpcRequest.full_address = venueInfo.full_address;
+    if (venueInfo.venue_category) grpcRequest.venue_category = venueInfo.venue_category;
+    if (venueInfo.capacity_category) grpcRequest.capacity_category = venueInfo.capacity_category;
+    if (venueInfo.seating_category) grpcRequest.seating_category = venueInfo.seating_category;
+    if (venueInfo.venue_description) grpcRequest.venue_description = venueInfo.venue_description;
+    if (venueInfo.amenities && venueInfo.amenities.length > 0) grpcRequest.amenities = venueInfo.amenities;
+    if (venueInfo.chargeable !== undefined) grpcRequest.chargeable = venueInfo.chargeable;
+    if (venueInfo.reason_for_charge) grpcRequest.reason_for_charge = venueInfo.reason_for_charge;
+    if (venueInfo.media && venueInfo.media.length > 0) grpcRequest.media = venueInfo.media;
 
-    // Map venue_info fields
-    if (venueInfo.venue_category) grpcRequest.venue_info.venue_category = venueInfo.venue_category;
-    if (venueInfo.seating_category) grpcRequest.venue_info.seating_category = venueInfo.seating_category;
-    if (venueInfo.capacity_category) grpcRequest.venue_info.capacity_category = venueInfo.capacity_category;
-    if (venueInfo.amenities && venueInfo.amenities.length > 0) grpcRequest.venue_info.amenities = venueInfo.amenities;
-    if (venueInfo.full_address) grpcRequest.venue_info.full_address = venueInfo.full_address;
-    if (venueInfo.chargeable !== undefined) grpcRequest.venue_info.chargeable = venueInfo.chargeable;
-    if (venueInfo.reason_for_charge) grpcRequest.venue_info.reason_for_charge = venueInfo.reason_for_charge;
     if (venueInfo.preferred_schedules && venueInfo.preferred_schedules.length > 0) {
       // Time slot name → VMS start_time/end_time mapping
       const TIME_SLOT_HOURS: Record<string, { start: { hour: number; minute: number; second: number }; end: { hour: number; minute: number; second: number } }> = {
@@ -1245,22 +1268,20 @@ router.post('/:id/transfer-to-vms', async (req: Request, res: Response) => {
         all_nighter:   { start: { hour: 0, minute: 0, second: 0 },  end: { hour: 5, minute: 0, second: 0 } }
       };
 
-      // Expand days, activities, AND time slots into individual VMS entries
+      // Expand days (WEEKDAY/WEEKEND → individual days) and time_slots → start_time/end_time
+      // Keep activities as comma-separated string (matches VMS format)
       const expandedSchedules: any[] = [];
       for (const sched of venueInfo.preferred_schedules) {
-        // Split comma-separated days, then expand WEEKDAY/WEEKEND groups
-        const rawDays = sched.day ? sched.day.split(', ').filter((d: string) => d) : [''];
+        const rawDays = sched.day ? sched.day.split(', ').filter((d: string) => d) : [];
         const days: string[] = [];
         for (const d of rawDays) {
           if (d === 'WEEKDAY') days.push('MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY');
           else if (d === 'WEEKEND') days.push('SATURDAY', 'SUNDAY');
           else days.push(d);
         }
-        const activities = sched.preferred_activity
-          ? sched.preferred_activity.split(', ').filter((a: string) => a)
-          : [''];
+        if (days.length === 0 && sched.day) days.push(sched.day);
 
-        // Resolve time slots: use time_slots field if present, else fall back to raw start_time/end_time
+        // Resolve time: use time_slots if present, else raw start_time/end_time
         const timeEntries: { start_time?: any; end_time?: any }[] = [];
         if (sched.time_slots) {
           const slots = sched.time_slots.split(', ').filter((s: string) => s);
@@ -1270,28 +1291,25 @@ router.post('/:id/transfer-to-vms', async (req: Request, res: Response) => {
           }
         }
         if (timeEntries.length === 0 && sched.start_time && sched.end_time) {
-          // Backward compat: old entries with raw start_time/end_time
           timeEntries.push({ start_time: sched.start_time, end_time: sched.end_time });
         }
         if (timeEntries.length === 0) {
-          timeEntries.push({}); // No time info — still create entries for day+activity
+          timeEntries.push({});
         }
 
         for (const day of days) {
-          for (const act of activities) {
-            for (const time of timeEntries) {
-              expandedSchedules.push({
-                day,
-                preferred_activity: act,
-                ...(time.start_time ? { start_time: time.start_time } : {}),
-                ...(time.end_time ? { end_time: time.end_time } : {}),
-                ...(sched.notes ? { notes: sched.notes } : {})
-              });
-            }
+          for (const time of timeEntries) {
+            expandedSchedules.push({
+              day,
+              preferred_activity: sched.preferred_activity || '',
+              ...(time.start_time ? { start_time: time.start_time } : {}),
+              ...(time.end_time ? { end_time: time.end_time } : {}),
+              ...(sched.notes ? { notes: sched.notes } : {})
+            });
           }
         }
       }
-      grpcRequest.venue_info.preferred_schedules = expandedSchedules;
+      grpcRequest.preferred_schedules = expandedSchedules;
     }
 
     // Call gRPC CreateVenue
@@ -1299,7 +1317,7 @@ router.post('/:id/transfer-to-vms', async (req: Request, res: Response) => {
     const escapedData = grpcData.replace(/'/g, "'\\''");
     const grpcCmd = `/home/ec2-user/go/bin/grpcurl -plaintext -d '${escapedData}' 15.207.255.212:8001 LocationService.CreateVenue`;
 
-    logger.info(`Calling gRPC CreateVenue for venue ${id}: ${venue.name}`);
+    logger.info(`Calling gRPC CreateVenue for venue ${id}: ${venue.name}`, { grpcRequest: JSON.stringify(grpcRequest).substring(0, 500) });
 
     let grpcOutput: string;
     try {
