@@ -713,6 +713,16 @@ export function VenueRepository() {
           <button onClick={() => openEditModal(venue)} className="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition-colors" title="Edit">
             <Edit3 className="h-4 w-4" />
           </button>
+          {venue.status === 'onboarded' && !venue.transferred_to_vms && (
+            <button
+              onClick={() => setTransferModal({ venue, managerPhone: venue.venue_manager_phone || '', transferring: false })}
+              className="px-2 py-1 text-xs font-medium text-green-700 bg-green-50 hover:bg-green-100 border border-green-200 rounded transition-colors flex items-center gap-1"
+              title="Transfer to VMS"
+            >
+              <Upload className="h-3 w-3" />
+              Send to VMS
+            </button>
+          )}
           {venue.status !== 'onboarded' && !venue.transferred_to_vms && (
             <button onClick={() => handleDeleteVenue(venue.id)} className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors" title="Delete">
               <Trash2 className="h-4 w-4" />
