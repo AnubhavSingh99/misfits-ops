@@ -952,7 +952,7 @@ export default function SharkTankCRM() {
                   >
                     <div className="flex items-center gap-1.5">
                       <span className="font-semibold text-gray-800 group-hover:text-teal-700">{c.city}</span>
-                      <ChevronRight size={10} className="text-gray-300 group-hover:text-teal-500 transition-colors" />
+                      <ChevronRight size={10} className="text-gray-500 group-hover:text-teal-500 transition-colors" />
                     </div>
                     <div className="flex gap-3 mt-1 text-gray-500">
                       <span><span className="font-medium text-gray-700">{c.count}</span> leads</span>
