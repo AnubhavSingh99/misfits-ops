@@ -130,6 +130,7 @@ export default function SharkTankCRM() {
   const [uploading, setUploading] = useState(false);
   const [uploadResult, setUploadResult] = useState<any>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const legendRef = useRef<HTMLDivElement>(null);
 
   // Pending replies
   const [pendingReplies, setPendingReplies] = useState<PendingReply[]>([]);
@@ -184,6 +185,18 @@ export default function SharkTankCRM() {
   useEffect(() => {
     fetchLeads();
   }, [fetchLeads]);
+
+  // Close stage legend on outside click
+  useEffect(() => {
+    if (!showStageLegend) return;
+    const handler = (e: MouseEvent) => {
+      if (legendRef.current && !legendRef.current.contains(e.target as Node)) {
+        setShowStageLegend(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [showStageLegend]);
 
   // SSE: real-time updates from server
   useEffect(() => {
@@ -949,7 +962,7 @@ export default function SharkTankCRM() {
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm">
           <div className="px-4 py-3 border-b border-gray-200">
             <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-1.5 relative">
+              <div ref={legendRef} className="flex items-center gap-1.5 relative">
                 <span className="text-sm font-medium text-gray-700">
                   Leads ({filteredLeads.length})
                 </span>
