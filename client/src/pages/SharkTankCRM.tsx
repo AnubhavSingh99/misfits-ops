@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   RefreshCw, Upload, Search, ChevronDown, ChevronUp, X, Info,
-  Users, MessageCircle, Phone, Calendar, CheckCircle, UserX, Ghost,
+  Users, MessageCircle, Phone, Calendar, CheckCircle, UserX,
   Send, Eye, AlertTriangle, Clock, Plus, Edit3, XCircle, ChevronRight
 } from 'lucide-react';
 
@@ -11,14 +11,13 @@ const API_BASE = import.meta.env.VITE_API_URL
 
 // Pipeline stages config (inline to avoid extra file)
 const PIPELINE_STAGES = [
-  'NOT_CONTACTED', 'FOLLOWED', 'DM_FAILED', 'DM_SENT', 'IN_CONVERSATION',
+  'NOT_CONTACTED', 'DM_FAILED', 'DM_SENT', 'IN_CONVERSATION',
   'CALL_SCHEDULED', 'CALL_DONE', 'CONVERTED', 'ONBOARDED',
-  'NOT_INTERESTED', 'GHOSTED',
+  'NOT_INTERESTED',
 ] as const;
 
 const STAGE_CONFIG: Record<string, { label: string; shortLabel: string; bgColor: string; textColor: string; badgeClass: string }> = {
   NOT_CONTACTED: { label: 'Not Contacted', shortLabel: 'NC', bgColor: 'bg-slate-100', textColor: 'text-slate-600', badgeClass: 'bg-slate-50 text-slate-600 border-slate-200' },
-  FOLLOWED: { label: 'Followed', shortLabel: 'FL', bgColor: 'bg-blue-100', textColor: 'text-blue-600', badgeClass: 'bg-blue-50 text-blue-600 border-blue-200' },
   DM_FAILED: { label: 'DM Failed', shortLabel: 'DF', bgColor: 'bg-orange-100', textColor: 'text-orange-600', badgeClass: 'bg-orange-50 text-orange-600 border-orange-200' },
   DM_SENT: { label: 'DM Sent', shortLabel: 'DM', bgColor: 'bg-cyan-100', textColor: 'text-cyan-600', badgeClass: 'bg-cyan-50 text-cyan-600 border-cyan-200' },
   IN_CONVERSATION: { label: 'In Conversation', shortLabel: 'IC', bgColor: 'bg-teal-100', textColor: 'text-teal-600', badgeClass: 'bg-teal-50 text-teal-600 border-teal-200' },
@@ -27,7 +26,6 @@ const STAGE_CONFIG: Record<string, { label: string; shortLabel: string; bgColor:
   CONVERTED: { label: 'Converted', shortLabel: 'CV', bgColor: 'bg-emerald-100', textColor: 'text-emerald-600', badgeClass: 'bg-emerald-50 text-emerald-600 border-emerald-200' },
   ONBOARDED: { label: 'Onboarded', shortLabel: 'OB', bgColor: 'bg-green-100', textColor: 'text-green-600', badgeClass: 'bg-green-50 text-green-600 border-green-200' },
   NOT_INTERESTED: { label: 'Not Interested', shortLabel: 'NI', bgColor: 'bg-red-100', textColor: 'text-red-600', badgeClass: 'bg-red-50 text-red-600 border-red-200' },
-  GHOSTED: { label: 'Ghosted', shortLabel: 'GH', bgColor: 'bg-gray-100', textColor: 'text-gray-500', badgeClass: 'bg-gray-50 text-gray-500 border-gray-200' },
 };
 
 interface Lead {
@@ -83,7 +81,6 @@ interface Stats {
 
 const STAGE_ICONS: Record<string, any> = {
   NOT_CONTACTED: Users,
-  FOLLOWED: Eye,
   DM_FAILED: AlertTriangle,
   DM_SENT: Send,
   IN_CONVERSATION: MessageCircle,
@@ -92,7 +89,6 @@ const STAGE_ICONS: Record<string, any> = {
   CONVERTED: CheckCircle,
   ONBOARDED: CheckCircle,
   NOT_INTERESTED: UserX,
-  GHOSTED: Ghost,
 };
 
 function timeAgo(dateStr: string): string {
@@ -350,9 +346,9 @@ export default function SharkTankCRM() {
 
   // Filtered leads
   const STAGE_ORDER: Record<string, number> = {
-    NOT_CONTACTED: 0, FOLLOWED: 1, DM_FAILED: 2, DM_SENT: 3, IN_CONVERSATION: 4,
-    CALL_SCHEDULED: 5, CALL_DONE: 6, CONVERTED: 7, ONBOARDED: 8,
-    NOT_INTERESTED: 9, GHOSTED: 10,
+    NOT_CONTACTED: 0, DM_FAILED: 1, DM_SENT: 2, IN_CONVERSATION: 3,
+    CALL_SCHEDULED: 4, CALL_DONE: 5, CONVERTED: 6, ONBOARDED: 7,
+    NOT_INTERESTED: 8,
   };
 
   const filteredLeads = useMemo(() => {
@@ -368,7 +364,6 @@ export default function SharkTankCRM() {
       if (stageFilter && lead.pipeline_stage !== stageFilter) return false;
       if (activityFilter && (lead.activity || '') !== activityFilter) return false;
       if (assigneeFilter && (lead.assigned_to || '') !== assigneeFilter) return false;
-      if (lead.pipeline_stage === 'GHOSTED' && stageFilter !== 'GHOSTED') return false;
       if (lead.pipeline_stage === 'NOT_INTERESTED' && stageFilter !== 'NOT_INTERESTED') return false;
       if (showFlaggedOnly && !lead.flag && !lead.manual_mode) return false;
       return true;
@@ -1007,7 +1002,7 @@ export default function SharkTankCRM() {
                 Conv Rate: {stats.conversion_rate}%
               </span>
             </div>
-            <div className="grid grid-cols-2 md:grid-cols-5 lg:grid-cols-10 gap-2">
+            <div className="grid grid-cols-2 md:grid-cols-5 lg:grid-cols-9 gap-2">
               {PIPELINE_STAGES.map(stage => {
                 const config = STAGE_CONFIG[stage];
                 const Icon = STAGE_ICONS[stage] || Users;
