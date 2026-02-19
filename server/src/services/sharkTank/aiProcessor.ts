@@ -1,5 +1,6 @@
 import { getLocalPool } from '../database';
-import { createPendingReply } from './replyQueue';
+import { createPendingReply, createScheduledReply } from './replyQueue';
+import { AUTO_REPLIES } from './templates';
 import { createCalendarEvent, updateCalendarEvent } from './calendarService';
 import { broadcast } from './sseManager';
 import { pickAutoReply } from './templates';
@@ -7,7 +8,7 @@ import { pickAutoReply } from './templates';
 const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages';
 
 interface AIClassification {
-  classification: 'weird_spam' | 'normal_first_reply' | 'normal_chatting_no_time' | 'vague_time' | 'clear_datetime' | 'reschedule_clear' | 'reschedule_vague' | 'not_interested' | 'media_only' | 'call_confirmed';
+  classification: 'weird_spam' | 'normal_first_reply' | 'normal_chatting_no_time' | 'vague_time' | 'clear_datetime' | 'reschedule_clear' | 'reschedule_vague' | 'not_interested' | 'media_only' | 'call_confirmed' | 'defer_reconnect' | 'mail_request';
   extracted_phone: string | null;
   extracted_datetime: string | null; // ISO string
   summary: string;
@@ -34,6 +35,36 @@ export async function processMessageBatch(leadId: number, messages: any[]) {
       console.log(`[AI] Lead ${leadId} is in manual mode. Skipping automation.`);
       broadcast('lead_updated', { lead_id: leadId, classification: 'manual_mode' });
       return;
+    }
+
+    // Detect auto-reply bots: if lead sends the same message they sent before (50+ chars), it's a bot
+    const currentTexts = messages.map((m: any) => (m.text || '').trim());
+    const longTexts = currentTexts.filter((t: string) => t.length >= 50);
+    if (longTexts.length > 0) {
+      const prevBatches = await pool.query(
+        `SELECT messages FROM message_batches WHERE lead_id = $1 AND processed = true ORDER BY created_at ASC`,
+        [leadId]
+      );
+      const prevTexts = new Set<string>();
+      for (const batch of prevBatches.rows) {
+        for (const msg of (batch.messages || [])) {
+          if (msg.text) prevTexts.add(msg.text.trim());
+        }
+      }
+      const duplicate = longTexts.find((t: string) => prevTexts.has(t));
+      if (duplicate) {
+        console.log(`[AI] Lead ${leadId} sent duplicate message (auto-reply bot detected). Enabling manual mode + flagging.`);
+        await pool.query(
+          `UPDATE leads SET manual_mode = true, flag = 'needs_attention', last_activity_at = NOW(), updated_at = NOW(),
+           activity_log = activity_log || $1::jsonb WHERE id = $2`,
+          [JSON.stringify([{
+            action: 'flag_change', old_value: lead.flag || 'none', new_value: 'auto_reply_bot',
+            created_at: new Date().toISOString()
+          }]), leadId]
+        );
+        broadcast('lead_updated', { lead_id: leadId, classification: 'auto_reply_bot' });
+        return;
+      }
     }
 
     // Check edge cases before processing
@@ -75,8 +106,11 @@ export async function processMessageBatch(leadId: number, messages: any[]) {
     const isPostSchedule = lead.pipeline_stage === 'CALL_SCHEDULED' || hasFutureCall;
     const hasPhoneAlready = !!lead.whatsapp_number;
 
+    // Get conversation history for context
+    const history = await getConversationHistory(leadId);
+
     // Call Claude API for classification
-    const classification = await classifyWithClaude(lead, messages, isFirstReply, isPostSchedule);
+    const classification = await classifyWithClaude(lead, messages, isFirstReply, isPostSchedule, history);
 
     if (!classification) {
       console.error(`[AI] Classification failed for lead ${leadId}`);
@@ -120,7 +154,6 @@ export async function processMessageBatch(leadId: number, messages: any[]) {
         break;
 
       case 'normal_first_reply':
-      case 'normal_chatting_no_time':
         // Move to IN_CONVERSATION if needed
         if (lead.pipeline_stage === 'DM_SENT' || lead.pipeline_stage === 'FOLLOWED') {
           await pool.query(
@@ -139,13 +172,45 @@ export async function processMessageBatch(leadId: number, messages: any[]) {
         break;
 
       case 'defer_reconnect':
-        // Lead says "reconnect later" / "check back next week" — flag for manual follow-up
-        await flagLead(leadId, lead, 'vague_time', classification.summary);
-        skipReply = true;
+        // Lead says "will get back" / "busy" — send "Sure" + schedule 10hr reminder
+        if (isFirstReply || lead.pipeline_stage === 'DM_SENT' || lead.pipeline_stage === 'FOLLOWED') {
+          await pool.query(
+            `UPDATE leads SET pipeline_stage = 'IN_CONVERSATION', last_activity_at = NOW(), updated_at = NOW(),
+             activity_log = activity_log || $1::jsonb WHERE id = $2`,
+            [JSON.stringify([{
+              action: 'stage_change', old_value: lead.pipeline_stage, new_value: 'IN_CONVERSATION',
+              created_at: new Date().toISOString()
+            }]), leadId]
+          );
+        }
         break;
 
       case 'mail_request':
-        // Lead asks for email — reply nudging towards a call
+        // Lead asks for email — flag + reply (nudge or accept)
+        await flagLead(leadId, lead, 'needs_attention', classification.summary);
+        if (!lead.mail_nudge_sent) {
+          await pool.query(`UPDATE leads SET mail_nudge_sent = true WHERE id = $1`, [leadId]);
+        }
+        break;
+
+      case 'normal_chatting_no_time':
+        // Move to IN_CONVERSATION if needed
+        if (lead.pipeline_stage === 'DM_SENT' || lead.pipeline_stage === 'FOLLOWED') {
+          await pool.query(
+            `UPDATE leads SET pipeline_stage = 'IN_CONVERSATION', last_activity_at = NOW(), updated_at = NOW(),
+             activity_log = activity_log || $1::jsonb WHERE id = $2`,
+            [JSON.stringify([{
+              action: 'stage_change', old_value: lead.pipeline_stage, new_value: 'IN_CONVERSATION',
+              created_at: new Date().toISOString()
+            }]), leadId]
+          );
+        }
+        // Flag chatting with no useful info (unless they gave a phone number)
+        if (!classification.extracted_phone && !hasPhoneAlready) {
+          await flagLead(leadId, lead, 'needs_attention', classification.summary);
+        } else if (classification.extracted_phone && !hasPhoneAlready && !isPostSchedule) {
+          // Phone only, no flag needed — just asking for time
+        }
         break;
 
       case 'clear_datetime':
@@ -258,7 +323,7 @@ export async function processMessageBatch(leadId: number, messages: any[]) {
     }
 
     // If lead is post-schedule and message wasn't a known action, flag for manual handling
-    if (isPostSchedule && !['reschedule_clear', 'reschedule_vague', 'not_interested', 'call_confirmed', 'weird_spam', 'media_only', 'defer_reconnect', 'mail_request', 'clear_datetime', 'vague_time'].includes(classification.classification)) {
+    if (isPostSchedule && !['reschedule_clear', 'reschedule_vague', 'not_interested', 'call_confirmed', 'weird_spam', 'media_only', 'defer_reconnect', 'mail_request', 'clear_datetime', 'vague_time', 'normal_chatting_no_time'].includes(classification.classification)) {
       console.log(`[AI] Lead ${leadId} is post-schedule but sent unhandled message type: ${classification.classification}. Flagging.`);
       await flagLead(leadId, lead, 'needs_attention', classification.summary);
       skipReply = true;
@@ -278,11 +343,27 @@ export async function processMessageBatch(leadId: number, messages: any[]) {
       extractedPhone: classification.extracted_phone,
       extractedDatetime: classification.extracted_datetime,
       classification: classification.classification,
+      isPostSchedule,
+      mailNudgeSent: !!lead.mail_nudge_sent,
     });
 
     if (replyText) {
       await createPendingReply(leadId, replyText);
       console.log(`[AI] Pending reply created for lead ${leadId}: "${replyText.substring(0, 60)}..."`);
+    }
+
+    // Schedule 10hr reminder for defer_reconnect
+    if (classification.classification === 'defer_reconnect') {
+      const REMINDER_DELAY_MS = 10 * 60 * 60 * 1000; // 10 hours
+      const hasPhone = hasPhoneAlready || !!classification.extracted_phone;
+      let reminderText: string;
+      if (hasPhone) {
+        reminderText = AUTO_REPLIES.DEFER_REMINDER_NEED_TIME;
+      } else {
+        reminderText = AUTO_REPLIES.DEFER_REMINDER_GENERIC;
+      }
+      await createScheduledReply(leadId, reminderText, REMINDER_DELAY_MS);
+      console.log(`[AI] 10hr reminder scheduled for lead ${leadId}`);
     }
 
     // Update last_activity_at
@@ -321,6 +402,57 @@ async function flagLead(leadId: number, lead: any, flagType: string, summary: st
 }
 
 /**
+ * Build conversation history from past batches and sent replies.
+ * Returns a formatted string like:
+ *   [Lead]: Hey tell me more
+ *   [Us]: Hey! Glad you connected...
+ *   [Lead]: Will get back
+ *   [Us]: Sure
+ */
+async function getConversationHistory(leadId: number): Promise<string> {
+  const pool = getLocalPool();
+
+  const [batches, replies] = await Promise.all([
+    pool.query(
+      `SELECT messages, window_start FROM message_batches
+       WHERE lead_id = $1 AND processed = true
+       ORDER BY window_start ASC`,
+      [leadId]
+    ),
+    pool.query(
+      `SELECT reply_text, created_at FROM pending_replies
+       WHERE lead_id = $1 AND status = 'sent'
+       ORDER BY created_at ASC`,
+      [leadId]
+    ),
+  ]);
+
+  const events: { time: Date; text: string }[] = [];
+
+  for (const batch of batches.rows) {
+    for (const msg of batch.messages) {
+      events.push({
+        time: new Date(msg.timestamp || batch.window_start),
+        text: `[Lead]: ${msg.text}`,
+      });
+    }
+  }
+
+  for (const reply of replies.rows) {
+    events.push({
+      time: new Date(reply.created_at),
+      text: `[Us]: ${reply.reply_text}`,
+    });
+  }
+
+  events.sort((a, b) => a.time.getTime() - b.time.getTime());
+
+  // Limit to last 20 exchanges to keep token usage reasonable
+  const recent = events.slice(-20);
+  return recent.map(e => e.text).join('\n');
+}
+
+/**
  * Call Claude API to classify messages.
  * The AI only classifies and extracts data. Reply text comes from our templates.
  */
@@ -328,7 +460,8 @@ async function classifyWithClaude(
   lead: any,
   messages: any[],
   isFirstReply: boolean,
-  isPostSchedule: boolean
+  isPostSchedule: boolean,
+  history: string = ''
 ): Promise<AIClassification | null> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
@@ -363,6 +496,7 @@ The lead's current info:
 
 ${isFirstReply ? 'This is the FIRST reply from this lead (they were at DM_SENT stage). We already explained Misfits in the first DM.' : ''}
 ${isPostSchedule ? 'This lead already has a call scheduled. Check if they want to reschedule.' : ''}
+${history ? `\nConversation history so far:\n${history}\n` : ''}
 
 Classify the message(s) into exactly ONE of these categories:
 - weird_spam: Message is spam, gibberish, or completely off-topic
@@ -371,7 +505,7 @@ Classify the message(s) into exactly ONE of these categories:
 - normal_first_reply: This is their first reply and it's a normal response (hey, sure, tell me more, what do you want, etc.)
 - normal_chatting_no_time: Normal conversation, questions about Misfits, or just a phone number with no time mentioned
 - mail_request: Lead asks to be contacted via email/mail instead of a call ("mail me", "send me an email", "can you email the details")
-- vague_time: They mention a time but it's vague ("sometime next week", "morning", "later", "weekend")
+- vague_time: They mention a day but no specific time ("this Saturday", "Monday", "next week"), OR truly vague ("sometime", "later", "morning"). If a specific day of the week is mentioned, still extract the date in extracted_datetime with time set to 00:00 IST.
 - defer_reconnect: Lead asks YOU to reconnect later instead of giving a specific time ("you check back next week", "reconnect early next week", "ping me later", "let me check and get back")
 - clear_datetime: They mention a specific date and time for a call ("Thursday at 4pm", "tomorrow 5:30pm", "Feb 22 3pm")
 - reschedule_clear: They want to change an existing scheduled call to a clear new date and time
@@ -395,7 +529,10 @@ Important:
   - "day after" = the day after tomorrow
   - If only a day name is given (e.g. "Thursday"), use the NEXT upcoming occurrence
 - If the message is JUST a phone number (like "9876543210"), classify as normal_chatting_no_time with extracted_phone set
-- If the message has BOTH a phone number and a clear time, classify as clear_datetime with both fields set`;
+- If the message has BOTH a phone number and a clear time, classify as clear_datetime with both fields set
+- If a specific day is mentioned WITHOUT a time (e.g. "Saturday", "this Monday", "next Friday"), classify as vague_time but extract the resolved date in extracted_datetime with time set to 00:00 IST
+- If the lead says "will get back", "let me check", "busy right now", "talk later" — classify as defer_reconnect
+- If the message has a phone number AND a vague day (e.g. "Saturday 9876543210"), classify as vague_time with both extracted_phone and extracted_datetime (date at 00:00) set`;
 
   try {
     const response = await fetch(ANTHROPIC_API_URL, {
@@ -454,6 +591,20 @@ Important:
 function mockClassify(messages: any[], isFirstReply: boolean, _isPostSchedule: boolean): AIClassification {
   const text = messages.map((m: any) => m.text).join(' ').toLowerCase();
 
+  // Extract phone FIRST (before emoji check, since digits match \p{Emoji})
+  const phoneMatch = text.match(/(\+?91[\s-]?\d{5}[\s-]?\d{5}|\d{10})/);
+  const phone = phoneMatch ? phoneMatch[0].replace(/[\s-]/g, '') : null;
+
+  // Phone-only message (just digits)
+  if (phone && text.replace(/[\s\+\-]/g, '').match(/^\d{10,12}$/)) {
+    return {
+      classification: 'normal_chatting_no_time',
+      extracted_phone: phone,
+      extracted_datetime: null,
+      summary: 'Lead shared phone number',
+    };
+  }
+
   if (!text || text.match(/^[\s\p{Emoji}]*$/u)) {
     return { classification: 'media_only', extracted_phone: null, extracted_datetime: null, summary: 'Media or emoji only' };
   }
@@ -461,9 +612,15 @@ function mockClassify(messages: any[], isFirstReply: boolean, _isPostSchedule: b
     return { classification: 'not_interested', extracted_phone: null, extracted_datetime: null, summary: 'Lead not interested' };
   }
 
-  // Extract phone
-  const phoneMatch = text.match(/(\+?91[\s-]?\d{5}[\s-]?\d{5}|\d{10})/);
-  const phone = phoneMatch ? phoneMatch[0].replace(/[\s-]/g, '') : null;
+  // Defer detection
+  if (text.match(/will get back|let me check|busy right now|talk later|get back to you|ping me later|reconnect/)) {
+    return { classification: 'defer_reconnect', extracted_phone: phone, extracted_datetime: null, summary: 'Lead deferred' };
+  }
+
+  // Mail request detection
+  if (text.match(/mail me|send.*email|email me|can you mail|send.*mail/)) {
+    return { classification: 'mail_request', extracted_phone: phone, extracted_datetime: null, summary: 'Lead asked for email' };
+  }
 
   // Extract datetime (basic patterns for mock)
   const timePatterns = [
@@ -476,15 +633,6 @@ function mockClassify(messages: any[], isFirstReply: boolean, _isPostSchedule: b
       hasTime = true;
       break;
     }
-  }
-
-  if (phone && text.replace(/[\s\+\-]/g, '').match(/^\d{10,12}$/)) {
-    return {
-      classification: 'normal_chatting_no_time',
-      extracted_phone: phone,
-      extracted_datetime: null,
-      summary: 'Lead shared phone number',
-    };
   }
 
   if (hasTime && phone) {
