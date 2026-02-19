@@ -11,7 +11,7 @@ const API_BASE = import.meta.env.VITE_API_URL
 
 // Pipeline stages config (inline to avoid extra file)
 const PIPELINE_STAGES = [
-  'NOT_CONTACTED', 'FOLLOWED', 'DM_SENT', 'IN_CONVERSATION',
+  'NOT_CONTACTED', 'FOLLOWED', 'DM_FAILED', 'DM_SENT', 'IN_CONVERSATION',
   'CALL_SCHEDULED', 'CALL_DONE', 'CONVERTED', 'ONBOARDED',
   'NOT_INTERESTED', 'GHOSTED',
 ] as const;
@@ -19,6 +19,7 @@ const PIPELINE_STAGES = [
 const STAGE_CONFIG: Record<string, { label: string; shortLabel: string; bgColor: string; textColor: string; badgeClass: string }> = {
   NOT_CONTACTED: { label: 'Not Contacted', shortLabel: 'NC', bgColor: 'bg-slate-100', textColor: 'text-slate-600', badgeClass: 'bg-slate-50 text-slate-600 border-slate-200' },
   FOLLOWED: { label: 'Followed', shortLabel: 'FL', bgColor: 'bg-blue-100', textColor: 'text-blue-600', badgeClass: 'bg-blue-50 text-blue-600 border-blue-200' },
+  DM_FAILED: { label: 'DM Failed', shortLabel: 'DF', bgColor: 'bg-orange-100', textColor: 'text-orange-600', badgeClass: 'bg-orange-50 text-orange-600 border-orange-200' },
   DM_SENT: { label: 'DM Sent', shortLabel: 'DM', bgColor: 'bg-cyan-100', textColor: 'text-cyan-600', badgeClass: 'bg-cyan-50 text-cyan-600 border-cyan-200' },
   IN_CONVERSATION: { label: 'In Conversation', shortLabel: 'IC', bgColor: 'bg-teal-100', textColor: 'text-teal-600', badgeClass: 'bg-teal-50 text-teal-600 border-teal-200' },
   CALL_SCHEDULED: { label: 'Call Scheduled', shortLabel: 'CS', bgColor: 'bg-purple-100', textColor: 'text-purple-600', badgeClass: 'bg-purple-50 text-purple-600 border-purple-200' },
@@ -83,6 +84,7 @@ interface Stats {
 const STAGE_ICONS: Record<string, any> = {
   NOT_CONTACTED: Users,
   FOLLOWED: Eye,
+  DM_FAILED: AlertTriangle,
   DM_SENT: Send,
   IN_CONVERSATION: MessageCircle,
   CALL_SCHEDULED: Calendar,
@@ -348,9 +350,9 @@ export default function SharkTankCRM() {
 
   // Filtered leads
   const STAGE_ORDER: Record<string, number> = {
-    NOT_CONTACTED: 0, FOLLOWED: 1, DM_SENT: 2, IN_CONVERSATION: 3,
-    CALL_SCHEDULED: 4, CALL_DONE: 5, CONVERTED: 6, ONBOARDED: 7,
-    NOT_INTERESTED: 8, GHOSTED: 9,
+    NOT_CONTACTED: 0, FOLLOWED: 1, DM_FAILED: 2, DM_SENT: 3, IN_CONVERSATION: 4,
+    CALL_SCHEDULED: 5, CALL_DONE: 6, CONVERTED: 7, ONBOARDED: 8,
+    NOT_INTERESTED: 9, GHOSTED: 10,
   };
 
   const filteredLeads = useMemo(() => {
