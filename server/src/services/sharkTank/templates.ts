@@ -21,7 +21,7 @@ export function renderTemplate(templateId: number, leadName: string): string | n
 export const AUTO_REPLIES = {
   // First reply from lead (always asks for phone + schedule)
   FIRST_REPLY:
-    `Hey! Glad you got back 😊 If possible, can I get 15 mins of your time for a quick call? It would be great if you can share your number and a preferred time slot (day, date and time) so I can mark my calendar! Life is good when you write things down :p`,
+    `Hey! Glad you connected :)\nHonestly, easier to talk about over a call than type out. There's a lot I'd love to hear from you too. Got 15 mins sometime this week? Drop your number and a day/time that works 😊`,
 
   // Lead gave phone number only, need schedule
   PHONE_ONLY:
