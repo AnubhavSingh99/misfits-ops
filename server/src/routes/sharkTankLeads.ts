@@ -398,8 +398,10 @@ router.patch('/:id', async (req: Request, res: Response) => {
     const result = await pool.query(query, params);
     const updatedLead = result.rows[0];
 
-    // Create/update Google Calendar event when call_scheduled_at is manually set
-    if (updates.call_scheduled_at && updates.call_scheduled_at !== lead.call_scheduled_at) {
+    // Create/update Google Calendar event only when lead is at CALL_SCHEDULED or later
+    const calendarEligibleStages = ['CALL_SCHEDULED', 'CALL_DONE', 'CONVERTED', 'ONBOARDED'];
+    const effectiveStage = updates.pipeline_stage || updatedLead.pipeline_stage;
+    if (updates.call_scheduled_at && updates.call_scheduled_at !== lead.call_scheduled_at && calendarEligibleStages.includes(effectiveStage)) {
       try {
         if (lead.google_calendar_event_id) {
           await updateCalendarEvent(Number(leadId), lead.google_calendar_event_id, updates.call_scheduled_at);
