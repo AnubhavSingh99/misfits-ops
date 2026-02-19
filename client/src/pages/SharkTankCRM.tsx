@@ -581,19 +581,7 @@ export default function SharkTankCRM() {
                           className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-gray-50 transition-colors text-left"
                         >
                           <ChevronRight size={14} className={`text-gray-400 transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
-                          <span
-                            className="font-medium text-gray-900 flex-1 hover:text-teal-700 hover:underline"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              if (analysisHierarchy === 'city-activity') {
-                                setCityFilter(row.name === 'Unknown' ? '' : row.name);
-                              } else {
-                                setActivityFilter(row.name === 'Unknown' ? '' : row.name);
-                              }
-                              setShowAnalysis(false);
-                              setExpandedAnalysisRows(new Set());
-                            }}
-                          >{row.name}</span>
+                          <span className="font-medium text-gray-900 flex-1">{row.name}</span>
                           <span className="text-sm text-gray-600 tabular-nums w-16 text-right">{row.total} leads</span>
                           <span className={`text-sm tabular-nums w-20 text-right font-medium ${row.converted > 0 ? 'text-emerald-600' : 'text-gray-400'}`}>{row.converted} conv</span>
                         </button>
@@ -610,18 +598,7 @@ export default function SharkTankCRM() {
                               <tbody>
                                 {row.sub.map((s) => (
                                   <tr key={s.name} className="border-b border-gray-50">
-                                    <td
-                                      className="py-1.5 px-3 text-gray-700 hover:text-teal-700 hover:underline cursor-pointer"
-                                      onClick={() => {
-                                        if (analysisHierarchy === 'city-activity') {
-                                          setActivityFilter(s.name === 'Unknown' ? '' : s.name);
-                                        } else {
-                                          setCityFilter(s.name === 'Unknown' ? '' : s.name);
-                                        }
-                                        setShowAnalysis(false);
-                                        setExpandedAnalysisRows(new Set());
-                                      }}
-                                    >{s.name}</td>
+                                    <td className="py-1.5 px-3 text-gray-700">{s.name}</td>
                                     <td className="py-1.5 px-3 text-right text-gray-700 tabular-nums">{s.total}</td>
                                     <td className="py-1.5 px-3 text-right tabular-nums">
                                       <span className={s.converted > 0 ? 'text-emerald-600 font-medium' : 'text-gray-400'}>{s.converted}</span>
