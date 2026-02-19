@@ -28,6 +28,14 @@ export async function processMessageBatch(leadId: number, messages: any[]) {
     }
     const lead = leadResult.rows[0];
 
+    // Manual mode — skip all automation, just update last_activity_at
+    if (lead.manual_mode) {
+      await pool.query(`UPDATE leads SET last_activity_at = NOW() WHERE id = $1`, [leadId]);
+      console.log(`[AI] Lead ${leadId} is in manual mode. Skipping automation.`);
+      broadcast('lead_updated', { lead_id: leadId, classification: 'manual_mode' });
+      return;
+    }
+
     // Check edge cases before processing
     // 1. Converted/Onboarded -> flag, don't auto-reply
     if (['CONVERTED', 'ONBOARDED'].includes(lead.pipeline_stage)) {

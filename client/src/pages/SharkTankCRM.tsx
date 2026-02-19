@@ -55,6 +55,7 @@ interface Lead {
   leader_name: string | null;
   type: string | null;
   lead_quality: string | null;
+  manual_mode: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -1141,7 +1142,12 @@ function LeadRow({
               <AlertTriangle size={12} /> Attn
             </span>
           )}
-          {!lead.flag && <span className="text-gray-300">-</span>}
+          {!lead.flag && !lead.manual_mode && <span className="text-gray-300">-</span>}
+          {lead.manual_mode && (
+            <span className="inline-flex items-center gap-1 text-xs text-red-500 font-semibold">
+              M
+            </span>
+          )}
         </td>
         <td className="px-4 py-2.5 text-sm text-gray-600">{lead.lead_quality || '-'}</td>
         <td className="px-4 py-2.5 text-xs text-gray-400">{timeAgo(lead.last_activity_at)}</td>
@@ -1184,6 +1190,19 @@ function LeadRow({
                       <option value="vague_time">Vague Time</option>
                       <option value="needs_attention">Needs Attention</option>
                     </select>
+                  </div>
+
+                  <div className="flex items-center justify-between" onClick={(e) => e.stopPropagation()}>
+                    <label className="text-xs text-gray-500">Automation</label>
+                    <button
+                      onClick={() => onUpdate(lead.id, { manual_mode: !lead.manual_mode })}
+                      className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${lead.manual_mode ? 'bg-gray-300' : 'bg-teal-500'}`}
+                    >
+                      <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${lead.manual_mode ? 'translate-x-1' : 'translate-x-[18px]'}`} />
+                    </button>
+                    <span className={`text-xs font-medium ${lead.manual_mode ? 'text-red-500' : 'text-teal-600'}`}>
+                      {lead.manual_mode ? 'OFF (Manual)' : 'ON'}
+                    </span>
                   </div>
 
                   <div onClick={(e) => e.stopPropagation()}>

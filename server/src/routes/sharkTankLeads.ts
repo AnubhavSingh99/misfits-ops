@@ -377,7 +377,7 @@ router.patch('/:id', async (req: Request, res: Response) => {
     const simpleFields = [
       'whatsapp_number', 'call_link', 'call_scheduled_at', 'missive_conversation_id',
       'message_template_id', 'assigned_to', 'leader_name', 'name', 'city', 'area',
-      'activity', 'days', 'timings', 'venue', 'type', 'lead_quality',
+      'activity', 'days', 'timings', 'venue', 'type', 'lead_quality', 'manual_mode',
     ];
     for (const field of simpleFields) {
       if (updates[field] !== undefined) {
