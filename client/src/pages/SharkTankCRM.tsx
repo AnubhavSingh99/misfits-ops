@@ -432,10 +432,12 @@ export default function SharkTankCRM() {
       });
       const data = await res.json();
       if (data.success) {
+        const scrollY = window.scrollY;
         setLeads(prev => prev.map(l => l.id === id ? data.data : l));
         const statsRes = await fetch(`${API_BASE}/leads/stats`);
         const statsData = await statsRes.json();
         if (statsData.success) setStats(statsData.data);
+        requestAnimationFrame(() => window.scrollTo(0, scrollY));
       }
     } catch (err) {
       console.error('Failed to update lead:', err);
