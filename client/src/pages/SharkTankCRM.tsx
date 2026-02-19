@@ -333,8 +333,9 @@ export default function SharkTankCRM() {
   }, [leads]);
 
   const assignees = useMemo(() => {
-    const unique = [...new Set(leads.map(l => l.assigned_to).filter(Boolean))] as string[];
-    return unique.sort();
+    const unique = new Set(leads.map(l => l.assigned_to).filter(Boolean) as string[]);
+    unique.add('Soumya');
+    return [...unique].sort();
   }, [leads]);
 
   // Filtered leads
