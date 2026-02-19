@@ -943,18 +943,20 @@ export default function SharkTankCRM() {
             </div>
 
             {stats.by_city.length > 0 && (
-              <div className="mt-3 flex items-center gap-3 text-sm text-gray-500 flex-wrap">
-                <span className="font-medium">Cities:</span>
+              <div className="mt-3 flex items-start gap-3 text-sm text-gray-500 flex-wrap">
                 {stats.by_city.map((c: any) => (
                   <div
                     key={c.city}
                     onClick={() => setCityBreakdownCity(c.city)}
-                    className="cursor-pointer px-3 py-2 rounded-lg text-xs transition-colors bg-gray-50 border border-gray-200 hover:bg-gray-100"
+                    className="cursor-pointer px-3 py-2.5 rounded-lg text-xs transition-all bg-white border border-gray-200 hover:border-teal-400 hover:shadow-md hover:-translate-y-0.5 group"
                   >
-                    <span className="font-semibold text-gray-800">{c.city}</span>
-                    <div className="flex gap-3 mt-0.5 text-gray-500">
-                      <span>Total: {c.count}</span>
-                      <span>Converted: {c.converted}</span>
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-semibold text-gray-800 group-hover:text-teal-700">{c.city}</span>
+                      <ChevronRight size={10} className="text-gray-300 group-hover:text-teal-500 transition-colors" />
+                    </div>
+                    <div className="flex gap-3 mt-1 text-gray-500">
+                      <span><span className="font-medium text-gray-700">{c.count}</span> leads</span>
+                      <span><span className="font-medium text-emerald-600">{c.converted}</span> converted</span>
                     </div>
                   </div>
                 ))}
