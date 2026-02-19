@@ -21,11 +21,11 @@ export function renderTemplate(templateId: number, leadName: string): string | n
 export const AUTO_REPLIES = {
   // First reply from lead (always asks for phone + schedule)
   FIRST_REPLY:
-    `Hey! Glad you got back 😊 If possible, can I get 15 mins of your time for a quick call? It would be great if you can share your number and a preferred time slot (day and time) so I can set it up!`,
+    `Hey! Glad you got back 😊 If possible, can I get 15 mins of your time for a quick call? It would be great if you can share your number and a preferred time slot (day, date and time) so I can mark my calendar! Life is good when you write things down :p`,
 
   // Lead gave phone number only, need schedule
   PHONE_ONLY:
-    `Got it! When works for a quick 15 min call this week?`,
+    `Got it! Also, it would be great if you can give me a tentative day, date and time?`,
 
   // Lead gave schedule only, still need phone
   SCHEDULE_ONLY_NEED_PHONE:
@@ -39,9 +39,17 @@ export const AUTO_REPLIES = {
   CHATTING_QUESTIONS:
     `Haha valid questions! Trust me it'll make way more sense on a quick call. 15 mins max. When are you free?`,
 
+  // Lead asks to be contacted via email/mail
+  MAIL_REQUEST:
+    `Hey! I'll mail you for sure, but I humbly request — can we also get on a very short call?`,
+
+  // Vague time ("sometime next week", "later this week")
+  VAGUE_TIME:
+    `Hey! Sure, can you tell me when exactly we should connect? Or should I reconnect early next week to check?`,
+
   // Lead wants to reschedule but no clear new time
   RESCHEDULE_VAGUE:
-    `No worries at all! When works better for you?`,
+    `Hey! Sure, when can we do it at your convenience?`,
 
   // Lead wants to reschedule with a clear new time
   RESCHEDULE_CLEAR:
@@ -50,6 +58,14 @@ export const AUTO_REPLIES = {
   // Lead confirms scheduled call (thanks, looking forward, etc.)
   CALL_CONFIRMED:
     `See you then! 🙌`,
+
+  // Lead is not interested
+  NOT_INTERESTED:
+    `No worries! I hope we cross paths in the future.`,
+
+  // Lead defers ("you reconnect later", "check back next week")
+  DEFER_RECONNECT:
+    null as unknown as string, // No reply — flagged for manual handling
 };
 
 /**
@@ -85,8 +101,23 @@ export function pickAutoReply({
   classification: string;
 }): string | null {
   // No reply for these
-  if (['weird_spam', 'media_only', 'not_interested', 'vague_time'].includes(classification)) {
+  if (['weird_spam', 'media_only', 'defer_reconnect'].includes(classification)) {
     return null;
+  }
+
+  // Not interested — send farewell
+  if (classification === 'not_interested') {
+    return AUTO_REPLIES.NOT_INTERESTED;
+  }
+
+  // Vague time — ask for specifics
+  if (classification === 'vague_time') {
+    return AUTO_REPLIES.VAGUE_TIME;
+  }
+
+  // Mail/email request
+  if (classification === 'mail_request') {
+    return AUTO_REPLIES.MAIL_REQUEST;
   }
 
   // Call confirmed (thanks, looking forward, etc.)

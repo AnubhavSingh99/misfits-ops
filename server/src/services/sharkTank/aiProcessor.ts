@@ -127,8 +127,17 @@ export async function processMessageBatch(leadId: number, messages: any[]) {
         break;
 
       case 'vague_time':
+        // Reply asking for specifics (no flag — give them a chance to clarify)
+        break;
+
+      case 'defer_reconnect':
+        // Lead says "reconnect later" / "check back next week" — flag for manual follow-up
         await flagLead(leadId, lead, 'vague_time', classification.summary);
         skipReply = true;
+        break;
+
+      case 'mail_request':
+        // Lead asks for email — reply nudging towards a call
         break;
 
       case 'clear_datetime':
@@ -204,7 +213,7 @@ export async function processMessageBatch(leadId: number, messages: any[]) {
     }
 
     // If lead is at CALL_SCHEDULED and message wasn't a known action, flag for manual handling
-    if (isPostSchedule && !['reschedule_clear', 'reschedule_vague', 'not_interested', 'call_confirmed', 'weird_spam', 'media_only'].includes(classification.classification)) {
+    if (isPostSchedule && !['reschedule_clear', 'reschedule_vague', 'not_interested', 'call_confirmed', 'weird_spam', 'media_only', 'defer_reconnect', 'mail_request'].includes(classification.classification)) {
       console.log(`[AI] Lead ${leadId} is CALL_SCHEDULED but sent unhandled message type: ${classification.classification}. Flagging.`);
       await flagLead(leadId, lead, 'needs_attention', classification.summary);
       skipReply = true;
@@ -316,11 +325,13 @@ Classify the message(s) into exactly ONE of these categories:
 - not_interested: Lead explicitly says they're not interested, want to stop, or unsubscribe
 - normal_first_reply: This is their first reply and it's a normal response (hey, sure, tell me more, what do you want, etc.)
 - normal_chatting_no_time: Normal conversation, questions about Misfits, or just a phone number with no time mentioned
+- mail_request: Lead asks to be contacted via email/mail instead of a call ("mail me", "send me an email", "can you email the details")
 - vague_time: They mention a time but it's vague ("sometime next week", "morning", "later", "weekend")
+- defer_reconnect: Lead asks YOU to reconnect later instead of giving a specific time ("you check back next week", "reconnect early next week", "ping me later", "let me check and get back")
 - clear_datetime: They mention a specific date and time for a call ("Thursday at 4pm", "tomorrow 5:30pm", "Feb 22 3pm")
 - reschedule_clear: They want to change an existing scheduled call to a clear new date and time
 - reschedule_vague: They want to reschedule but the new time is vague
-- call_confirmed: Lead confirms an already-scheduled call positively ("thanks", "looking forward", "great", "sure", "perfect", "see you then")
+- call_confirmed: Lead confirms an already-scheduled call positively ("thanks", "looking forward", "great", "sure", "ok", "perfect", "see you then")
 
 Respond in JSON format only:
 {
