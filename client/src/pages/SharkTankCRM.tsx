@@ -1032,7 +1032,7 @@ export default function SharkTankCRM() {
                 onClick={() => setShowAnalysis(true)}
                 className="cursor-pointer px-4 py-2.5 rounded-lg text-xs transition-all bg-white border border-gray-200 hover:border-teal-400 hover:shadow-md hover:-translate-y-0.5 group flex items-center gap-2"
               >
-                <span className="font-semibold text-gray-800 group-hover:text-teal-700">Analysis</span>
+                <span className="font-semibold text-gray-800 group-hover:text-teal-700">{stats.by_city.length} Cities · {[...new Set(leads.map(l => l.activity).filter(Boolean))].length} Activities</span>
                 <ChevronRight size={12} className="text-gray-400 group-hover:text-teal-500 transition-colors" />
               </button>
             </div>
