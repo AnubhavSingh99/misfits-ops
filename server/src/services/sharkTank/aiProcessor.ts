@@ -212,9 +212,46 @@ export async function processMessageBatch(leadId: number, messages: any[]) {
         break;
     }
 
-    // If lead is at CALL_SCHEDULED and message wasn't a known action, flag for manual handling
-    if (isPostSchedule && !['reschedule_clear', 'reschedule_vague', 'not_interested', 'call_confirmed', 'weird_spam', 'media_only', 'defer_reconnect', 'mail_request'].includes(classification.classification)) {
-      console.log(`[AI] Lead ${leadId} is CALL_SCHEDULED but sent unhandled message type: ${classification.classification}. Flagging.`);
+    // Post-schedule: treat clear_datetime as a reschedule (AI may not always classify as reschedule_clear)
+    if (isPostSchedule && classification.classification === 'clear_datetime' && classification.extracted_datetime) {
+      console.log(`[AI] Lead ${leadId} is post-schedule but sent clear_datetime. Treating as reschedule.`);
+      const extractedDate = new Date(classification.extracted_datetime);
+      if (extractedDate > new Date()) {
+        await pool.query(
+          `UPDATE leads SET call_scheduled_at = $1, pipeline_stage = 'CALL_SCHEDULED', flag = NULL, last_activity_at = NOW(), updated_at = NOW(),
+           activity_log = activity_log || $2::jsonb WHERE id = $3`,
+          [
+            classification.extracted_datetime,
+            JSON.stringify([{
+              action: 'reschedule', old_value: lead.call_scheduled_at, new_value: classification.extracted_datetime,
+              created_at: new Date().toISOString()
+            }]),
+            leadId,
+          ]
+        );
+        if (lead.google_calendar_event_id) {
+          await updateCalendarEvent(leadId, lead.google_calendar_event_id, classification.extracted_datetime);
+        } else {
+          await createCalendarEvent(leadId, lead.name, lead.city, classification.extracted_datetime);
+        }
+        // Use reschedule reply
+        classification.classification = 'reschedule_clear';
+      } else {
+        await flagLead(leadId, lead, 'vague_time', 'Reschedule date is in the past');
+        skipReply = true;
+      }
+    }
+
+    // Post-schedule: vague_time means they're being unhelpful after we asked — flag it
+    if (isPostSchedule && classification.classification === 'vague_time') {
+      console.log(`[AI] Lead ${leadId} is post-schedule with vague time. Flagging.`);
+      await flagLead(leadId, lead, 'vague_time', classification.summary);
+      skipReply = true;
+    }
+
+    // If lead is post-schedule and message wasn't a known action, flag for manual handling
+    if (isPostSchedule && !['reschedule_clear', 'reschedule_vague', 'not_interested', 'call_confirmed', 'weird_spam', 'media_only', 'defer_reconnect', 'mail_request', 'clear_datetime', 'vague_time'].includes(classification.classification)) {
+      console.log(`[AI] Lead ${leadId} is post-schedule but sent unhandled message type: ${classification.classification}. Flagging.`);
       await flagLead(leadId, lead, 'needs_attention', classification.summary);
       skipReply = true;
     }
