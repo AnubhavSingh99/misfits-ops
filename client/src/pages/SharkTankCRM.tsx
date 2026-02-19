@@ -948,9 +948,21 @@ export default function SharkTankCRM() {
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm">
           <div className="px-4 py-3 border-b border-gray-200">
             <div className="flex items-center justify-between mb-3">
-              <span className="text-sm font-medium text-gray-700">
-                Leads ({filteredLeads.length})
-              </span>
+              <div className="flex items-center gap-3 flex-wrap">
+                <span className="text-sm font-medium text-gray-700">
+                  Leads ({filteredLeads.length})
+                </span>
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  {PIPELINE_STAGES.map(s => {
+                    const cfg = STAGE_CONFIG[s];
+                    return (
+                      <span key={s} className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium border ${cfg.badgeClass}`}>
+                        {cfg.shortLabel}={cfg.label}
+                      </span>
+                    );
+                  })}
+                </div>
+              </div>
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => setShowFlaggedOnly(!showFlaggedOnly)}
@@ -1175,9 +1187,17 @@ function LeadRow({
         <td className="px-4 py-2.5 text-sm text-gray-600">{lead.leader_name || '-'}</td>
         <td className="px-4 py-2.5 text-sm text-gray-600">{lead.whatsapp_number || '-'}</td>
         <td className="px-4 py-2.5">
-          <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-xs font-semibold border ${stageConfig.badgeClass}`}>
-            {stageConfig.shortLabel}
-          </span>
+          <select
+            value={lead.pipeline_stage}
+            onChange={(e) => { e.stopPropagation(); onUpdate(lead.id, { pipeline_stage: e.target.value }); }}
+            onClick={(e) => e.stopPropagation()}
+            className={`appearance-none cursor-pointer px-2 py-0.5 rounded-md text-xs font-semibold border ${stageConfig.badgeClass} focus:outline-none focus:ring-2 focus:ring-teal-500 pr-5 bg-[length:12px] bg-[right_4px_center] bg-no-repeat`}
+            style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E")` }}
+          >
+            {PIPELINE_STAGES.map(s => (
+              <option key={s} value={s}>{STAGE_CONFIG[s]?.label || s}</option>
+            ))}
+          </select>
         </td>
         <td className="px-4 py-2.5">
           {lead.flag === 'weird_message' && (
