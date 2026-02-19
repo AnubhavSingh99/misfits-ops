@@ -29,6 +29,10 @@ import configRoutes from './routes/config';
 import feedbackRoutes from './routes/feedback';
 import customerServiceRoutes from './routes/customerService';
 import venueRepositoryRoutes from './routes/venueRepository';
+import sharkTankLeadsRoutes from './routes/sharkTankLeads';
+import sharkTankWebhookRoutes from './routes/sharkTankWebhook';
+import sharkTankPendingRepliesRoutes from './routes/sharkTankPendingReplies';
+import { addClient as addSharkTankSSEClient } from './services/sharkTank/sseManager';
 
 // Import services
 import { initializeDatabase, getLocalPool } from './services/database';
@@ -148,6 +152,18 @@ app.use('/api/config', configRoutes);
 app.use('/api/feedback', feedbackRoutes);
 app.use('/api/cs', customerServiceRoutes);
 app.use('/api/venue-repository', venueRepositoryRoutes);
+app.use('/api/shark-tank/leads', sharkTankLeadsRoutes);
+app.use('/api/shark-tank/webhook', sharkTankWebhookRoutes);
+app.use('/api/shark-tank/pending-replies', sharkTankPendingRepliesRoutes);
+// SSE endpoint for Shark Tank CRM real-time updates
+app.get('/api/shark-tank/events', (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+  addSharkTankSSEClient(res);
+  res.write('event: connected\ndata: {}\n\n');
+});
 app.use('/api', revenueRoutes); // Also handle direct /api/revenue-growth
 
 // Teams endpoints (simple fallback)

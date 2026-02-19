@@ -13,7 +13,8 @@ import {
   Rocket,
   MapPin,
   ChevronRight,
-  Headphones
+  Headphones,
+  Zap
 } from 'lucide-react'
 import clsx from 'clsx'
 
@@ -28,6 +29,7 @@ const allNavigation = [
   { id: 'venue-requirements', name: 'Venue Requirements', href: '/venue-requirements', icon: MapPin },
   { id: 'leader-requirements', name: 'Leader Requirements', href: '/leader-requirements', icon: Users },
   { id: 'customer-service', name: 'Customer Service', href: '/customer-service', icon: Headphones },
+  { id: 'shark-tank', name: 'Shark Tank CRM', href: '/shark-tank', icon: Zap },
 ]
 
 const API_BASE = import.meta.env.VITE_API_URL
