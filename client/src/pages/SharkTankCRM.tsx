@@ -120,8 +120,6 @@ export default function SharkTankCRM() {
   const [sortField, setSortField] = useState<string>('last_activity_at');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [activityFilter, setActivityFilter] = useState('');
-  const [showGhosted, setShowGhosted] = useState(false);
-  const [showNotInterested, setShowNotInterested] = useState(false);
   const [showFlaggedOnly, setShowFlaggedOnly] = useState(false);
   const [assigneeFilter, setAssigneeFilter] = useState('');
   const [showAnalysis, setShowAnalysis] = useState(false);
@@ -368,8 +366,8 @@ export default function SharkTankCRM() {
       if (stageFilter && lead.pipeline_stage !== stageFilter) return false;
       if (activityFilter && (lead.activity || '') !== activityFilter) return false;
       if (assigneeFilter && (lead.assigned_to || '') !== assigneeFilter) return false;
-      if (!showGhosted && lead.pipeline_stage === 'GHOSTED' && stageFilter !== 'GHOSTED') return false;
-      if (!showNotInterested && lead.pipeline_stage === 'NOT_INTERESTED' && stageFilter !== 'NOT_INTERESTED') return false;
+      if (lead.pipeline_stage === 'GHOSTED' && stageFilter !== 'GHOSTED') return false;
+      if (lead.pipeline_stage === 'NOT_INTERESTED' && stageFilter !== 'NOT_INTERESTED') return false;
       if (showFlaggedOnly && !lead.flag && !lead.manual_mode) return false;
       return true;
     });
@@ -391,7 +389,7 @@ export default function SharkTankCRM() {
     });
 
     return filtered;
-  }, [leads, searchQuery, cityFilter, stageFilter, activityFilter, assigneeFilter, showGhosted, showNotInterested, showFlaggedOnly, sortField, sortDir]);
+  }, [leads, searchQuery, cityFilter, stageFilter, activityFilter, assigneeFilter, showFlaggedOnly, sortField, sortDir]);
 
   const toggleSort = (field: string) => {
     if (sortField === field) {
@@ -1085,24 +1083,6 @@ export default function SharkTankCRM() {
                   <AlertTriangle size={12} />
                   Flagged ({leads.filter(l => l.flag).length})
                 </button>
-                <label className="flex items-center gap-1.5 text-xs text-gray-500 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={showGhosted}
-                    onChange={(e) => setShowGhosted(e.target.checked)}
-                    className="rounded"
-                  />
-                  Ghosted ({getStageCount('GHOSTED')})
-                </label>
-                <label className="flex items-center gap-1.5 text-xs text-gray-500 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={showNotInterested}
-                    onChange={(e) => setShowNotInterested(e.target.checked)}
-                    className="rounded"
-                  />
-                  Not Interested ({getStageCount('NOT_INTERESTED')})
-                </label>
               </div>
             </div>
             <div className="flex items-center gap-3 flex-wrap">
