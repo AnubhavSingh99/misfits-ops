@@ -368,8 +368,8 @@ export default function SharkTankCRM() {
       if (stageFilter && lead.pipeline_stage !== stageFilter) return false;
       if (activityFilter && (lead.activity || '') !== activityFilter) return false;
       if (assigneeFilter && (lead.assigned_to || '') !== assigneeFilter) return false;
-      if (!showGhosted && lead.pipeline_stage === 'GHOSTED') return false;
-      if (!showNotInterested && lead.pipeline_stage === 'NOT_INTERESTED') return false;
+      if (!showGhosted && lead.pipeline_stage === 'GHOSTED' && stageFilter !== 'GHOSTED') return false;
+      if (!showNotInterested && lead.pipeline_stage === 'NOT_INTERESTED' && stageFilter !== 'NOT_INTERESTED') return false;
       if (showFlaggedOnly && !lead.flag && !lead.manual_mode) return false;
       return true;
     });

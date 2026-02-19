@@ -38,6 +38,33 @@ export async function createPendingReply(leadId: number, replyText: string): Pro
 }
 
 /**
+ * Schedule a reply to be sent after a delay (e.g. 10hr reminder).
+ * Unlike createPendingReply, this does NOT cancel existing pending replies.
+ * Gets auto-cancelled when createPendingReply runs (lead replies before timer).
+ */
+export async function createScheduledReply(leadId: number, replyText: string, delayMs: number): Promise<number> {
+  const pool = getLocalPool();
+  const sendAt = new Date(Date.now() + delayMs);
+
+  const result = await pool.query(
+    `INSERT INTO pending_replies (lead_id, reply_text, send_at, status) VALUES ($1, $2, $3, 'pending') RETURNING id`,
+    [leadId, replyText, sendAt.toISOString()]
+  );
+
+  const replyId = result.rows[0].id;
+
+  const timer = setTimeout(async () => {
+    sendTimers.delete(replyId);
+    await autoSendReply(replyId);
+  }, delayMs);
+
+  sendTimers.set(replyId, timer);
+  console.log(`[ReplyQueue] Scheduled reply ${replyId} for lead ${leadId}. Sends at ${sendAt.toISOString()} (${Math.round(delayMs / 3600000)}h delay)`);
+
+  return replyId;
+}
+
+/**
  * Cancel all pending replies for a lead (when new message comes in while reply is queued)
  */
 export async function cancelPendingRepliesForLead(leadId: number) {
