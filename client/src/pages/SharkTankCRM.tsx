@@ -415,6 +415,10 @@ export default function SharkTankCRM() {
   // Update lead
   const updateLead = async (id: number, updates: any) => {
     try {
+      // Auto-assign Soumya for converted leads
+      if (updates.pipeline_stage === 'CONVERTED') {
+        updates = { ...updates, assigned_to: 'Soumya' };
+      }
       const res = await fetch(`${API_BASE}/leads/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
