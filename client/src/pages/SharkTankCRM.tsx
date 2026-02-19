@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
-  RefreshCw, Upload, Search, ChevronDown, ChevronUp, X,
+  RefreshCw, Upload, Search, ChevronDown, ChevronUp, X, Info,
   Users, MessageCircle, Phone, Calendar, CheckCircle, UserX, Ghost,
   Send, Eye, AlertTriangle, Clock, Plus, Edit3, XCircle, ChevronRight
 } from 'lucide-react';
@@ -139,6 +139,7 @@ export default function SharkTankCRM() {
 
   // Add lead modal
   const [showAddLead, setShowAddLead] = useState(false);
+  const [showStageLegend, setShowStageLegend] = useState(false);
   const [addLeadForm, setAddLeadForm] = useState({
     name: '', instagram_handle: '', city: '', leader_name: '',
     whatsapp_number: '', activity: '', area: '',
@@ -948,20 +949,35 @@ export default function SharkTankCRM() {
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm">
           <div className="px-4 py-3 border-b border-gray-200">
             <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-3 flex-wrap">
+              <div className="flex items-center gap-1.5 relative">
                 <span className="text-sm font-medium text-gray-700">
                   Leads ({filteredLeads.length})
                 </span>
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  {PIPELINE_STAGES.map(s => {
-                    const cfg = STAGE_CONFIG[s];
-                    return (
-                      <span key={s} className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium border ${cfg.badgeClass}`}>
-                        {cfg.shortLabel}={cfg.label}
-                      </span>
-                    );
-                  })}
-                </div>
+                <button
+                  onClick={() => setShowStageLegend(!showStageLegend)}
+                  className="text-gray-400 hover:text-gray-600 transition-colors"
+                  title="Stage legend"
+                >
+                  <Info size={14} />
+                </button>
+                {showStageLegend && (
+                  <div className="absolute top-full left-0 mt-1 z-50 bg-white border border-gray-200 rounded-lg shadow-lg p-3 min-w-[200px]">
+                    <div className="text-xs font-semibold text-gray-500 uppercase mb-2">Stage Legend</div>
+                    <div className="space-y-1">
+                      {PIPELINE_STAGES.map(s => {
+                        const cfg = STAGE_CONFIG[s];
+                        return (
+                          <div key={s} className="flex items-center gap-2 text-xs">
+                            <span className={`inline-flex items-center justify-center w-7 px-1 py-0.5 rounded font-semibold border ${cfg.badgeClass}`}>
+                              {cfg.shortLabel}
+                            </span>
+                            <span className="text-gray-600">{cfg.label}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
               <div className="flex items-center gap-2">
                 <button
