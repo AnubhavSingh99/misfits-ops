@@ -124,6 +124,7 @@ export default function SharkTankCRM() {
   const [showNotInterested, setShowNotInterested] = useState(false);
   const [showFlaggedOnly, setShowFlaggedOnly] = useState(false);
   const [assigneeFilter, setAssigneeFilter] = useState('');
+  const [cityBreakdownCity, setCityBreakdownCity] = useState<string | null>(null);
 
   // Upload
   const [uploading, setUploading] = useState(false);
@@ -254,6 +255,24 @@ export default function SharkTankCRM() {
       console.error('Failed to edit reply:', err);
     }
   };
+
+  // City activity breakdown for modal
+  const cityBreakdown = useMemo(() => {
+    if (!cityBreakdownCity) return [];
+    const cityLeads = leads.filter(l => l.city === cityBreakdownCity);
+    const byActivity: Record<string, { total: number; converted: number }> = {};
+    for (const l of cityLeads) {
+      const act = l.activity || 'Unknown';
+      if (!byActivity[act]) byActivity[act] = { total: 0, converted: 0 };
+      byActivity[act].total++;
+      if (['CONVERTED', 'ONBOARDED'].includes(l.pipeline_stage)) {
+        byActivity[act].converted++;
+      }
+    }
+    return Object.entries(byActivity)
+      .map(([activity, data]) => ({ activity, ...data }))
+      .sort((a, b) => b.total - a.total);
+  }, [leads, cityBreakdownCity]);
 
   // Call schedule grouped by date
   const [expandedCallDate, setExpandedCallDate] = useState<string | null>(null);
@@ -488,6 +507,49 @@ export default function SharkTankCRM() {
           </div>
         </div>
       </div>
+
+      {/* City Activity Breakdown Modal */}
+      {cityBreakdownCity && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setCityBreakdownCity(null)}>
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md mx-4 p-6" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-bold text-gray-900">{cityBreakdownCity} — Activity Breakdown</h3>
+              <button onClick={() => setCityBreakdownCity(null)} className="text-gray-400 hover:text-gray-600 text-xl">&times;</button>
+            </div>
+            {cityBreakdown.length === 0 ? (
+              <p className="text-sm text-gray-500">No leads found.</p>
+            ) : (
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-gray-200 text-left">
+                    <th className="py-2 text-gray-600 font-medium">Activity</th>
+                    <th className="py-2 text-gray-600 font-medium text-right">Leads</th>
+                    <th className="py-2 text-gray-600 font-medium text-right">Converted</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {cityBreakdown.map((row) => (
+                    <tr key={row.activity} className="border-b border-gray-100">
+                      <td className="py-2 text-gray-800">{row.activity}</td>
+                      <td className="py-2 text-gray-800 text-right">{row.total}</td>
+                      <td className="py-2 text-right">
+                        <span className={row.converted > 0 ? 'text-green-600 font-semibold' : 'text-gray-400'}>{row.converted}</span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr className="border-t border-gray-300 font-semibold">
+                    <td className="py-2 text-gray-900">Total</td>
+                    <td className="py-2 text-gray-900 text-right">{cityBreakdown.reduce((s, r) => s + r.total, 0)}</td>
+                    <td className="py-2 text-right text-green-600">{cityBreakdown.reduce((s, r) => s + r.converted, 0)}</td>
+                  </tr>
+                </tfoot>
+              </table>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Add Lead Modal */}
       {showAddLead && (
@@ -867,14 +929,8 @@ export default function SharkTankCRM() {
                 {stats.by_city.map((c: any) => (
                   <div
                     key={c.city}
-                    onClick={() => {
-                      setCityFilter(cityFilter === c.city ? '' : c.city);
-                    }}
-                    className={`cursor-pointer px-3 py-2 rounded-lg text-xs transition-colors ${
-                      cityFilter === c.city
-                        ? 'bg-teal-50 border border-teal-200'
-                        : 'bg-gray-50 border border-gray-200 hover:bg-gray-100'
-                    }`}
+                    onClick={() => setCityBreakdownCity(c.city)}
+                    className="cursor-pointer px-3 py-2 rounded-lg text-xs transition-colors bg-gray-50 border border-gray-200 hover:bg-gray-100"
                   >
                     <span className="font-semibold text-gray-800">{c.city}</span>
                     <div className="flex gap-3 mt-0.5 text-gray-500">
@@ -1006,9 +1062,6 @@ export default function SharkTankCRM() {
                     <span className="inline-flex items-center gap-1">Stage {sortField === 'pipeline_stage' && (sortDir === 'asc' ? <ChevronUp size={12}/> : <ChevronDown size={12}/>)}</span>
                   </th>
                   <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500 uppercase tracking-wide">Flag</th>
-                  <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500 uppercase tracking-wide cursor-pointer hover:text-gray-700" onClick={() => toggleSort('lead_quality')}>
-                    <span className="inline-flex items-center gap-1">Quality {sortField === 'lead_quality' && (sortDir === 'asc' ? <ChevronUp size={12}/> : <ChevronDown size={12}/>)}</span>
-                  </th>
                   <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500 uppercase tracking-wide cursor-pointer hover:text-gray-700" onClick={() => toggleSort('last_activity_at')}>
                     <span className="inline-flex items-center gap-1">Last Activity {sortField === 'last_activity_at' && (sortDir === 'asc' ? <ChevronUp size={12}/> : <ChevronDown size={12}/>)}</span>
                   </th>
@@ -1149,7 +1202,6 @@ function LeadRow({
             </span>
           )}
         </td>
-        <td className="px-4 py-2.5 text-sm text-gray-600">{lead.lead_quality || '-'}</td>
         <td className="px-4 py-2.5 text-xs text-gray-400">{timeAgo(lead.last_activity_at)}</td>
       </tr>
 
