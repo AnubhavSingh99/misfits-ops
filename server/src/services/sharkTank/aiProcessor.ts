@@ -82,10 +82,10 @@ export async function processMessageBatch(leadId: number, messages: any[]) {
       return;
     }
 
-    // 2. Ghosted/Not Interested -> reactivate to IN_CONVERSATION
+    // 2. Not Interested -> reactivate to IN_CONVERSATION
     //    BUT if they have a future call scheduled, don't reactivate (treat as post-schedule)
     const hasFutureCallEarly = lead.call_scheduled_at && new Date(lead.call_scheduled_at) > new Date();
-    if (['GHOSTED', 'NOT_INTERESTED'].includes(lead.pipeline_stage) && !hasFutureCallEarly) {
+    if (lead.pipeline_stage === 'NOT_INTERESTED' && !hasFutureCallEarly) {
       await pool.query(
         `UPDATE leads SET pipeline_stage = 'IN_CONVERSATION', flag = NULL, last_activity_at = NOW(), updated_at = NOW(),
          activity_log = activity_log || $1::jsonb WHERE id = $2`,
@@ -94,9 +94,9 @@ export async function processMessageBatch(leadId: number, messages: any[]) {
           created_at: new Date().toISOString()
         }]), leadId]
       );
-      console.log(`[AI] Lead ${leadId} reactivated from ${lead.pipeline_stage} to IN_CONVERSATION`);
-    } else if (['GHOSTED', 'NOT_INTERESTED'].includes(lead.pipeline_stage) && hasFutureCallEarly) {
-      console.log(`[AI] Lead ${leadId} is ${lead.pipeline_stage} but has future call scheduled. Treating as post-schedule, not reactivating.`);
+      console.log(`[AI] Lead ${leadId} reactivated from NOT_INTERESTED to IN_CONVERSATION`);
+    } else if (lead.pipeline_stage === 'NOT_INTERESTED' && hasFutureCallEarly) {
+      console.log(`[AI] Lead ${leadId} is NOT_INTERESTED but has future call scheduled. Treating as post-schedule, not reactivating.`);
     }
 
     // Determine context
@@ -155,7 +155,7 @@ export async function processMessageBatch(leadId: number, messages: any[]) {
 
       case 'normal_first_reply':
         // Move to IN_CONVERSATION if needed
-        if (lead.pipeline_stage === 'DM_SENT' || lead.pipeline_stage === 'FOLLOWED') {
+        if (lead.pipeline_stage === 'DM_SENT') {
           await pool.query(
             `UPDATE leads SET pipeline_stage = 'IN_CONVERSATION', last_activity_at = NOW(), updated_at = NOW(),
              activity_log = activity_log || $1::jsonb WHERE id = $2`,
@@ -173,7 +173,7 @@ export async function processMessageBatch(leadId: number, messages: any[]) {
 
       case 'defer_reconnect':
         // Lead says "will get back" / "busy" — send "Sure" + schedule 10hr reminder
-        if (isFirstReply || lead.pipeline_stage === 'DM_SENT' || lead.pipeline_stage === 'FOLLOWED') {
+        if (isFirstReply || lead.pipeline_stage === 'DM_SENT') {
           await pool.query(
             `UPDATE leads SET pipeline_stage = 'IN_CONVERSATION', last_activity_at = NOW(), updated_at = NOW(),
              activity_log = activity_log || $1::jsonb WHERE id = $2`,
@@ -195,7 +195,7 @@ export async function processMessageBatch(leadId: number, messages: any[]) {
 
       case 'normal_chatting_no_time':
         // Move to IN_CONVERSATION if needed
-        if (lead.pipeline_stage === 'DM_SENT' || lead.pipeline_stage === 'FOLLOWED') {
+        if (lead.pipeline_stage === 'DM_SENT') {
           await pool.query(
             `UPDATE leads SET pipeline_stage = 'IN_CONVERSATION', last_activity_at = NOW(), updated_at = NOW(),
              activity_log = activity_log || $1::jsonb WHERE id = $2`,
