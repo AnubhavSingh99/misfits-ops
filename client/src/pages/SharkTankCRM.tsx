@@ -124,7 +124,9 @@ export default function SharkTankCRM() {
   const [showNotInterested, setShowNotInterested] = useState(false);
   const [showFlaggedOnly, setShowFlaggedOnly] = useState(false);
   const [assigneeFilter, setAssigneeFilter] = useState('');
-  const [cityBreakdownCity, setCityBreakdownCity] = useState<string | null>(null);
+  const [showAnalysis, setShowAnalysis] = useState(false);
+  const [analysisHierarchy, setAnalysisHierarchy] = useState<'city-activity' | 'activity-city'>('city-activity');
+  const [expandedAnalysisRows, setExpandedAnalysisRows] = useState<Set<string>>(new Set());
 
   // Upload
   const [uploading, setUploading] = useState(false);
@@ -270,23 +272,31 @@ export default function SharkTankCRM() {
     }
   };
 
-  // City activity breakdown for modal
-  const cityBreakdown = useMemo(() => {
-    if (!cityBreakdownCity) return [];
-    const cityLeads = leads.filter(l => l.city === cityBreakdownCity);
-    const byActivity: Record<string, { total: number; converted: number }> = {};
-    for (const l of cityLeads) {
-      const act = l.activity || 'Unknown';
-      if (!byActivity[act]) byActivity[act] = { total: 0, converted: 0 };
-      byActivity[act].total++;
-      if (['CONVERTED', 'ONBOARDED'].includes(l.pipeline_stage)) {
-        byActivity[act].converted++;
-      }
+  // Analysis modal data: hierarchical grouping
+  const analysisData = useMemo(() => {
+    if (!showAnalysis) return [];
+    const grouped: Record<string, { total: number; converted: number; sub: Record<string, { total: number; converted: number }> }> = {};
+    for (const l of leads) {
+      const primary = analysisHierarchy === 'city-activity' ? (l.city || 'Unknown') : (l.activity || 'Unknown');
+      const secondary = analysisHierarchy === 'city-activity' ? (l.activity || 'Unknown') : (l.city || 'Unknown');
+      if (!grouped[primary]) grouped[primary] = { total: 0, converted: 0, sub: {} };
+      grouped[primary].total++;
+      if (['CONVERTED', 'ONBOARDED'].includes(l.pipeline_stage)) grouped[primary].converted++;
+      if (!grouped[primary].sub[secondary]) grouped[primary].sub[secondary] = { total: 0, converted: 0 };
+      grouped[primary].sub[secondary].total++;
+      if (['CONVERTED', 'ONBOARDED'].includes(l.pipeline_stage)) grouped[primary].sub[secondary].converted++;
     }
-    return Object.entries(byActivity)
-      .map(([activity, data]) => ({ activity, ...data }))
+    return Object.entries(grouped)
+      .map(([name, data]) => ({
+        name,
+        total: data.total,
+        converted: data.converted,
+        sub: Object.entries(data.sub)
+          .map(([subName, subData]) => ({ name: subName, ...subData }))
+          .sort((a, b) => b.total - a.total),
+      }))
       .sort((a, b) => b.total - a.total);
-  }, [leads, cityBreakdownCity]);
+  }, [leads, showAnalysis, analysisHierarchy]);
 
   // Call schedule grouped by date
   const [expandedCallDate, setExpandedCallDate] = useState<string | null>(null);
@@ -527,45 +537,120 @@ export default function SharkTankCRM() {
         </div>
       </div>
 
-      {/* City Activity Breakdown Modal */}
-      {cityBreakdownCity && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setCityBreakdownCity(null)}>
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-md mx-4 p-6" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-bold text-gray-900">{cityBreakdownCity} — Activity Breakdown</h3>
-              <button onClick={() => setCityBreakdownCity(null)} className="text-gray-400 hover:text-gray-600 text-xl">&times;</button>
+      {/* Analysis Modal */}
+      {showAnalysis && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => { setShowAnalysis(false); setExpandedAnalysisRows(new Set()); }}>
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl mx-4 max-h-[80vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            {/* Header */}
+            <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between shrink-0">
+              <h3 className="text-lg font-bold text-gray-900">Analysis</h3>
+              <div className="flex items-center gap-2">
+                <div className="flex bg-gray-100 rounded-lg p-0.5">
+                  <button
+                    onClick={() => { setAnalysisHierarchy('city-activity'); setExpandedAnalysisRows(new Set()); }}
+                    className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${analysisHierarchy === 'city-activity' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                  >
+                    City → Activity
+                  </button>
+                  <button
+                    onClick={() => { setAnalysisHierarchy('activity-city'); setExpandedAnalysisRows(new Set()); }}
+                    className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${analysisHierarchy === 'activity-city' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                  >
+                    Activity → City
+                  </button>
+                </div>
+                <button onClick={() => { setShowAnalysis(false); setExpandedAnalysisRows(new Set()); }} className="text-gray-400 hover:text-gray-600 ml-2">
+                  <X size={20} />
+                </button>
+              </div>
             </div>
-            {cityBreakdown.length === 0 ? (
-              <p className="text-sm text-gray-500">No leads found.</p>
-            ) : (
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-gray-200 text-left">
-                    <th className="py-2 text-gray-600 font-medium">Activity</th>
-                    <th className="py-2 text-gray-600 font-medium text-right">Leads</th>
-                    <th className="py-2 text-gray-600 font-medium text-right">Converted</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {cityBreakdown.map((row) => (
-                    <tr key={row.activity} className="border-b border-gray-100">
-                      <td className="py-2 text-gray-800">{row.activity}</td>
-                      <td className="py-2 text-gray-800 text-right">{row.total}</td>
-                      <td className="py-2 text-right">
-                        <span className={row.converted > 0 ? 'text-green-600 font-semibold' : 'text-gray-400'}>{row.converted}</span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-                <tfoot>
-                  <tr className="border-t border-gray-300 font-semibold">
-                    <td className="py-2 text-gray-900">Total</td>
-                    <td className="py-2 text-gray-900 text-right">{cityBreakdown.reduce((s, r) => s + r.total, 0)}</td>
-                    <td className="py-2 text-right text-green-600">{cityBreakdown.reduce((s, r) => s + r.converted, 0)}</td>
-                  </tr>
-                </tfoot>
-              </table>
-            )}
+            {/* Body */}
+            <div className="px-6 py-4 overflow-y-auto flex-1">
+              {analysisData.length === 0 ? (
+                <p className="text-sm text-gray-500">No data found.</p>
+              ) : (
+                <div className="space-y-1">
+                  {analysisData.map((row) => {
+                    const isExpanded = expandedAnalysisRows.has(row.name);
+                    return (
+                      <div key={row.name}>
+                        <button
+                          onClick={() => {
+                            setExpandedAnalysisRows(prev => {
+                              const next = new Set(prev);
+                              if (next.has(row.name)) next.delete(row.name);
+                              else next.add(row.name);
+                              return next;
+                            });
+                          }}
+                          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-gray-50 transition-colors text-left"
+                        >
+                          <ChevronRight size={14} className={`text-gray-400 transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
+                          <span
+                            className="font-medium text-gray-900 flex-1 hover:text-teal-700 hover:underline"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (analysisHierarchy === 'city-activity') {
+                                setCityFilter(row.name === 'Unknown' ? '' : row.name);
+                              } else {
+                                setActivityFilter(row.name === 'Unknown' ? '' : row.name);
+                              }
+                              setShowAnalysis(false);
+                              setExpandedAnalysisRows(new Set());
+                            }}
+                          >{row.name}</span>
+                          <span className="text-sm text-gray-600 tabular-nums w-16 text-right">{row.total} leads</span>
+                          <span className={`text-sm tabular-nums w-20 text-right font-medium ${row.converted > 0 ? 'text-emerald-600' : 'text-gray-400'}`}>{row.converted} conv</span>
+                        </button>
+                        {isExpanded && (
+                          <div className="ml-8 mr-3 mb-2 border border-gray-100 rounded-lg overflow-hidden">
+                            <table className="w-full text-sm">
+                              <thead>
+                                <tr className="bg-gray-50 border-b border-gray-100">
+                                  <th className="py-1.5 px-3 text-left text-xs font-medium text-gray-500">{analysisHierarchy === 'city-activity' ? 'Activity' : 'City'}</th>
+                                  <th className="py-1.5 px-3 text-right text-xs font-medium text-gray-500">Leads</th>
+                                  <th className="py-1.5 px-3 text-right text-xs font-medium text-gray-500">Converted</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {row.sub.map((s) => (
+                                  <tr key={s.name} className="border-b border-gray-50">
+                                    <td
+                                      className="py-1.5 px-3 text-gray-700 hover:text-teal-700 hover:underline cursor-pointer"
+                                      onClick={() => {
+                                        if (analysisHierarchy === 'city-activity') {
+                                          setActivityFilter(s.name === 'Unknown' ? '' : s.name);
+                                        } else {
+                                          setCityFilter(s.name === 'Unknown' ? '' : s.name);
+                                        }
+                                        setShowAnalysis(false);
+                                        setExpandedAnalysisRows(new Set());
+                                      }}
+                                    >{s.name}</td>
+                                    <td className="py-1.5 px-3 text-right text-gray-700 tabular-nums">{s.total}</td>
+                                    <td className="py-1.5 px-3 text-right tabular-nums">
+                                      <span className={s.converted > 0 ? 'text-emerald-600 font-medium' : 'text-gray-400'}>{s.converted}</span>
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+            {/* Footer */}
+            <div className="px-6 py-3 border-t border-gray-200 flex items-center justify-between text-sm font-semibold shrink-0">
+              <span className="text-gray-900">Total</span>
+              <div className="flex gap-6">
+                <span className="text-gray-900 tabular-nums">{analysisData.reduce((s, r) => s + r.total, 0)} leads</span>
+                <span className="text-emerald-600 tabular-nums">{analysisData.reduce((s, r) => s + r.converted, 0)} converted</span>
+              </div>
+            </div>
           </div>
         </div>
       )}
@@ -942,26 +1027,15 @@ export default function SharkTankCRM() {
               })}
             </div>
 
-            {stats.by_city.length > 0 && (
-              <div className="mt-3 flex items-start gap-3 text-sm text-gray-500 flex-wrap">
-                {stats.by_city.map((c: any) => (
-                  <div
-                    key={c.city}
-                    onClick={() => setCityBreakdownCity(c.city)}
-                    className="cursor-pointer px-3 py-2.5 rounded-lg text-xs transition-all bg-white border border-gray-200 hover:border-teal-400 hover:shadow-md hover:-translate-y-0.5 group"
-                  >
-                    <div className="flex items-center gap-1.5">
-                      <span className="font-semibold text-gray-800 group-hover:text-teal-700">{c.city}</span>
-                      <ChevronRight size={10} className="text-gray-500 group-hover:text-teal-500 transition-colors" />
-                    </div>
-                    <div className="flex gap-3 mt-1 text-gray-500">
-                      <span><span className="font-medium text-gray-700">{c.count}</span> leads</span>
-                      <span><span className="font-medium text-emerald-600">{c.converted}</span> converted</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
+            <div className="mt-3">
+              <button
+                onClick={() => setShowAnalysis(true)}
+                className="cursor-pointer px-4 py-2.5 rounded-lg text-xs transition-all bg-white border border-gray-200 hover:border-teal-400 hover:shadow-md hover:-translate-y-0.5 group flex items-center gap-2"
+              >
+                <span className="font-semibold text-gray-800 group-hover:text-teal-700">Analysis</span>
+                <ChevronRight size={12} className="text-gray-400 group-hover:text-teal-500 transition-colors" />
+              </button>
+            </div>
           </div>
         )}
 
