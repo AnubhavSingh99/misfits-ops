@@ -44,7 +44,9 @@ export async function processMessageBatch(leadId: number, messages: any[]) {
     }
 
     // 2. Ghosted/Not Interested -> reactivate to IN_CONVERSATION
-    if (['GHOSTED', 'NOT_INTERESTED'].includes(lead.pipeline_stage)) {
+    //    BUT if they have a future call scheduled, don't reactivate (treat as post-schedule)
+    const hasFutureCallEarly = lead.call_scheduled_at && new Date(lead.call_scheduled_at) > new Date();
+    if (['GHOSTED', 'NOT_INTERESTED'].includes(lead.pipeline_stage) && !hasFutureCallEarly) {
       await pool.query(
         `UPDATE leads SET pipeline_stage = 'IN_CONVERSATION', flag = NULL, last_activity_at = NOW(), updated_at = NOW(),
          activity_log = activity_log || $1::jsonb WHERE id = $2`,
@@ -54,11 +56,15 @@ export async function processMessageBatch(leadId: number, messages: any[]) {
         }]), leadId]
       );
       console.log(`[AI] Lead ${leadId} reactivated from ${lead.pipeline_stage} to IN_CONVERSATION`);
+    } else if (['GHOSTED', 'NOT_INTERESTED'].includes(lead.pipeline_stage) && hasFutureCallEarly) {
+      console.log(`[AI] Lead ${leadId} is ${lead.pipeline_stage} but has future call scheduled. Treating as post-schedule, not reactivating.`);
     }
 
     // Determine context
     const isFirstReply = lead.pipeline_stage === 'DM_SENT';
-    const isPostSchedule = lead.pipeline_stage === 'CALL_SCHEDULED';
+    // Treat as post-schedule if stage is CALL_SCHEDULED OR there's an active future call
+    const hasFutureCall = lead.call_scheduled_at && new Date(lead.call_scheduled_at) > new Date();
+    const isPostSchedule = lead.pipeline_stage === 'CALL_SCHEDULED' || hasFutureCall;
     const hasPhoneAlready = !!lead.whatsapp_number;
 
     // Call Claude API for classification
@@ -191,8 +197,9 @@ export async function processMessageBatch(leadId: number, messages: any[]) {
         break;
 
       case 'call_confirmed':
-        // Positive confirmation like "thanks", "looking forward", "great"
-        // Reply is handled by pickAutoReply
+        // Positive confirmation like "thanks", "ok", "looking forward", "great"
+        // No reply needed — don't send anything back
+        skipReply = true;
         break;
     }
 
