@@ -296,6 +296,7 @@ export default function SharkTankCRM() {
 
   // Call schedule grouped by date
   const [expandedCallDate, setExpandedCallDate] = useState<string | null>(null);
+  const [callScheduleOpen, setCallScheduleOpen] = useState(false);
   const callSchedule = useMemo(() => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -759,15 +760,21 @@ export default function SharkTankCRM() {
 
         {/* Call Schedule Section */}
         <div>
-            <h2 className="text-sm font-medium text-gray-500 uppercase tracking-wide mb-3">
-              Call Schedule ({Object.values(callSchedule).flat().length})
-            </h2>
-            {Object.keys(callSchedule).length === 0 && (
+            <button
+              onClick={() => setCallScheduleOpen(!callScheduleOpen)}
+              className="flex items-center gap-2 mb-3 group"
+            >
+              <h2 className="text-sm font-medium text-gray-500 uppercase tracking-wide">
+                Call Schedule ({Object.values(callSchedule).flat().length})
+              </h2>
+              {callScheduleOpen ? <ChevronUp size={14} className="text-gray-400" /> : <ChevronDown size={14} className="text-gray-400" />}
+            </button>
+            {callScheduleOpen && Object.keys(callSchedule).length === 0 && (
               <div className="bg-white border border-gray-200 rounded-xl px-4 py-6 text-center text-sm text-gray-400">
                 No calls scheduled yet
               </div>
             )}
-            <div className="space-y-2">
+            {callScheduleOpen && <div className="space-y-2">
               {Object.entries(callSchedule).map(([dateStr, calls]) => {
                 const overlaps: string[] = [];
                 for (let i = 0; i < calls.length; i++) {
@@ -864,7 +871,7 @@ export default function SharkTankCRM() {
                 </div>
                 );
               })}
-            </div>
+            </div>}
         </div>
 
         {/* Pending Replies Section */}
