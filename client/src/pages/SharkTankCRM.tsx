@@ -298,13 +298,11 @@ export default function SharkTankCRM() {
   const [expandedCallDate, setExpandedCallDate] = useState<string | null>(null);
   const [callScheduleOpen, setCallScheduleOpen] = useState(false);
   const callSchedule = useMemo(() => {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
     const removedFromSchedule = new Set(['CALL_DONE', 'CONVERTED', 'NOT_INTERESTED', 'ONBOARDED']);
     const scheduled = leads.filter(l => {
       if (!l.call_scheduled_at) return false;
       if (removedFromSchedule.has(l.pipeline_stage)) return false;
-      return new Date(l.call_scheduled_at) >= today;
+      return true;
     }).sort((a, b) => new Date(a.call_scheduled_at!).getTime() - new Date(b.call_scheduled_at!).getTime());
 
     const grouped: Record<string, Lead[]> = {};
