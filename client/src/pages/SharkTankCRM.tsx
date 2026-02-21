@@ -863,6 +863,16 @@ export default function SharkTankCRM() {
                             >
                               <Eye size={12} /> View Lead
                             </button>
+                            <select
+                              value={lead.pipeline_stage}
+                              onChange={(e) => updateLead(lead.id, { pipeline_stage: e.target.value })}
+                              className={`ml-auto appearance-none cursor-pointer px-2 py-1 rounded-md text-xs font-semibold border ${(STAGE_CONFIG[lead.pipeline_stage] || STAGE_CONFIG.NOT_CONTACTED).badgeClass} focus:outline-none focus:ring-2 focus:ring-teal-500 pr-5 bg-[length:12px] bg-[right_4px_center] bg-no-repeat`}
+                              style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E")` }}
+                            >
+                              {PIPELINE_STAGES.map(s => (
+                                <option key={s} value={s}>{STAGE_CONFIG[s].label}</option>
+                              ))}
+                            </select>
                           </div>
                         </div>
                       ))}
