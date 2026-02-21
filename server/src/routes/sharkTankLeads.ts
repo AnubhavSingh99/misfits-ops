@@ -386,6 +386,21 @@ router.patch('/:id', async (req: Request, res: Response) => {
       }
     }
 
+    // Auto-promote to CALL_SCHEDULED when call_scheduled_at is set and stage is earlier
+    const preScheduleStages = ['NOT_CONTACTED', 'DM_FAILED', 'DM_SENT', 'IN_CONVERSATION'];
+    if (updates.call_scheduled_at && !updates.pipeline_stage && preScheduleStages.includes(lead.pipeline_stage)) {
+      const activityEntry = {
+        action: 'stage_change',
+        old_value: lead.pipeline_stage,
+        new_value: 'CALL_SCHEDULED',
+        created_at: new Date().toISOString(),
+      };
+      setClauses.push(`pipeline_stage = $${paramIndex++}`);
+      params.push('CALL_SCHEDULED');
+      setClauses.push(`activity_log = activity_log || $${paramIndex++}::jsonb`);
+      params.push(JSON.stringify([activityEntry]));
+    }
+
     if (setClauses.length === 0) {
       return res.status(400).json({ success: false, error: 'No valid fields to update' });
     }
@@ -398,7 +413,7 @@ router.patch('/:id', async (req: Request, res: Response) => {
     const result = await pool.query(query, params);
     const updatedLead = result.rows[0];
 
-    // Create/update Google Calendar event only when lead is at CALL_SCHEDULED or later
+    // Create/update Google Calendar event when call is scheduled
     const calendarEligibleStages = ['CALL_SCHEDULED', 'CALL_DONE', 'CONVERTED', 'ONBOARDED'];
     const effectiveStage = updates.pipeline_stage || updatedLead.pipeline_stage;
     if (updates.call_scheduled_at && updates.call_scheduled_at !== lead.call_scheduled_at && calendarEligibleStages.includes(effectiveStage)) {
