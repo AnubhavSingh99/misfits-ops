@@ -38,12 +38,18 @@ export async function processMessageBatch(leadId: number, messages: any[]) {
     }
 
     // Detect auto-reply bots: if lead sends the same message they sent before (50+ chars), it's a bot
+    // Exclude the current batch (already marked processed before this function runs)
     const currentTexts = messages.map((m: any) => (m.text || '').trim());
     const longTexts = currentTexts.filter((t: string) => t.length >= 50);
     if (longTexts.length > 0) {
-      const prevBatches = await pool.query(
-        `SELECT messages FROM message_batches WHERE lead_id = $1 AND processed = true ORDER BY created_at ASC`,
+      const currentBatch = await pool.query(
+        `SELECT id FROM message_batches WHERE lead_id = $1 AND processed = true ORDER BY window_start DESC LIMIT 1`,
         [leadId]
+      );
+      const currentBatchId = currentBatch.rows[0]?.id;
+      const prevBatches = await pool.query(
+        `SELECT messages FROM message_batches WHERE lead_id = $1 AND processed = true AND id != $2 ORDER BY created_at ASC`,
+        [leadId, currentBatchId || 0]
       );
       const prevTexts = new Set<string>();
       for (const batch of prevBatches.rows) {
