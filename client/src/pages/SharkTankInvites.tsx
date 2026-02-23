@@ -29,6 +29,7 @@ So this night really belongs to you and your club.
 
 Would love for you to come celebrate together with all the other leaders.🦈✨
 
+📅 Date: 24th Feb, Tuesday
 📍 Venue: Beerlin, Gurgaon
 🕒 Time: 7:30pm Onwards
 
