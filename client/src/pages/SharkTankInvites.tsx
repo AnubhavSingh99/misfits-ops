@@ -213,6 +213,7 @@ export default function SharkTankInvites() {
           <option value="Shashwat">Shashwat (Blue)</option>
           <option value="Saurabh">Saurabh (Green)</option>
           <option value="CD">CD (Yellow)</option>
+          <option value="Shaswat Kar">Shaswat Kar</option>
         </select>
         <select
           value={statusFilter}
