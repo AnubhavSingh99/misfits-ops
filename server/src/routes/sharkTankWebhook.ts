@@ -42,7 +42,9 @@ router.post('/missive', async (req: Request, res: Response) => {
 
     const messageId = payload.message?.id || payload.id;
     const conversationId = payload.conversation?.id || payload.conversation_id;
-    const messageText = payload.message?.preview || payload.body?.preview || payload.text || '';
+    // Use full message body (strip HTML) instead of truncated preview
+    const rawBody = payload.message?.body || payload.body || '';
+    const messageText = rawBody.replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]*>/g, '').trim() || payload.message?.preview || payload.text || '';
     const senderHandle = extractSenderHandle(payload);
     const timestamp = payload.message?.delivered_at
       ? new Date(payload.message.delivered_at * 1000).toISOString()

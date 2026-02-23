@@ -1155,9 +1155,6 @@ export default function SharkTankCRM() {
                     <span className="inline-flex items-center gap-1">Stage {sortField === 'pipeline_stage' && (sortDir === 'asc' ? <ChevronUp size={12}/> : <ChevronDown size={12}/>)}</span>
                   </th>
                   <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500 uppercase tracking-wide">Flag</th>
-                  <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500 uppercase tracking-wide cursor-pointer hover:text-gray-700" onClick={() => toggleSort('last_activity_at')}>
-                    <span className="inline-flex items-center gap-1">Last Activity {sortField === 'last_activity_at' && (sortDir === 'asc' ? <ChevronUp size={12}/> : <ChevronDown size={12}/>)}</span>
-                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -1303,7 +1300,6 @@ function LeadRow({
             </span>
           )}
         </td>
-        <td className="px-4 py-2.5 text-xs text-gray-400">{timeAgo(lead.last_activity_at)}</td>
       </tr>
 
       {/* Expanded Detail Row */}
