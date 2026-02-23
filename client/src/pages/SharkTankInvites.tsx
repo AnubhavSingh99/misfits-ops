@@ -32,7 +32,7 @@ Would love for you to come celebrate together with all the other leaders.🦈✨
 📍 Venue: Beerlin, Gurgaon
 🕒 Time: 7:30pm Onwards
 
-– ${poc}
+– ${poc === 'CD' ? 'Chaitanya' : poc}
 Co-Founder, Misfits`
 }
 
