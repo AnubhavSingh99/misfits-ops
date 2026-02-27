@@ -16,6 +16,7 @@ import LeaderRequirementsDashboard from './pages/LeaderRequirementsDashboard'
 import VenueRequirementsDashboard from './pages/VenueRequirementsDashboard'
 import CustomerServiceDashboard from './pages/CustomerServiceDashboard'
 import SharkTankCRM from './pages/SharkTankCRM'
+import StartYourClub from './pages/StartYourClub'
 
 function App() {
   return (
@@ -37,6 +38,7 @@ function App() {
         <Route path="/venue-requirements" element={<VenueRequirementsDashboard />} />
         <Route path="/customer-service" element={<CustomerServiceDashboard />} />
         <Route path="/shark-tank" element={<SharkTankCRM />} />
+        <Route path="/start-your-club" element={<StartYourClub />} />
       </Routes>
     </Layout>
   )

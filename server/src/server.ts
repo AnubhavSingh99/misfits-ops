@@ -33,6 +33,8 @@ import sharkTankLeadsRoutes from './routes/sharkTankLeads';
 import sharkTankWebhookRoutes from './routes/sharkTankWebhook';
 import sharkTankPendingRepliesRoutes from './routes/sharkTankPendingReplies';
 import { addClient as addSharkTankSSEClient } from './services/sharkTank/sseManager';
+import startYourClubRoutes from './routes/startYourClub';
+import { addClient as addStartClubSSEClient } from './services/startYourClub/sseManager';
 
 // Import services
 import { initializeDatabase, getLocalPool } from './services/database';
@@ -155,6 +157,7 @@ app.use('/api/venue-repository', venueRepositoryRoutes);
 app.use('/api/shark-tank/leads', sharkTankLeadsRoutes);
 app.use('/api/shark-tank/webhook', sharkTankWebhookRoutes);
 app.use('/api/shark-tank/pending-replies', sharkTankPendingRepliesRoutes);
+app.use('/api/start-club', startYourClubRoutes);
 // SSE endpoint for Shark Tank CRM real-time updates
 app.get('/api/shark-tank/events', (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
@@ -162,6 +165,15 @@ app.get('/api/shark-tank/events', (req, res) => {
   res.setHeader('Connection', 'keep-alive');
   res.flushHeaders();
   addSharkTankSSEClient(res);
+  res.write('event: connected\ndata: {}\n\n');
+});
+// SSE endpoint for Start Your Club real-time updates
+app.get('/api/start-club/events', (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+  addStartClubSSEClient(res);
   res.write('event: connected\ndata: {}\n\n');
 });
 app.use('/api', revenueRoutes); // Also handle direct /api/revenue-growth
