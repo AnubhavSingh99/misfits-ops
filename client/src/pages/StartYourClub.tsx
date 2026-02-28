@@ -5,7 +5,7 @@ import {
   FileText, Archive, Upload,
   ClipboardList, AlertTriangle, Home, UserX, User, UserPlus, Video,
   BarChart3, TrendingUp, Clock, XCircle, PauseCircle,
-  Settings, Plus, Trash2, X, RotateCcw, Loader2
+  Settings, Plus, Trash2, X, RotateCcw, Loader2, HelpCircle
 } from 'lucide-react';
 
 const API_BASE = import.meta.env.VITE_API_URL
@@ -1786,6 +1786,204 @@ function AddLeadModal({
   );
 }
 
+// ─── Info Modal (Status Definitions + Dashboard SOP) ─────────────
+function InfoModal({ onClose }: { onClose: () => void }) {
+  const [activeTab, setActiveTab] = useState<'statuses' | 'sop'>('statuses');
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center">
+      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
+      <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-2xl mx-4 overflow-hidden">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
+          <h3 className="text-base font-bold text-slate-800 flex items-center gap-2">
+            <HelpCircle className="h-4.5 w-4.5 text-indigo-500" /> Dashboard Guide
+          </h3>
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-600">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        {/* Tabs */}
+        <div className="flex border-b border-slate-100">
+          {([
+            { id: 'statuses' as const, label: 'Status Definitions' },
+            { id: 'sop' as const, label: 'Dashboard SOP' },
+          ]).map(tab => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={`flex-1 py-3 text-sm font-medium transition-colors ${activeTab === tab.id ? 'text-indigo-600 border-b-2 border-indigo-600' : 'text-slate-400 hover:text-slate-600'}`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="px-6 py-5 max-h-[70vh] overflow-y-auto">
+          {activeTab === 'statuses' && (
+            <div className="space-y-1">
+              <p className="text-xs text-slate-500 mb-4">Every applicant moves through these statuses. Statuses are grouped into 3 layers.</p>
+
+              <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Layer 1 — Journey (Pre-Submit)</div>
+              {[
+                { status: 'ACTIVE', desc: 'Applicant is currently filling out the application form. They may be on any screen (story, login, city selection, or questionnaire).' },
+                { status: 'ABANDONED', desc: 'Applicant started but left mid-way and chose "Will come back later." They are interested but haven\'t finished. Shows up in the Follow Up tab.' },
+                { status: 'NOT_INTERESTED', desc: 'Applicant explicitly chose "Yes, I want to exit" or "Not sure, I\'d like to join a club." They do not want to lead. Shows in Dropped tab.' },
+              ].map(({ status, desc }) => (
+                <div key={status} className="flex gap-3 py-2.5 px-3 rounded-lg hover:bg-slate-50">
+                  <span className={`shrink-0 inline-flex items-center px-2 py-0.5 text-[10px] font-semibold rounded-full border ${STATUS_CONFIG[status]?.badgeClass || 'bg-slate-50 text-slate-600 border-slate-200'}`}>
+                    {STATUS_CONFIG[status]?.shortLabel || status}
+                  </span>
+                  <div>
+                    <div className="text-sm font-medium text-slate-700">{STATUS_CONFIG[status]?.label || status}</div>
+                    <div className="text-xs text-slate-500 mt-0.5 leading-relaxed">{desc}</div>
+                  </div>
+                </div>
+              ))}
+
+              <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide mt-5 mb-2">Layer 2 — Evaluation (Post-Submit)</div>
+              {[
+                { status: 'SUBMITTED', desc: 'Application is complete and submitted. Waiting for an admin to start reviewing. Shows in the Submitted tab under "New."' },
+                { status: 'UNDER_REVIEW', desc: 'An admin has opened the application and started screening. They are reading responses and rating the applicant.' },
+                { status: 'ON_HOLD', desc: 'Application paused during review. The applicant looks promising but there\'s a reason to wait (e.g., city not open yet, need more info). Can be moved to interview or rejected later.' },
+                { status: 'INTERVIEW_PENDING', desc: 'Selected for an interview. The Calendly scheduling link has been sent but the applicant hasn\'t picked a time yet.' },
+                { status: 'INTERVIEW_SCHEDULED', desc: 'The applicant booked an interview time via Calendly. Date and Google Meet link are visible in the detail view.' },
+                { status: 'INTERVIEW_DONE', desc: 'Interview has been completed. Waiting for the admin to make a final decision — select or reject.' },
+              ].map(({ status, desc }) => (
+                <div key={status} className="flex gap-3 py-2.5 px-3 rounded-lg hover:bg-slate-50">
+                  <span className={`shrink-0 inline-flex items-center px-2 py-0.5 text-[10px] font-semibold rounded-full border ${STATUS_CONFIG[status]?.badgeClass || 'bg-slate-50 text-slate-600 border-slate-200'}`}>
+                    {STATUS_CONFIG[status]?.shortLabel || status}
+                  </span>
+                  <div>
+                    <div className="text-sm font-medium text-slate-700">{STATUS_CONFIG[status]?.label || status}</div>
+                    <div className="text-xs text-slate-500 mt-0.5 leading-relaxed">{desc}</div>
+                  </div>
+                </div>
+              ))}
+
+              <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide mt-5 mb-2">Layer 3 — Outcome</div>
+              {[
+                { status: 'SELECTED', desc: 'Approved as a club leader. Onboarding is in progress. Three milestones must be completed: First Call, Venue Sorted, and Marketing Launched.' },
+                { status: 'CLUB_CREATED', desc: 'Fully onboarded. All 3 milestones are done, the club is live. This is the final success state.' },
+                { status: 'REJECTED', desc: 'Application was declined. Can happen at screening (after review), on hold, or after interview. The rejection reason and the stage it was rejected from are recorded.' },
+              ].map(({ status, desc }) => (
+                <div key={status} className="flex gap-3 py-2.5 px-3 rounded-lg hover:bg-slate-50">
+                  <span className={`shrink-0 inline-flex items-center px-2 py-0.5 text-[10px] font-semibold rounded-full border ${STATUS_CONFIG[status]?.badgeClass || 'bg-slate-50 text-slate-600 border-slate-200'}`}>
+                    {STATUS_CONFIG[status]?.shortLabel || status}
+                  </span>
+                  <div>
+                    <div className="text-sm font-medium text-slate-700">{STATUS_CONFIG[status]?.label || status}</div>
+                    <div className="text-xs text-slate-500 mt-0.5 leading-relaxed">{desc}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {activeTab === 'sop' && (
+            <div className="space-y-6">
+              <p className="text-xs text-slate-500">Step-by-step guide for operating this dashboard. Follow these steps in order, every day.</p>
+
+              {/* Step 1 */}
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <span className="flex items-center justify-center w-6 h-6 rounded-full bg-indigo-100 text-indigo-700 text-xs font-bold">1</span>
+                  <span className="text-sm font-semibold text-slate-800">Review new applications (Submitted tab)</span>
+                </div>
+                <div className="ml-8 text-xs text-slate-600 leading-relaxed space-y-1">
+                  <p>Open the <strong>Submitted</strong> tab. Look at the "New" subsection first.</p>
+                  <p>Click on any application row to expand it. Read the applicant's city, activity, and all questionnaire responses carefully.</p>
+                  <p>Rate the applicant on each screening dimension (1-5 scale). Consider their experience, passion, availability, and clarity of answers.</p>
+                  <p>After rating, choose one action:</p>
+                  <ul className="list-disc list-inside ml-2 space-y-0.5">
+                    <li><strong>Select for Interview</strong> — You think they could be a good leader. Moves to Interview Pending.</li>
+                    <li><strong>Reject</strong> — Not a fit. Pick a rejection reason. This is final.</li>
+                    <li><strong>Put On Hold</strong> — Promising but not ready (e.g., city not open, need to revisit later).</li>
+                  </ul>
+                </div>
+              </div>
+
+              {/* Step 2 */}
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <span className="flex items-center justify-center w-6 h-6 rounded-full bg-indigo-100 text-indigo-700 text-xs font-bold">2</span>
+                  <span className="text-sm font-semibold text-slate-800">Manage interviews (Interview Phase tab)</span>
+                </div>
+                <div className="ml-8 text-xs text-slate-600 leading-relaxed space-y-1">
+                  <p>Once you select someone for interview, they move to <strong>Interview Pending</strong>. They'll receive a Calendly link to book a time.</p>
+                  <p>When they book, the status auto-updates to <strong>Interview Scheduled</strong>. You'll see the date and Google Meet link.</p>
+                  <p>After the interview, mark it as <strong>Interview Done</strong>. Then rate them again on interview-specific dimensions.</p>
+                  <p>Final decision: <strong>Select</strong> (they become a leader) or <strong>Reject</strong> (with reason).</p>
+                </div>
+              </div>
+
+              {/* Step 3 */}
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <span className="flex items-center justify-center w-6 h-6 rounded-full bg-indigo-100 text-indigo-700 text-xs font-bold">3</span>
+                  <span className="text-sm font-semibold text-slate-800">Onboard selected leaders (Selected tab)</span>
+                </div>
+                <div className="ml-8 text-xs text-slate-600 leading-relaxed space-y-1">
+                  <p>Selected applicants appear in the <strong>Selected</strong> tab. There are 3 onboarding milestones to complete:</p>
+                  <ol className="list-decimal list-inside ml-2 space-y-0.5">
+                    <li><strong>First Call Done</strong> — Have the onboarding call with the new leader. Check this off when done.</li>
+                    <li><strong>Venue Sorted</strong> — Confirm the venue for their club sessions. Check this off when confirmed.</li>
+                    <li><strong>Marketing Launched</strong> — The club's listing or promo is live. When you check this off, the status automatically changes to Club Created.</li>
+                  </ol>
+                  <p className="mt-1">Once all 3 milestones are done, the applicant becomes a fully onboarded club leader.</p>
+                </div>
+              </div>
+
+              {/* Step 4 */}
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <span className="flex items-center justify-center w-6 h-6 rounded-full bg-indigo-100 text-indigo-700 text-xs font-bold">4</span>
+                  <span className="text-sm font-semibold text-slate-800">Follow up with abandoned applicants (Follow Up tab)</span>
+                </div>
+                <div className="ml-8 text-xs text-slate-600 leading-relaxed space-y-1">
+                  <p>The <strong>Follow Up</strong> tab shows applicants who left mid-way but said "Will come back later."</p>
+                  <p>They are grouped by where they dropped off: Screening (questionnaire), Activity (city/activity selection), Basics (name), Login, or Story.</p>
+                  <p>Prioritize <strong>Screening</strong> drop-offs — these people got the furthest and are most likely to convert with a nudge.</p>
+                  <p>Reach out via phone or message. When they return and submit, they'll move to the Submitted tab automatically.</p>
+                </div>
+              </div>
+
+              {/* Step 5 */}
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <span className="flex items-center justify-center w-6 h-6 rounded-full bg-indigo-100 text-indigo-700 text-xs font-bold">5</span>
+                  <span className="text-sm font-semibold text-slate-800">Monitor the funnel (Summary cards + Analytics)</span>
+                </div>
+                <div className="ml-8 text-xs text-slate-600 leading-relaxed space-y-1">
+                  <p>The 5 cards at the top show counts per stage. Click any card to jump to that tab.</p>
+                  <p>Use the 3 analytics buttons (Conversion Funnel, TAT, Dropped Analysis) in the analytics section to understand:</p>
+                  <ul className="list-disc list-inside ml-2 space-y-0.5">
+                    <li><strong>Conversion Funnel</strong> — How many people move from one stage to the next. Spot where people are dropping.</li>
+                    <li><strong>TAT (Turnaround Time)</strong> — How fast you're processing applications. Aim to review within 2 working days.</li>
+                    <li><strong>Dropped Analysis</strong> — Breakdown of why and where people leave the pipeline.</li>
+                  </ul>
+                </div>
+              </div>
+
+              {/* Tips */}
+              <div className="pt-4 border-t border-slate-100">
+                <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">Quick Tips</div>
+                <div className="space-y-2 text-xs text-slate-600 leading-relaxed">
+                  <p><strong>Bulk archive:</strong> Select multiple applications with checkboxes, then click Archive. ON_HOLD applications are protected from archive.</p>
+                  <p><strong>Search:</strong> Use the search bar to find applicants by name, phone, city, or activity.</p>
+                  <p><strong>Filters:</strong> Combine subsection, status, city, and activity filters to narrow your view.</p>
+                  <p><strong>SLA badge:</strong> Submitted applications show a "Due in X day(s)" badge. If it says "Overdue," review it immediately.</p>
+                  <p><strong>Add Lead:</strong> Use the "Add Lead" button to manually create an application (e.g., from a phone inquiry).</p>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Main Dashboard Component ────────────────────────────────────
 export default function StartYourClub() {
   const [applications, setApplications] = useState<Application[]>([]);
@@ -1837,6 +2035,9 @@ export default function StartYourClub() {
   // Add Lead modal
   const [showAddLead, setShowAddLead] = useState(false);
 
+  // Info modal
+  const [showInfo, setShowInfo] = useState(false);
+
   // Filter dropdowns data
   const [cities, setCities] = useState<string[]>([]);
   const [activities, setActivities] = useState<string[]>([]);
@@ -1845,7 +2046,7 @@ export default function StartYourClub() {
   const currentSection = SECTIONS.find(s => s.id === activeSection)!;
 
   // Scheduled calls tile (INTERVIEW_SCHEDULED leads with upcoming interviews)
-  const [scheduledCallsCollapsed, setScheduledCallsCollapsed] = useState(false);
+  const [scheduledCallsCollapsed, setScheduledCallsCollapsed] = useState(true);
   const scheduledCalls = useMemo(() =>
     applications
       .filter(a => a.status === 'INTERVIEW_SCHEDULED' && a.interview_scheduled_at)
@@ -2029,6 +2230,12 @@ export default function StartYourClub() {
           >
             <Settings className="h-4 w-4" /> Rating Factors
           </button>
+          <button
+            onClick={() => setShowInfo(true)}
+            className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-slate-600 bg-white border border-slate-200 rounded-lg hover:bg-slate-50"
+          >
+            <HelpCircle className="h-4 w-4" /> Info
+          </button>
           <button onClick={handleRefresh} className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-slate-600 bg-white border border-slate-200 rounded-lg hover:bg-slate-50">
             <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> Refresh
           </button>
@@ -2065,8 +2272,7 @@ export default function StartYourClub() {
       )}
 
       {/* ──── Scheduled Calls Tile ──── */}
-      {scheduledCalls.length > 0 && (
-        <div className="mb-5 bg-white border border-teal-200 rounded-xl overflow-hidden">
+      <div className="mb-5 bg-white border border-teal-200 rounded-xl overflow-hidden">
           <button
             onClick={() => setScheduledCallsCollapsed(!scheduledCallsCollapsed)}
             className="w-full flex items-center justify-between px-4 py-3 bg-teal-50 hover:bg-teal-100 transition-colors"
@@ -2080,7 +2286,9 @@ export default function StartYourClub() {
           </button>
           {!scheduledCallsCollapsed && (
             <div className="p-3 space-y-2">
-              {(() => {
+              {scheduledCalls.length === 0 ? (
+                <div className="text-center py-4 text-xs text-slate-400">No scheduled calls</div>
+              ) : (() => {
                 // Group by date
                 const groups: Record<string, Application[]> = {};
                 scheduledCalls.forEach(app => {
@@ -2164,7 +2372,6 @@ export default function StartYourClub() {
             </div>
           )}
         </div>
-      )}
 
       {/* ──── Analysis Section (collapsible) ──── */}
       {analytics && (() => {
@@ -2474,6 +2681,9 @@ export default function StartYourClub() {
           onCreated={() => { setShowAddLead(false); handleRefresh(); }}
         />
       )}
+
+      {/* Info Modal */}
+      {showInfo && <InfoModal onClose={() => setShowInfo(false)} />}
 
       {/* Rating Factors Modal */}
       {showDimConfig && (
