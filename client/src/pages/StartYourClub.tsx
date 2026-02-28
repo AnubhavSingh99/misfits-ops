@@ -3,9 +3,9 @@ import {
   RefreshCw, Search, ChevronDown, ChevronUp, ChevronRight,
   CheckCircle, Calendar, Phone, PhoneCall,
   FileText, Archive, Upload,
-  ClipboardList, AlertTriangle, Home, UserX, User,
+  ClipboardList, AlertTriangle, Home, UserX, User, UserPlus, Video,
   BarChart3, TrendingUp, Clock, XCircle, PauseCircle,
-  Settings, Plus, Trash2, X
+  Settings, Plus, Trash2, X, RotateCcw, Loader2
 } from 'lucide-react';
 
 const API_BASE = import.meta.env.VITE_API_URL
@@ -171,6 +171,10 @@ interface Application {
   last_question_section: string | null;
   total_questions: number | null;
   abandoned_at: string | null;
+  toolkit_shared: boolean;
+  admin_created: boolean;
+  interview_scheduled_at: string | null;
+  calendly_meet_link: string | null;
 }
 
 interface AnalyticsData {
@@ -530,7 +534,10 @@ function LeadRow({
         }`}
       >
         <td className="px-4 py-3">
-          <div className="font-medium text-slate-800">{app.name || 'Anonymous'}</div>
+          <div className="font-medium text-slate-800">
+            {app.name || 'Anonymous'}
+            {app.admin_created && <span className="ml-1.5 text-[9px] font-medium text-amber-600 bg-amber-50 border border-amber-200 rounded px-1 py-0.5">Admin</span>}
+          </div>
         </td>
         <td className="px-4 py-3 text-slate-500 text-xs">{app.user_phone || '-'}</td>
         <td className="px-4 py-3 text-slate-600">{app.city || '-'}</td>
@@ -612,10 +619,21 @@ function LeadRow({
                         {detail.reviewed_by && (<><span>·</span><User className="h-3 w-3 inline" /> Reviewed by: {detail.reviewed_by}</>)}
                       </div>
                     </div>
-                    <div className="text-right">
+                    <div className="text-right space-y-1">
                       <span className={`inline-flex items-center px-2.5 py-1 text-xs font-medium rounded-full border ${cfg.badgeClass}`}>
                         {cfg.label}
                       </span>
+                      {detail.admin_created && (
+                        <div className="text-[10px] text-amber-600 bg-amber-50 border border-amber-200 rounded-full px-2 py-0.5 inline-flex items-center gap-1 ml-1">
+                          <UserPlus className="h-2.5 w-2.5" /> Admin created
+                        </div>
+                      )}
+                      {detail.interview_scheduled_at && detail.status === 'INTERVIEW_SCHEDULED' && (
+                        <div className="text-[10px] text-indigo-600">
+                          <Calendar className="h-2.5 w-2.5 inline mr-0.5" />
+                          Interview: {formatDateTime(detail.interview_scheduled_at)}
+                        </div>
+                      )}
                     </div>
                   </div>
 
@@ -653,6 +671,10 @@ function LeadRow({
                           <label className="flex items-center gap-2 cursor-pointer">
                             <input type="checkbox" checked={detail.venue_sorted} onChange={e => handleMilestone('venue_sorted', e.target.checked)} className="rounded border-purple-300 text-purple-600 h-3.5 w-3.5" />
                             <span className={`text-xs ${detail.venue_sorted ? 'text-purple-700 line-through' : 'text-slate-700'}`}>Venue sorted</span>
+                          </label>
+                          <label className="flex items-center gap-2 cursor-pointer">
+                            <input type="checkbox" checked={detail.toolkit_shared} onChange={e => handleMilestone('toolkit_shared', e.target.checked)} className="rounded border-purple-300 text-purple-600 h-3.5 w-3.5" />
+                            <span className={`text-xs ${detail.toolkit_shared ? 'text-purple-700 line-through' : 'text-slate-700'}`}>Toolkit shared</span>
                           </label>
                           <div className="border-t border-purple-200 pt-1.5">
                             <label className={`flex items-center gap-2 ${detail.first_call_done && detail.venue_sorted && detail.split_percentage ? 'cursor-pointer' : 'opacity-50 cursor-not-allowed'}`}>
@@ -1099,9 +1121,25 @@ function LeadRow({
                         </button>
                       )}
                       {detail.status === 'INTERVIEW_SCHEDULED' && (
-                        <button onClick={() => handleStatusTransition('INTERVIEW_DONE')} className="w-full py-2 text-xs font-medium text-purple-600 bg-purple-50 border border-purple-200 rounded-lg hover:bg-purple-100">
-                          Mark Interview Done
-                        </button>
+                        <div className="flex gap-2">
+                          <button onClick={() => handleStatusTransition('INTERVIEW_DONE')} className="flex-1 py-2 text-xs font-medium text-purple-600 bg-purple-50 border border-purple-200 rounded-lg hover:bg-purple-100">
+                            Mark Interview Done
+                          </button>
+                          <button
+                            onClick={async () => {
+                              if (!confirm('Reschedule this interview? The lead will be moved back to Interview Pending.')) return;
+                              const res = await fetch(`${API_BASE}/admin/${app.id}/reschedule`, {
+                                method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+                              });
+                              const data = await res.json();
+                              if (data.success) { refetchDetail(); onRefresh(); }
+                              else alert(data.error);
+                            }}
+                            className="px-3 py-2 text-xs font-medium text-amber-600 bg-amber-50 border border-amber-200 rounded-lg hover:bg-amber-100 flex items-center gap-1"
+                          >
+                            <RotateCcw className="h-3 w-3" /> Reschedule
+                          </button>
+                        </div>
                       )}
 
                       {/* INTERVIEW_DONE — Interview rating form + configurable split + Select/Reject */}
@@ -1184,6 +1222,11 @@ function LeadRow({
                             <label className="flex items-center gap-2.5 cursor-pointer">
                               <input type="checkbox" checked={detail.venue_sorted} onChange={e => handleMilestone('venue_sorted', e.target.checked)} className="rounded border-purple-300 text-purple-600" />
                               <span className={`text-sm ${detail.venue_sorted ? 'text-purple-700 line-through' : 'text-slate-700'}`}>Venue done</span>
+                            </label>
+                            {/* Milestone 2.5: Toolkit */}
+                            <label className="flex items-center gap-2.5 cursor-pointer">
+                              <input type="checkbox" checked={detail.toolkit_shared} onChange={e => handleMilestone('toolkit_shared', e.target.checked)} className="rounded border-purple-300 text-purple-600" />
+                              <span className={`text-sm ${detail.toolkit_shared ? 'text-purple-700 line-through' : 'text-slate-700'}`}>Toolkit shared</span>
                             </label>
                             {/* Milestone 3: Contract */}
                             <div className="border-t border-purple-200 pt-3 space-y-2">
@@ -1552,6 +1595,197 @@ function DroppedAnalysisModal({ onClose, analytics }: { onClose: () => void; ana
   );
 }
 
+// ─── Add Lead Modal ─────────────────────────────────────────────
+const LEAD_TARGET_STATUSES = [
+  { value: 'SUBMITTED', label: 'Submitted' },
+  { value: 'UNDER_REVIEW', label: 'Under Review' },
+  { value: 'INTERVIEW_PENDING', label: 'Interview Pending' },
+  { value: 'INTERVIEW_DONE', label: 'Interview Done' },
+  { value: 'SELECTED', label: 'Selected' },
+];
+
+function AddLeadModal({
+  apiBase, cities, onClose, onCreated,
+}: {
+  apiBase: string;
+  cities: string[];
+  onClose: () => void;
+  onCreated: () => void;
+}) {
+  const [phone, setPhone] = useState('');
+  const [lookupResult, setLookupResult] = useState<{ pk: number; first_name: string; last_name: string } | null>(null);
+  const [lookupError, setLookupError] = useState('');
+  const [lookupLoading, setLookupLoading] = useState(false);
+  const [city, setCity] = useState('');
+  const [activity, setActivity] = useState('');
+  const [targetStatus, setTargetStatus] = useState('SUBMITTED');
+  const [creating, setCreating] = useState(false);
+
+  const handleLookup = async () => {
+    const cleaned = phone.replace(/\D/g, '');
+    if (cleaned.length < 10) { setLookupError('Enter a valid 10-digit phone number'); return; }
+    setLookupLoading(true);
+    setLookupError('');
+    setLookupResult(null);
+    try {
+      const res = await fetch(`${apiBase}/admin/lookup-user?phone=${cleaned}`);
+      const data = await res.json();
+      if (data.success) {
+        setLookupResult(data.data);
+      } else {
+        setLookupError(data.error || 'User not found');
+      }
+    } catch {
+      setLookupError('Failed to look up user');
+    } finally {
+      setLookupLoading(false);
+    }
+  };
+
+  const handleCreate = async () => {
+    if (!lookupResult || !city || !activity) return;
+    setCreating(true);
+    try {
+      const res = await fetch(`${apiBase}/admin/create-lead`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          phone: phone.replace(/\D/g, ''),
+          first_name: lookupResult.first_name,
+          last_name: lookupResult.last_name,
+          city,
+          activity,
+          target_status: targetStatus,
+        }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        onCreated();
+      } else {
+        alert(data.error || 'Failed to create lead');
+      }
+    } catch {
+      alert('Failed to create lead');
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const canCreate = lookupResult && city && activity && targetStatus;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center">
+      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
+      <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4 overflow-hidden">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
+          <h3 className="text-base font-bold text-slate-800">Add Lead</h3>
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-600">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="px-6 py-5 space-y-4">
+          {/* Warning */}
+          <div className="px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-700">
+            <AlertTriangle className="h-3 w-3 inline mr-1" />
+            The lead must have the Misfits app installed and be logged in before you can add them here.
+          </div>
+
+          {/* Phone lookup */}
+          <div>
+            <label className="text-xs font-medium text-slate-600 mb-1 block">Phone Number</label>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={phone}
+                onChange={e => { setPhone(e.target.value); setLookupResult(null); setLookupError(''); }}
+                onKeyDown={e => e.key === 'Enter' && handleLookup()}
+                placeholder="10-digit phone number"
+                className="flex-1 px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400"
+              />
+              <button
+                onClick={handleLookup}
+                disabled={lookupLoading || phone.replace(/\D/g, '').length < 10}
+                className="px-4 py-2 text-sm font-medium text-indigo-600 bg-indigo-50 border border-indigo-200 rounded-lg hover:bg-indigo-100 disabled:opacity-50 flex items-center gap-1.5"
+              >
+                {lookupLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Search className="h-3.5 w-3.5" />}
+                Look up
+              </button>
+            </div>
+            {lookupError && (
+              <div className="mt-1.5 px-3 py-2 bg-red-50 border border-red-200 rounded-lg">
+                <p className="text-xs text-red-600 flex items-center gap-1 font-medium">
+                  <AlertTriangle className="h-3 w-3" /> {lookupError}
+                </p>
+                <p className="text-[11px] text-red-500 mt-1">Ask them to download the Misfits app and log in first.</p>
+              </div>
+            )}
+            {lookupResult && (
+              <div className="mt-2 px-3 py-2 bg-green-50 border border-green-200 rounded-lg">
+                <div className="text-sm font-medium text-green-800">
+                  {lookupResult.first_name} {lookupResult.last_name}
+                </div>
+                <div className="text-xs text-green-600">User found (ID: {lookupResult.pk})</div>
+              </div>
+            )}
+          </div>
+
+          {/* City */}
+          <div>
+            <label className="text-xs font-medium text-slate-600 mb-1 block">City</label>
+            <select
+              value={city}
+              onChange={e => setCity(e.target.value)}
+              className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+            >
+              <option value="">Select city</option>
+              {cities.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </div>
+
+          {/* Activity */}
+          <div>
+            <label className="text-xs font-medium text-slate-600 mb-1 block">Activity</label>
+            <input
+              type="text"
+              value={activity}
+              onChange={e => setActivity(e.target.value)}
+              placeholder="e.g. Board Games, Running..."
+              className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400"
+            />
+          </div>
+
+          {/* Target Status */}
+          <div>
+            <label className="text-xs font-medium text-slate-600 mb-1 block">Place at Status</label>
+            <select
+              value={targetStatus}
+              onChange={e => setTargetStatus(e.target.value)}
+              className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+            >
+              {LEAD_TARGET_STATUSES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+            </select>
+          </div>
+        </div>
+
+        <div className="px-6 py-4 border-t border-slate-100 bg-slate-50/50 flex justify-end gap-2">
+          <button onClick={onClose} className="px-4 py-2 text-sm font-medium text-slate-600 bg-white border border-slate-200 rounded-lg hover:bg-slate-50">
+            Cancel
+          </button>
+          <button
+            onClick={handleCreate}
+            disabled={!canCreate || creating}
+            className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 disabled:opacity-50 flex items-center gap-1.5"
+          >
+            {creating && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+            Create Lead
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Main Dashboard Component ────────────────────────────────────
 export default function StartYourClub() {
   const [applications, setApplications] = useState<Application[]>([]);
@@ -1600,12 +1834,24 @@ export default function StartYourClub() {
   // Expanded row
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
+  // Add Lead modal
+  const [showAddLead, setShowAddLead] = useState(false);
+
   // Filter dropdowns data
   const [cities, setCities] = useState<string[]>([]);
   const [activities, setActivities] = useState<string[]>([]);
 
   // Get statuses for current section
   const currentSection = SECTIONS.find(s => s.id === activeSection)!;
+
+  // Scheduled calls tile (INTERVIEW_SCHEDULED leads with upcoming interviews)
+  const [scheduledCallsCollapsed, setScheduledCallsCollapsed] = useState(false);
+  const scheduledCalls = useMemo(() =>
+    applications
+      .filter(a => a.status === 'INTERVIEW_SCHEDULED' && a.interview_scheduled_at)
+      .sort((a, b) => new Date(a.interview_scheduled_at!).getTime() - new Date(b.interview_scheduled_at!).getTime()),
+    [applications]
+  );
 
   const fetchApplications = useCallback(async () => {
     try {
@@ -1770,6 +2016,12 @@ export default function StartYourClub() {
           <p className="text-sm text-slate-500 mt-0.5">Leader application screening pipeline</p>
         </div>
         <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowAddLead(true)}
+            className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700"
+          >
+            <UserPlus className="h-4 w-4" /> Add Lead
+          </button>
           {/* Rating factors config */}
           <button
             onClick={() => setShowDimConfig(true)}
@@ -1809,6 +2061,108 @@ export default function StartYourClub() {
             <div className="text-xs font-medium text-red-600 mt-1">Dropped / On Hold / Not Interested</div>
             <div className="text-[10px] text-red-500">{f.rejected} rejected, {f.on_hold} on hold, {f.not_interested} not interested</div>
           </div>
+        </div>
+      )}
+
+      {/* ──── Scheduled Calls Tile ──── */}
+      {scheduledCalls.length > 0 && (
+        <div className="mb-5 bg-white border border-teal-200 rounded-xl overflow-hidden">
+          <button
+            onClick={() => setScheduledCallsCollapsed(!scheduledCallsCollapsed)}
+            className="w-full flex items-center justify-between px-4 py-3 bg-teal-50 hover:bg-teal-100 transition-colors"
+          >
+            <div className="flex items-center gap-2">
+              <Phone className="h-4 w-4 text-teal-600" />
+              <span className="text-sm font-semibold text-teal-700">Scheduled Calls</span>
+              <span className="bg-teal-600 text-white text-xs font-bold px-2 py-0.5 rounded-full">{scheduledCalls.length}</span>
+            </div>
+            {scheduledCallsCollapsed ? <ChevronDown className="h-4 w-4 text-teal-500" /> : <ChevronUp className="h-4 w-4 text-teal-500" />}
+          </button>
+          {!scheduledCallsCollapsed && (
+            <div className="p-3 space-y-2">
+              {(() => {
+                // Group by date
+                const groups: Record<string, Application[]> = {};
+                scheduledCalls.forEach(app => {
+                  const d = new Date(app.interview_scheduled_at!);
+                  const today = new Date();
+                  const tomorrow = new Date(today);
+                  tomorrow.setDate(tomorrow.getDate() + 1);
+                  let label: string;
+                  if (d.toDateString() === today.toDateString()) label = 'Today';
+                  else if (d.toDateString() === tomorrow.toDateString()) label = 'Tomorrow';
+                  else label = d.toLocaleDateString('en-IN', { weekday: 'short', month: 'short', day: 'numeric' });
+                  if (!groups[label]) groups[label] = [];
+                  groups[label].push(app);
+                });
+                return Object.entries(groups).map(([dateLabel, apps]) => (
+                  <div key={dateLabel}>
+                    <div className="text-xs font-semibold text-slate-500 mb-1.5 px-1">{dateLabel}</div>
+                    <div className="space-y-1.5">
+                      {apps.map(app => {
+                        const time = new Date(app.interview_scheduled_at!).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
+                        return (
+                          <div key={app.id} className="flex items-center gap-3 px-3 py-2.5 bg-slate-50 rounded-lg border border-slate-100 hover:border-teal-200 transition-colors">
+                            <div className="flex-1 min-w-0 cursor-pointer" onClick={() => { setActiveSection('interview'); setStatusFilter(''); setSubsectionFilter(''); setCollapsedSubsections(prev => { const next = new Set(prev); next.delete('scheduled'); return next; }); setExpandedId(String(app.id)); }}>
+                              <div className="flex items-center gap-2">
+                                <span className="text-sm font-medium text-slate-800 truncate">{app.name || 'Unnamed'}</span>
+                                {app.admin_created && <span className="text-[9px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full">Admin</span>}
+                              </div>
+                              <div className="text-xs text-slate-500">{app.city} · {app.activity}</div>
+                            </div>
+                            <div className="text-xs font-medium text-slate-600 whitespace-nowrap">{time}</div>
+                            <div className="flex items-center gap-1.5">
+                              {app.calendly_meet_link ? (
+                                <a
+                                  href={app.calendly_meet_link}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-white bg-teal-600 rounded-lg hover:bg-teal-700"
+                                  onClick={e => e.stopPropagation()}
+                                >
+                                  <Video className="h-3 w-3" /> Join
+                                </a>
+                              ) : (
+                                <span className="px-2.5 py-1.5 text-xs text-slate-400 bg-slate-100 rounded-lg">No link</span>
+                              )}
+                              <button
+                                onClick={async () => {
+                                  const res = await fetch(`${API_BASE}/admin/${app.id}/status`, {
+                                    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ to_status: 'INTERVIEW_DONE' }),
+                                  });
+                                  const data = await res.json();
+                                  if (data.success) handleRefresh();
+                                  else alert(data.error || 'Failed');
+                                }}
+                                className="px-2 py-1.5 text-xs font-medium text-purple-600 bg-purple-50 border border-purple-200 rounded-lg hover:bg-purple-100"
+                              >
+                                Done
+                              </button>
+                              <button
+                                onClick={async () => {
+                                  if (!confirm('Reschedule this interview?')) return;
+                                  const res = await fetch(`${API_BASE}/admin/${app.id}/reschedule`, {
+                                    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+                                  });
+                                  const data = await res.json();
+                                  if (data.success) handleRefresh();
+                                  else alert(data.error || 'Failed');
+                                }}
+                                className="px-2 py-1.5 text-xs font-medium text-amber-600 bg-amber-50 border border-amber-200 rounded-lg hover:bg-amber-100"
+                              >
+                                <RotateCcw className="h-3 w-3" />
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ));
+              })()}
+            </div>
+          )}
         </div>
       )}
 
@@ -2109,6 +2463,16 @@ export default function StartYourClub() {
       )}
       {analysisModal === 'dropped' && analytics && (
         <DroppedAnalysisModal onClose={() => setAnalysisModal(null)} analytics={analytics} />
+      )}
+
+      {/* Add Lead Modal */}
+      {showAddLead && (
+        <AddLeadModal
+          apiBase={API_BASE}
+          cities={cities}
+          onClose={() => setShowAddLead(false)}
+          onCreated={() => { setShowAddLead(false); handleRefresh(); }}
+        />
       )}
 
       {/* Rating Factors Modal */}
