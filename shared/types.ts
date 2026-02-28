@@ -1309,9 +1309,8 @@ export interface StageProgressWithUA extends StageProgress {
 // ============================================================
 
 export type ClubApplicationStatus =
-  | 'LANDED' | 'STORY_VIEWED' | 'NOT_INTERESTED'
-  | 'FORM_IN_PROGRESS' | 'FORM_ABANDONED' | 'FORM_SUBMITTED'
-  | 'UNDER_REVIEW' | 'ON_HOLD'
+  | 'ACTIVE' | 'ABANDONED' | 'NOT_INTERESTED'
+  | 'SUBMITTED' | 'UNDER_REVIEW' | 'ON_HOLD'
   | 'INTERVIEW_PENDING' | 'INTERVIEW_SCHEDULED' | 'INTERVIEW_DONE'
   | 'SELECTED' | 'CLUB_CREATED' | 'REJECTED';
 
@@ -1334,12 +1333,18 @@ export interface ClubApplication {
   name: string | null;
   status: ClubApplicationStatus;
   exit_type: 'interested' | 'silent' | null;
-  source: 'app' | 'web' | 'instagram' | 'link';
+  source: 'app' | 'link';
   city: string | null;
   activity: string | null;
   awareness: 'yes' | 'no' | 'maybe' | null;
   archived: boolean;
   questionnaire_data: Record<string, any>;
+  last_screen: string | null;
+  last_story_slide: number | null;
+  last_question_index: number | null;
+  last_question_section: string | null;
+  total_questions: number | null;
+  abandoned_at: string | null;
   screening_ratings: ScreeningRatings | null;
   interview_ratings: ScreeningRatings | null;
   reviewed_by: string | null;

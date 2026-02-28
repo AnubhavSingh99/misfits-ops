@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   RefreshCw, Search, ChevronDown, ChevronUp, ChevronRight,
-  CheckCircle, Calendar, Phone,
+  CheckCircle, Calendar, Phone, PhoneCall,
   FileText, Archive, Upload,
   ClipboardList, AlertTriangle, Home, UserX, User,
   BarChart3, TrendingUp, Clock, XCircle, PauseCircle,
@@ -12,28 +12,29 @@ const API_BASE = import.meta.env.VITE_API_URL
   ? `${import.meta.env.VITE_API_URL}/api/start-club`
   : '/api/start-club';
 
-// Status configuration
+// Status configuration (3-layer: Journey / Evaluation / Outcome)
 const STATUS_CONFIG: Record<string, { label: string; shortLabel: string; badgeClass: string }> = {
-  LANDED: { label: 'Landed', shortLabel: 'LD', badgeClass: 'bg-slate-50 text-slate-600 border-slate-200' },
-  STORY_VIEWED: { label: 'Story Viewed', shortLabel: 'SV', badgeClass: 'bg-slate-50 text-slate-500 border-slate-200' },
+  // Layer 1: Journey
+  ACTIVE: { label: 'Active', shortLabel: 'AC', badgeClass: 'bg-blue-50 text-blue-600 border-blue-200' },
+  ABANDONED: { label: 'Abandoned', shortLabel: 'AB', badgeClass: 'bg-orange-50 text-orange-600 border-orange-200' },
   NOT_INTERESTED: { label: 'Not Interested', shortLabel: 'NI', badgeClass: 'bg-red-50 text-red-600 border-red-200' },
-  FORM_IN_PROGRESS: { label: 'Form In Progress', shortLabel: 'FP', badgeClass: 'bg-blue-50 text-blue-600 border-blue-200' },
-  FORM_ABANDONED: { label: 'Form Abandoned', shortLabel: 'FA', badgeClass: 'bg-orange-50 text-orange-600 border-orange-200' },
-  FORM_SUBMITTED: { label: 'Submitted', shortLabel: 'FS', badgeClass: 'bg-emerald-50 text-emerald-600 border-emerald-200' },
+  // Layer 2: Evaluation
+  SUBMITTED: { label: 'Submitted', shortLabel: 'SM', badgeClass: 'bg-emerald-50 text-emerald-600 border-emerald-200' },
   UNDER_REVIEW: { label: 'Under Review', shortLabel: 'UR', badgeClass: 'bg-amber-50 text-amber-600 border-amber-200' },
   ON_HOLD: { label: 'On Hold', shortLabel: 'OH', badgeClass: 'bg-violet-50 text-violet-600 border-violet-200' },
   INTERVIEW_PENDING: { label: 'Interview Pending', shortLabel: 'IP', badgeClass: 'bg-indigo-50 text-indigo-600 border-indigo-200' },
   INTERVIEW_SCHEDULED: { label: 'Interview Scheduled', shortLabel: 'IS', badgeClass: 'bg-indigo-50 text-indigo-700 border-indigo-200' },
   INTERVIEW_DONE: { label: 'Interview Done', shortLabel: 'ID', badgeClass: 'bg-purple-50 text-purple-600 border-purple-200' },
+  // Layer 3: Outcome
   SELECTED: { label: 'Selected', shortLabel: 'SL', badgeClass: 'bg-purple-50 text-purple-700 border-purple-200' },
   CLUB_CREATED: { label: 'Club Created', shortLabel: 'CC', badgeClass: 'bg-green-50 text-green-600 border-green-200' },
   REJECTED: { label: 'Rejected', shortLabel: 'RJ', badgeClass: 'bg-red-50 text-red-600 border-red-200' },
 };
 
-// 4 section tabs (Submitted+Under Review merged, ON_HOLD moved to Dropped)
+// 5 section tabs (3-layer model)
 const SECTIONS = [
-  { id: 'pipeline', label: 'In Pipeline', icon: Home, statuses: ['LANDED', 'STORY_VIEWED', 'FORM_IN_PROGRESS', 'FORM_ABANDONED'] },
-  { id: 'submitted', label: 'Submitted', icon: ClipboardList, statuses: ['FORM_SUBMITTED', 'UNDER_REVIEW'] },
+  { id: 'followup', label: 'Follow Up', icon: PhoneCall, statuses: ['ABANDONED'] },
+  { id: 'submitted', label: 'Submitted', icon: ClipboardList, statuses: ['SUBMITTED', 'UNDER_REVIEW'] },
   { id: 'interview', label: 'Interview Phase', icon: Calendar, statuses: ['INTERVIEW_PENDING', 'INTERVIEW_SCHEDULED', 'INTERVIEW_DONE'] },
   { id: 'selected', label: 'Selected', icon: CheckCircle, statuses: ['SELECTED', 'CLUB_CREATED'] },
   { id: 'dropped', label: 'Dropped', icon: UserX, statuses: ['NOT_INTERESTED', 'ON_HOLD', 'REJECTED'] },
@@ -48,17 +49,21 @@ type SubsectionConfig = {
 };
 
 const SECTION_SUBSECTIONS: Record<string, SubsectionConfig[]> = {
-  pipeline: [
-    { id: 'landed', label: 'Landed', borderClass: 'border-l-blue-400', bgClass: 'bg-blue-50/60', headerClass: 'text-blue-700', countClass: 'bg-blue-100 text-blue-700',
-      filter: (app: Application) => app.status === 'LANDED' },
-    { id: 'story_viewed', label: 'Story Viewed', borderClass: 'border-l-cyan-400', bgClass: 'bg-cyan-50/60', headerClass: 'text-cyan-700', countClass: 'bg-cyan-100 text-cyan-700',
-      filter: (app: Application) => app.status === 'STORY_VIEWED' },
-    { id: 'form_started', label: 'Form Started', borderClass: 'border-l-slate-400', bgClass: 'bg-slate-50/60', headerClass: 'text-slate-600', countClass: 'bg-slate-100 text-slate-600',
-      filter: (app: Application) => ['FORM_IN_PROGRESS', 'FORM_ABANDONED'].includes(app.status) },
+  followup: [
+    { id: 'screening', label: 'Screening', borderClass: 'border-l-red-400', bgClass: 'bg-red-50/60', headerClass: 'text-red-700', countClass: 'bg-red-100 text-red-700',
+      filter: (app: Application) => app.status === 'ABANDONED' && app.last_screen === 'questionnaire' },
+    { id: 'activity', label: 'Activity', borderClass: 'border-l-orange-400', bgClass: 'bg-orange-50/60', headerClass: 'text-orange-700', countClass: 'bg-orange-100 text-orange-700',
+      filter: (app: Application) => app.status === 'ABANDONED' && app.last_screen === 'city_activity' },
+    { id: 'basics', label: 'Basics', borderClass: 'border-l-amber-400', bgClass: 'bg-amber-50/60', headerClass: 'text-amber-700', countClass: 'bg-amber-100 text-amber-700',
+      filter: (app: Application) => app.status === 'ABANDONED' && app.last_screen === 'name' },
+    { id: 'login', label: 'Login', borderClass: 'border-l-slate-400', bgClass: 'bg-slate-50/60', headerClass: 'text-slate-600', countClass: 'bg-slate-100 text-slate-600',
+      filter: (app: Application) => app.status === 'ABANDONED' && ['login', 'otp'].includes(app.last_screen || '') },
+    { id: 'story', label: 'Story', borderClass: 'border-l-slate-300', bgClass: 'bg-slate-50/40', headerClass: 'text-slate-500', countClass: 'bg-slate-50 text-slate-500',
+      filter: (app: Application) => app.status === 'ABANDONED' && (app.last_screen === 'story' || app.last_screen === 'awareness' || !app.last_screen) },
   ],
   submitted: [
     { id: 'new', label: 'New', borderClass: 'border-l-emerald-400', bgClass: 'bg-emerald-50/60', headerClass: 'text-emerald-700', countClass: 'bg-emerald-100 text-emerald-700',
-      filter: (app: Application) => app.status === 'FORM_SUBMITTED' },
+      filter: (app: Application) => app.status === 'SUBMITTED' },
     { id: 'under_review', label: 'Under Review', borderClass: 'border-l-amber-400', bgClass: 'bg-amber-50/60', headerClass: 'text-amber-700', countClass: 'bg-amber-100 text-amber-700',
       filter: (app: Application) => app.status === 'UNDER_REVIEW' },
   ],
@@ -86,7 +91,7 @@ const SECTION_SUBSECTIONS: Record<string, SubsectionConfig[]> = {
     { id: 'on_hold', label: 'On Hold', borderClass: 'border-l-violet-400', bgClass: 'bg-violet-50/60', headerClass: 'text-violet-700', countClass: 'bg-violet-100 text-violet-700',
       filter: (app: Application) => app.status === 'ON_HOLD' },
     { id: 'rejected_screening', label: 'Rejected (Screening)', borderClass: 'border-l-red-400', bgClass: 'bg-red-50/60', headerClass: 'text-red-700', countClass: 'bg-red-100 text-red-700',
-      filter: (app: Application) => app.status === 'REJECTED' && ['FORM_SUBMITTED', 'UNDER_REVIEW', 'ON_HOLD'].includes(app.rejected_from_status || '') },
+      filter: (app: Application) => app.status === 'REJECTED' && ['SUBMITTED', 'UNDER_REVIEW', 'ON_HOLD'].includes(app.rejected_from_status || '') },
     { id: 'rejected_interview', label: 'Rejected (Interview)', borderClass: 'border-l-orange-400', bgClass: 'bg-orange-50/60', headerClass: 'text-orange-700', countClass: 'bg-orange-100 text-orange-700',
       filter: (app: Application) => app.status === 'REJECTED' && app.rejected_from_status === 'INTERVIEW_DONE' },
     { id: 'rejected_other', label: 'Rejected (Other)', borderClass: 'border-l-red-300', bgClass: 'bg-red-50/30', headerClass: 'text-red-500', countClass: 'bg-red-50 text-red-500',
@@ -96,8 +101,8 @@ const SECTION_SUBSECTIONS: Record<string, SubsectionConfig[]> = {
 
 // Mapping from subsection → statuses (for linked filter behavior)
 const SUBSECTION_TO_STATUSES: Record<string, Record<string, string[]>> = {
-  pipeline: { landed: ['LANDED'], story_viewed: ['STORY_VIEWED'], form_started: ['FORM_IN_PROGRESS', 'FORM_ABANDONED'] },
-  submitted: { new: ['FORM_SUBMITTED'], under_review: ['UNDER_REVIEW'] },
+  followup: { screening: ['ABANDONED'], activity: ['ABANDONED'], basics: ['ABANDONED'], login: ['ABANDONED'], story: ['ABANDONED'] },
+  submitted: { new: ['SUBMITTED'], under_review: ['UNDER_REVIEW'] },
   interview: { pending: ['INTERVIEW_PENDING'], scheduled: ['INTERVIEW_SCHEDULED'], done: ['INTERVIEW_DONE'] },
   selected: { selected: ['SELECTED'], onboarded: ['CLUB_CREATED'], onboarded_incomplete: ['CLUB_CREATED'], onboarded_complete: ['CLUB_CREATED'] },
   dropped: { not_interested: ['NOT_INTERESTED'], on_hold: ['ON_HOLD'], rejected_screening: ['REJECTED'], rejected_interview: ['REJECTED'], rejected_other: ['REJECTED'] },
@@ -160,6 +165,12 @@ interface Application {
   selected_at: string | null;
   club_created_at: string | null;
   rejected_from_status: string | null;
+  last_screen: string | null;
+  last_story_slide: number | null;
+  last_question_index: number | null;
+  last_question_section: string | null;
+  total_questions: number | null;
+  abandoned_at: string | null;
 }
 
 interface AnalyticsData {
@@ -172,7 +183,8 @@ interface AnalyticsData {
     onboarded: number;
     rejected: number;
     on_hold: number;
-    in_pipeline: number;
+    active_journey: number;
+    abandoned: number;
     not_interested: number;
     dropped_early: number;
     rejected_screening: number;
@@ -213,6 +225,18 @@ function formatDate(dateStr: string | null): string {
 function formatDateTime(dateStr: string | null): string {
   if (!dateStr) return '-';
   return new Date(dateStr).toLocaleDateString('en-IN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
+function formatTimeAgo(dateStr: string): string {
+  const now = Date.now();
+  const then = new Date(dateStr).getTime();
+  const diffMs = now - then;
+  const mins = Math.floor(diffMs / 60000);
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  return `${days}d ago`;
 }
 
 function computeDays(createdAt: string, clubCreatedAt: string | null): string {
@@ -398,7 +422,7 @@ function LeadRow({
     if (data.success) { refetchDetail(); onRefresh(); } else alert(data.error);
   };
 
-  // Pick for review (FORM_SUBMITTED → UNDER_REVIEW)
+  // Pick for review (SUBMITTED → UNDER_REVIEW)
   const handlePick = async () => {
     if (!reviewerName.trim()) return;
     const res = await fetch(`${API_BASE}/admin/${app.id}/pick`, {
@@ -483,7 +507,7 @@ function LeadRow({
 
   const allScreeningRated = screeningDims.length > 0 && screeningDims.every(d => screeningRatings[d.key] >= 1 && screeningRatings[d.key] <= 5);
   const allInterviewRated = interviewDims.length > 0 && interviewDims.every(d => interviewRatings[d.key] >= 1 && interviewRatings[d.key] <= 5);
-  const cfg = STATUS_CONFIG[app.status] || STATUS_CONFIG.LANDED;
+  const cfg = STATUS_CONFIG[app.status] || STATUS_CONFIG.ACTIVE;
   const rowRef = useRef<HTMLTableRowElement>(null);
 
   // After expanding, keep the clicked row in view
@@ -521,7 +545,28 @@ function LeadRow({
             </div>
           )}
         </td>
-        <td className="px-4 py-3 text-slate-500 text-xs font-medium">{computeDays(app.created_at, app.club_created_at)}</td>
+        {sectionId === 'followup' ? (
+          <>
+            <td className="px-4 py-3 text-xs text-slate-600">
+              {app.last_screen === 'questionnaire' && app.last_question_index != null && app.total_questions
+                ? <span className="font-medium">Q{app.last_question_index}/{app.total_questions} <span className="text-slate-400">({Math.round((app.last_question_index / app.total_questions) * 100)}%)</span></span>
+                : app.last_screen === 'story' && app.last_story_slide
+                  ? <span>Slide {app.last_story_slide}/4</span>
+                  : <span className="text-slate-400 capitalize">{app.last_screen || '-'}</span>
+              }
+            </td>
+            <td className="px-4 py-3 text-xs text-slate-500">
+              {app.abandoned_at ? formatTimeAgo(app.abandoned_at) : '-'}
+              {app.exit_type && (
+                <span className={`ml-1.5 px-1.5 py-0.5 rounded text-[10px] border ${app.exit_type === 'interested' ? 'bg-blue-50 text-blue-600 border-blue-200' : 'bg-slate-50 text-slate-500 border-slate-200'}`}>
+                  {app.exit_type === 'interested' ? 'will return' : 'silent'}
+                </span>
+              )}
+            </td>
+          </>
+        ) : (
+          <td className="px-4 py-3 text-slate-500 text-xs font-medium">{computeDays(app.created_at, app.club_created_at)}</td>
+        )}
         {sectionId === 'selected' && (
           <td className="px-4 py-3">
             <div className="flex gap-1">
@@ -954,8 +999,8 @@ function LeadRow({
 
                     {/* RIGHT: Action panel */}
                     <div className="space-y-4">
-                      {/* FORM_SUBMITTED — Enter name + Pick for Review */}
-                      {detail.status === 'FORM_SUBMITTED' && (
+                      {/* SUBMITTED — Enter name + Pick for Review */}
+                      {detail.status === 'SUBMITTED' && (
                         <div className="p-4 bg-emerald-50 rounded-xl border border-emerald-200">
                           <h4 className="text-sm font-bold text-emerald-700 mb-2">Pick for Review</h4>
                           <p className="text-xs text-emerald-600 mb-3">Enter your name and start reviewing this lead.</p>
@@ -1355,7 +1400,7 @@ function ConversionFunnelModal({ onClose, analytics }: { onClose: () => void; an
               { label: 'Rejected (Screening)', count: f.rejected_screening, icon: <XCircle className="h-3 w-3" />, color: 'text-red-500' },
               { label: 'Rejected (Interview)', count: f.rejected_interview, icon: <XCircle className="h-3 w-3" />, color: 'text-red-500' },
               { label: 'On Hold', count: f.on_hold, icon: <PauseCircle className="h-3 w-3" />, color: 'text-violet-500' },
-              { label: 'Dropped Early (Pre-Submit)', count: f.dropped_early, icon: <UserX className="h-3 w-3" />, color: 'text-slate-400' },
+              { label: 'Abandoned (Pre-Submit)', count: f.abandoned, icon: <UserX className="h-3 w-3" />, color: 'text-orange-400' },
             ].map((row, i) => (
               <div key={i} className="flex items-center justify-between text-xs">
                 <span className={`${row.color} flex items-center gap-1`}>{row.icon} {row.label}</span>
@@ -1426,10 +1471,11 @@ function TATModal({ onClose, analytics }: { onClose: () => void; analytics: Anal
 function DroppedAnalysisModal({ onClose, analytics }: { onClose: () => void; analytics: AnalyticsData }) {
   const { funnel: f, dropped_analysis: da } = analytics;
   const pct = (n: number) => f.total > 0 ? Math.round((n / f.total) * 100) : 0;
-  const totalDropped = f.dropped_early + f.rejected + f.on_hold;
+  const totalDropped = f.abandoned + f.not_interested + f.rejected + f.on_hold;
 
   const dropStages = [
-    { label: 'Dropped Early (Pre-Submission)', count: f.dropped_early, desc: 'Landed, viewed, abandoned, not interested', color: 'bg-slate-300' },
+    { label: 'Abandoned (Pre-Submit)', count: f.abandoned, desc: 'Left during journey, may return', color: 'bg-orange-300' },
+    { label: 'Not Interested', count: f.not_interested, desc: 'Explicitly chose to exit', color: 'bg-slate-300' },
     { label: 'Rejected at Screening', count: f.rejected_screening, desc: 'After form submission / under review', color: 'bg-red-300' },
     { label: 'Rejected after Interview', count: f.rejected_interview, desc: 'Post-interview rejection', color: 'bg-red-400' },
     { label: 'On Hold', count: f.on_hold, desc: 'Paused for later review', color: 'bg-violet-300' },
@@ -1542,7 +1588,7 @@ export default function StartYourClub() {
   const [marketingFilter, setMarketingFilter] = useState(false);
 
   // Active section tab
-  const [activeSection, setActiveSection] = useState('pipeline');
+  const [activeSection, setActiveSection] = useState('followup');
 
   // Sort
   const [sortField, setSortField] = useState('created_at');
@@ -1740,9 +1786,9 @@ export default function StartYourClub() {
       {/* ──── Funnel Summary Cards ──── */}
       {f && (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-5">
-          <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 cursor-pointer hover:border-blue-400 transition-colors" onClick={() => { setActiveSection('pipeline'); setStatusFilter(''); setSubsectionFilter(''); setMarketingFilter(false); }}>
-            <div className="text-2xl font-bold text-blue-700">{f.in_pipeline}</div>
-            <div className="text-xs font-medium text-blue-600 mt-1">In Pipeline</div>
+          <div className="bg-orange-50 border border-orange-200 rounded-xl p-4 cursor-pointer hover:border-orange-400 transition-colors" onClick={() => { setActiveSection('followup'); setStatusFilter(''); setSubsectionFilter(''); setMarketingFilter(false); }}>
+            <div className="text-2xl font-bold text-orange-700">{f.abandoned}</div>
+            <div className="text-xs font-medium text-orange-600 mt-1">Follow Up</div>
           </div>
           <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 cursor-pointer hover:border-emerald-400 transition-colors" onClick={() => { setActiveSection('submitted'); setStatusFilter(''); setSubsectionFilter(''); setMarketingFilter(false); }}>
             <div className="text-2xl font-bold text-emerald-700">{f.submitted + f.under_review}</div>
@@ -1942,9 +1988,17 @@ export default function StartYourClub() {
                   <div className="flex items-center gap-1">Activity {sortField === 'activity' && (sortDir === 'asc' ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />)}</div>
                 </th>
                 <th className="px-4 py-3 text-left font-semibold text-slate-600">Status</th>
-                <th className="px-4 py-3 text-left font-semibold text-slate-600 cursor-pointer hover:text-slate-800" onClick={() => handleSort('created_at')}>
-                  <div className="flex items-center gap-1">Days {sortField === 'created_at' && (sortDir === 'asc' ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />)}</div>
-                </th>
+                {activeSection === 'followup' && (
+                  <>
+                    <th className="px-4 py-3 text-left font-semibold text-slate-600">Progress</th>
+                    <th className="px-4 py-3 text-left font-semibold text-slate-600">Abandoned</th>
+                  </>
+                )}
+                {activeSection !== 'followup' && (
+                  <th className="px-4 py-3 text-left font-semibold text-slate-600 cursor-pointer hover:text-slate-800" onClick={() => handleSort('created_at')}>
+                    <div className="flex items-center gap-1">Days {sortField === 'created_at' && (sortDir === 'asc' ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />)}</div>
+                  </th>
+                )}
                 {activeSection === 'selected' && (
                   <th className="px-4 py-3 text-left font-semibold text-slate-600">Milestones</th>
                 )}

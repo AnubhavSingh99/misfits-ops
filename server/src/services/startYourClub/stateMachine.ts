@@ -2,27 +2,24 @@ import type { ClubApplicationStatus, ScreeningRatings, RejectionReason } from '.
 
 // Valid transitions: from_status -> [to_statuses]
 const TRANSITIONS: Record<string, ClubApplicationStatus[]> = {
-  LANDED: ['STORY_VIEWED', 'FORM_IN_PROGRESS'],
-  STORY_VIEWED: ['NOT_INTERESTED', 'FORM_IN_PROGRESS'],
-  FORM_IN_PROGRESS: ['NOT_INTERESTED', 'FORM_ABANDONED', 'FORM_SUBMITTED'],
-  FORM_ABANDONED: ['FORM_IN_PROGRESS'],
-  NOT_INTERESTED: ['FORM_IN_PROGRESS'],
-  FORM_SUBMITTED: ['UNDER_REVIEW', 'INTERVIEW_PENDING', 'REJECTED', 'ON_HOLD'],
+  ACTIVE: ['ABANDONED', 'NOT_INTERESTED', 'SUBMITTED'],
+  ABANDONED: ['ACTIVE'],
+  NOT_INTERESTED: ['ACTIVE'],
+  SUBMITTED: ['UNDER_REVIEW', 'INTERVIEW_PENDING', 'REJECTED', 'ON_HOLD'],
   UNDER_REVIEW: ['INTERVIEW_PENDING', 'REJECTED', 'ON_HOLD'],
   ON_HOLD: ['INTERVIEW_PENDING', 'REJECTED'],
   INTERVIEW_PENDING: ['INTERVIEW_SCHEDULED'],
   INTERVIEW_SCHEDULED: ['INTERVIEW_DONE'],
   INTERVIEW_DONE: ['SELECTED', 'REJECTED'],
   SELECTED: ['CLUB_CREATED'],
-  // Terminal statuses — no transitions out
-  CLUB_CREATED: [],
-  REJECTED: [],
+  CLUB_CREATED: [],  // Terminal
+  REJECTED: [],      // Terminal
 };
 
 const TERMINAL_STATUSES: ClubApplicationStatus[] = ['CLUB_CREATED', 'REJECTED'];
 
 // Statuses that require screening_ratings for any admin action
-const SCREENING_RATING_REQUIRED_FROM: ClubApplicationStatus[] = ['FORM_SUBMITTED', 'UNDER_REVIEW', 'ON_HOLD'];
+const SCREENING_RATING_REQUIRED_FROM: ClubApplicationStatus[] = ['SUBMITTED', 'UNDER_REVIEW', 'ON_HOLD'];
 
 interface TransitionRequest {
   from: ClubApplicationStatus;

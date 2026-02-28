@@ -175,17 +175,18 @@ router.get('/admin/analytics', async (req: Request, res: Response) => {
     const funnelResult = await pool.query(`
       SELECT
         COUNT(*) FILTER (WHERE archived = false) as total,
-        COUNT(*) FILTER (WHERE status = 'FORM_SUBMITTED' AND archived = false) as submitted,
+        COUNT(*) FILTER (WHERE status = 'SUBMITTED' AND archived = false) as submitted,
         COUNT(*) FILTER (WHERE status = 'UNDER_REVIEW' AND archived = false) as under_review,
         COUNT(*) FILTER (WHERE status IN ('INTERVIEW_PENDING', 'INTERVIEW_SCHEDULED', 'INTERVIEW_DONE') AND archived = false) as interview_phase,
         COUNT(*) FILTER (WHERE status = 'SELECTED' AND archived = false) as selected,
         COUNT(*) FILTER (WHERE status = 'CLUB_CREATED' AND archived = false) as onboarded,
         COUNT(*) FILTER (WHERE status = 'REJECTED' AND archived = false) as rejected,
         COUNT(*) FILTER (WHERE status = 'ON_HOLD' AND archived = false) as on_hold,
-        COUNT(*) FILTER (WHERE status IN ('LANDED', 'STORY_VIEWED', 'FORM_IN_PROGRESS', 'FORM_ABANDONED') AND archived = false) as in_pipeline,
+        COUNT(*) FILTER (WHERE status = 'ACTIVE' AND archived = false) as active_journey,
+        COUNT(*) FILTER (WHERE status = 'ABANDONED' AND archived = false) as abandoned,
         COUNT(*) FILTER (WHERE status = 'NOT_INTERESTED' AND archived = false) as not_interested,
-        COUNT(*) FILTER (WHERE status IN ('LANDED', 'STORY_VIEWED', 'NOT_INTERESTED', 'FORM_IN_PROGRESS', 'FORM_ABANDONED') AND archived = false) as dropped_early,
-        COUNT(*) FILTER (WHERE status = 'REJECTED' AND rejected_from_status IN ('FORM_SUBMITTED', 'UNDER_REVIEW', 'ON_HOLD') AND archived = false) as rejected_screening,
+        COUNT(*) FILTER (WHERE status IN ('ACTIVE', 'ABANDONED', 'NOT_INTERESTED') AND archived = false) as dropped_early,
+        COUNT(*) FILTER (WHERE status = 'REJECTED' AND rejected_from_status IN ('SUBMITTED', 'UNDER_REVIEW', 'ON_HOLD') AND archived = false) as rejected_screening,
         COUNT(*) FILTER (WHERE status = 'REJECTED' AND rejected_from_status = 'INTERVIEW_DONE' AND archived = false) as rejected_interview
       FROM club_applications
     `);
@@ -242,7 +243,8 @@ router.get('/admin/analytics', async (req: Request, res: Response) => {
           onboarded,
           rejected,
           on_hold: onHold,
-          in_pipeline: parseInt(funnel.in_pipeline) || 0,
+          active_journey: parseInt(funnel.active_journey) || 0,
+          abandoned: parseInt(funnel.abandoned) || 0,
           not_interested: parseInt(funnel.not_interested) || 0,
           dropped_early: parseInt(funnel.dropped_early) || 0,
           rejected_screening: parseInt(funnel.rejected_screening) || 0,
@@ -427,7 +429,7 @@ router.get('/admin/:id', async (req: Request, res: Response) => {
   }
 });
 
-// PATCH /admin/:id/pick — "Pick" a submitted application for review (FORM_SUBMITTED → UNDER_REVIEW)
+// PATCH /admin/:id/pick — "Pick" a submitted application for review (SUBMITTED → UNDER_REVIEW)
 router.patch('/admin/:id/pick', async (req: Request, res: Response) => {
   try {
     const pool = getLocalPool();
@@ -444,8 +446,8 @@ router.patch('/admin/:id/pick', async (req: Request, res: Response) => {
     }
 
     const app = appResult.rows[0];
-    if (app.status !== 'FORM_SUBMITTED') {
-      return res.status(400).json({ success: false, error: `Can only pick from FORM_SUBMITTED status, current: ${app.status}` });
+    if (app.status !== 'SUBMITTED') {
+      return res.status(400).json({ success: false, error: `Can only pick from SUBMITTED status, current: ${app.status}` });
     }
 
     await pool.query(
@@ -453,7 +455,7 @@ router.patch('/admin/:id/pick', async (req: Request, res: Response) => {
       [id, reviewed_by.trim()]
     );
 
-    await recordStatusEvent(pool, id, 'FORM_SUBMITTED', 'UNDER_REVIEW', 'admin', { reviewed_by: reviewed_by.trim() });
+    await recordStatusEvent(pool, id, 'SUBMITTED', 'UNDER_REVIEW', 'admin', { reviewed_by: reviewed_by.trim() });
     broadcast('application_updated', { id, status: 'UNDER_REVIEW' });
     res.json({ success: true, data: { id, status: 'UNDER_REVIEW', reviewed_by: reviewed_by.trim() } });
   } catch (error: any) {
@@ -463,7 +465,7 @@ router.patch('/admin/:id/pick', async (req: Request, res: Response) => {
 });
 
 // PATCH /admin/:id/review — 3-outcome review (select-for-interview / reject / on-hold)
-// ALL actions require screening ratings. Also handles FORM_SUBMITTED directly (sets reviewed_by).
+// ALL actions require screening ratings. Also handles SUBMITTED directly (sets reviewed_by).
 router.patch('/admin/:id/review', async (req: Request, res: Response) => {
   try {
     const pool = getLocalPool();
@@ -488,8 +490,8 @@ router.patch('/admin/:id/review', async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, error: 'Invalid action. Must be select_for_interview, reject, or on_hold' });
     }
 
-    // If coming from FORM_SUBMITTED, require reviewed_by
-    if (app.status === 'FORM_SUBMITTED' && !reviewed_by?.trim()) {
+    // If coming from SUBMITTED, require reviewed_by
+    if (app.status === 'SUBMITTED' && !reviewed_by?.trim()) {
       return res.status(400).json({ success: false, error: 'Your name (reviewed_by) is required when reviewing from Submitted' });
     }
 
@@ -518,7 +520,7 @@ router.patch('/admin/:id/review', async (req: Request, res: Response) => {
       updates.push(`rejection_reason = $${paramIdx++}`);
       updateParams.push(rejection_reason);
     }
-    // Set reviewed_by + picked_at when coming from FORM_SUBMITTED
+    // Set reviewed_by + picked_at when coming from SUBMITTED
     if (reviewed_by?.trim()) {
       updates.push(`reviewed_by = $${paramIdx++}`);
       updateParams.push(reviewed_by.trim());
@@ -586,7 +588,7 @@ router.patch('/admin/:id/status', async (req: Request, res: Response) => {
     let paramIdx = 3;
 
     // Set timestamps based on status
-    if (to_status === 'FORM_SUBMITTED') {
+    if (to_status === 'SUBMITTED') {
       updates.push('submitted_at = NOW()');
     } else if (to_status === 'SELECTED') {
       updates.push('selected_at = NOW()');
@@ -885,17 +887,19 @@ router.post('/admin/bulk-archive', async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, error: 'No application IDs provided' });
     }
 
-    // Check for ON_HOLD protection
-    const holdCheck = await pool.query(
-      `SELECT id FROM club_applications WHERE id = ANY($1) AND status = 'ON_HOLD'`,
-      [ids]
+    // Block archiving for high-investment statuses (Interview Phase + Selected + Onboarded)
+    const blockedStatuses = ['INTERVIEW_PENDING', 'INTERVIEW_SCHEDULED', 'INTERVIEW_DONE', 'SELECTED', 'CLUB_CREATED'];
+    const blockedCheck = await pool.query(
+      `SELECT id, status FROM club_applications WHERE id = ANY($1) AND status = ANY($2)`,
+      [ids, blockedStatuses]
     );
 
-    if (holdCheck.rows.length > 0) {
+    if (blockedCheck.rows.length > 0) {
+      const details = blockedCheck.rows.map((r: any) => `${r.id} (${r.status})`).join(', ');
       return res.status(400).json({
         success: false,
-        error: `Cannot archive ON_HOLD applications: ${holdCheck.rows.map((r: any) => r.id).join(', ')}`,
-        on_hold_ids: holdCheck.rows.map((r: any) => r.id),
+        error: `Cannot archive applications in active pipeline stages: ${details}. Move to ON_HOLD first.`,
+        blocked_ids: blockedCheck.rows.map((r: any) => r.id),
       });
     }
 
