@@ -33,7 +33,7 @@ const STATUS_CONFIG: Record<string, { label: string; shortLabel: string; badgeCl
 
 // 5 section tabs (3-layer model)
 const SECTIONS = [
-  { id: 'followup', label: 'Follow Up', icon: PhoneCall, statuses: ['ABANDONED'] },
+  { id: 'followup', label: 'Follow Up', icon: PhoneCall, statuses: ['ACTIVE', 'ABANDONED'] },
   { id: 'submitted', label: 'Submitted', icon: ClipboardList, statuses: ['SUBMITTED', 'UNDER_REVIEW'] },
   { id: 'interview', label: 'Interview Phase', icon: Calendar, statuses: ['INTERVIEW_PENDING', 'INTERVIEW_SCHEDULED', 'INTERVIEW_DONE'] },
   { id: 'selected', label: 'Selected', icon: CheckCircle, statuses: ['SELECTED', 'CLUB_CREATED'] },
@@ -50,6 +50,8 @@ type SubsectionConfig = {
 
 const SECTION_SUBSECTIONS: Record<string, SubsectionConfig[]> = {
   followup: [
+    { id: 'active', label: 'Active (In Progress)', borderClass: 'border-l-blue-400', bgClass: 'bg-blue-50/60', headerClass: 'text-blue-700', countClass: 'bg-blue-100 text-blue-700',
+      filter: (app: Application) => app.status === 'ACTIVE' },
     { id: 'screening', label: 'Screening', borderClass: 'border-l-red-400', bgClass: 'bg-red-50/60', headerClass: 'text-red-700', countClass: 'bg-red-100 text-red-700',
       filter: (app: Application) => app.status === 'ABANDONED' && app.last_screen === 'questionnaire' },
     { id: 'activity', label: 'Activity', borderClass: 'border-l-orange-400', bgClass: 'bg-orange-50/60', headerClass: 'text-orange-700', countClass: 'bg-orange-100 text-orange-700',
@@ -101,7 +103,7 @@ const SECTION_SUBSECTIONS: Record<string, SubsectionConfig[]> = {
 
 // Mapping from subsection → statuses (for linked filter behavior)
 const SUBSECTION_TO_STATUSES: Record<string, Record<string, string[]>> = {
-  followup: { screening: ['ABANDONED'], activity: ['ABANDONED'], basics: ['ABANDONED'], login: ['ABANDONED'], story: ['ABANDONED'] },
+  followup: { active: ['ACTIVE'], screening: ['ABANDONED'], activity: ['ABANDONED'], basics: ['ABANDONED'], login: ['ABANDONED'], story: ['ABANDONED'] },
   submitted: { new: ['SUBMITTED'], under_review: ['UNDER_REVIEW'] },
   interview: { pending: ['INTERVIEW_PENDING'], scheduled: ['INTERVIEW_SCHEDULED'], done: ['INTERVIEW_DONE'] },
   selected: { selected: ['SELECTED'], onboarded: ['CLUB_CREATED'], onboarded_incomplete: ['CLUB_CREATED'], onboarded_complete: ['CLUB_CREATED'] },
@@ -563,11 +565,20 @@ function LeadRow({
               }
             </td>
             <td className="px-4 py-3 text-xs text-slate-500">
-              {app.abandoned_at ? formatTimeAgo(app.abandoned_at) : '-'}
-              {app.exit_type && (
-                <span className={`ml-1.5 px-1.5 py-0.5 rounded text-[10px] border ${app.exit_type === 'interested' ? 'bg-blue-50 text-blue-600 border-blue-200' : 'bg-slate-50 text-slate-500 border-slate-200'}`}>
-                  {app.exit_type === 'interested' ? 'will return' : 'silent'}
-                </span>
+              {app.status === 'ACTIVE' ? (
+                <>
+                  {formatTimeAgo(app.updated_at)}
+                  <span className="ml-1.5 px-1.5 py-0.5 rounded text-[10px] border bg-blue-50 text-blue-600 border-blue-200">in progress</span>
+                </>
+              ) : (
+                <>
+                  {app.abandoned_at ? formatTimeAgo(app.abandoned_at) : formatTimeAgo(app.updated_at)}
+                  {app.exit_type && (
+                    <span className={`ml-1.5 px-1.5 py-0.5 rounded text-[10px] border ${app.exit_type === 'interested' ? 'bg-orange-50 text-orange-600 border-orange-200' : 'bg-slate-50 text-slate-500 border-slate-200'}`}>
+                      {app.exit_type === 'interested' ? 'will return' : 'silent'}
+                    </span>
+                  )}
+                </>
               )}
             </td>
           </>
@@ -1826,8 +1837,8 @@ function InfoModal({ onClose }: { onClose: () => void }) {
 
               <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Layer 1 — Journey (Pre-Submit)</div>
               {[
-                { status: 'ACTIVE', desc: 'Applicant is currently filling out the application form. They may be on any screen (story, login, city selection, or questionnaire).' },
-                { status: 'ABANDONED', desc: 'Applicant started but left mid-way and chose "Will come back later." They are interested but haven\'t finished. Shows up in the Follow Up tab.' },
+                { status: 'ACTIVE', desc: 'Applicant is currently filling out the application form. They may be on any screen (story, login, city selection, or questionnaire). Shows in the Follow Up tab under "Active (In Progress)."' },
+                { status: 'ABANDONED', desc: 'Applicant started but left mid-way and chose "Will come back later." They are interested but haven\'t finished. Shows in the Follow Up tab, grouped by where they dropped off.' },
                 { status: 'NOT_INTERESTED', desc: 'Applicant explicitly chose "Yes, I want to exit" or "Not sure, I\'d like to join a club." They do not want to lead. Shows in Dropped tab.' },
               ].map(({ status, desc }) => (
                 <div key={status} className="flex gap-3 py-2.5 px-3 rounded-lg hover:bg-slate-50">
@@ -1938,11 +1949,14 @@ function InfoModal({ onClose }: { onClose: () => void }) {
               <div className="space-y-2">
                 <div className="flex items-center gap-2">
                   <span className="flex items-center justify-center w-6 h-6 rounded-full bg-indigo-100 text-indigo-700 text-xs font-bold">4</span>
-                  <span className="text-sm font-semibold text-slate-800">Follow up with abandoned applicants (Follow Up tab)</span>
+                  <span className="text-sm font-semibold text-slate-800">Follow up with active & abandoned applicants (Follow Up tab)</span>
                 </div>
                 <div className="ml-8 text-xs text-slate-600 leading-relaxed space-y-1">
-                  <p>The <strong>Follow Up</strong> tab shows applicants who left mid-way but said "Will come back later."</p>
-                  <p>They are grouped by where they dropped off: Screening (questionnaire), Activity (city/activity selection), Basics (name), Login, or Story.</p>
+                  <p>The <strong>Follow Up</strong> tab shows two groups:</p>
+                  <ul className="list-disc list-inside ml-2 space-y-0.5">
+                    <li><strong>Active (In Progress)</strong> — Currently filling out the form. They started but haven't submitted yet. No action needed unless they've been active for a long time without progressing.</li>
+                    <li><strong>Abandoned</strong> — Left mid-way and chose "Will come back later." Grouped by where they dropped off: Screening, Activity, Basics, Login, or Story.</li>
+                  </ul>
                   <p>Prioritize <strong>Screening</strong> drop-offs — these people got the furthest and are most likely to convert with a nudge.</p>
                   <p>Reach out via phone or message. When they return and submit, they'll move to the Submitted tab automatically.</p>
                 </div>
@@ -2246,8 +2260,9 @@ export default function StartYourClub() {
       {f && (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-5">
           <div className="bg-orange-50 border border-orange-200 rounded-xl p-4 cursor-pointer hover:border-orange-400 transition-colors" onClick={() => { setActiveSection('followup'); setStatusFilter(''); setSubsectionFilter(''); setMarketingFilter(false); }}>
-            <div className="text-2xl font-bold text-orange-700">{f.abandoned}</div>
+            <div className="text-2xl font-bold text-orange-700">{f.active_journey + f.abandoned}</div>
             <div className="text-xs font-medium text-orange-600 mt-1">Follow Up</div>
+            {f.active_journey > 0 && <div className="text-[10px] text-blue-500">{f.active_journey} active, {f.abandoned} abandoned</div>}
           </div>
           <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 cursor-pointer hover:border-emerald-400 transition-colors" onClick={() => { setActiveSection('submitted'); setStatusFilter(''); setSubsectionFilter(''); setMarketingFilter(false); }}>
             <div className="text-2xl font-bold text-emerald-700">{f.submitted + f.under_review}</div>
@@ -2552,7 +2567,7 @@ export default function StartYourClub() {
                 {activeSection === 'followup' && (
                   <>
                     <th className="px-4 py-3 text-left font-semibold text-slate-600">Progress</th>
-                    <th className="px-4 py-3 text-left font-semibold text-slate-600">Abandoned</th>
+                    <th className="px-4 py-3 text-left font-semibold text-slate-600">Last Seen</th>
                   </>
                 )}
                 {activeSection !== 'followup' && (
