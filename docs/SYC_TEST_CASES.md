@@ -1,1053 +1,535 @@
-# Start Your Club (SYC) — Comprehensive Test Cases
+# SYC — Screen-by-Screen Test Cases
 
-**Version:** 1.0
 **Date:** 2026-03-02
-**Total Test Cases:** 163
-**Covers:** Frontend UI, Backend API, Admin Dashboard, Status Machine, Analytics, Calendly, Flutter WebView
+**Covers:** Every user action on every screen, for every user type
 
 ---
 
-## How to Use This Document
+## User Types
 
-Each test case has:
-- **ID**: Unique identifier (e.g., TC-EXIT-01)
-- **Scenario**: What to test
-- **Preconditions**: Setup required before testing
-- **Steps**: Exact steps to execute
-- **Expected Result**: What should happen
-- **Pass/Fail**: Mark during testing
-
-**Status Legend:**
-- ACTIVE = User is filling out the form
-- ABANDONED = User clicked "Will come back later" (exit_type=interested)
-- NOT_INTERESTED = User clicked "Yes, I want to exit" or "Not sure, I'd like to join" (exit_type=not_interested)
-- SUBMITTED = User completed and submitted the application
-- UNDER_REVIEW = Admin opened the application for review
-- ON_HOLD = Admin put application on hold
-- INTERVIEW_PENDING = Admin selected for interview (Calendly link sent)
-- INTERVIEW_SCHEDULED = Calendly webhook confirmed booking
-- INTERVIEW_DONE = Admin marked interview as completed
-- SELECTED = Admin selected the applicant
-- CLUB_CREATED = All milestones completed (auto-transition from SELECTED)
-- REJECTED = Admin rejected at any stage
-
-**Current Flow:** Loading -> Story (3 slides + decision) -> Login -> OTP -> Name -> City/Activity -> Questionnaire -> Submit -> Progress
+| Code | Description |
+|------|-------------|
+| **NEW** | Fresh browser, no localStorage, no account |
+| **NEW-APP** | Same as NEW but opened from Flutter app (`?source=app`) |
+| **RET-ACTIVE** | Returning user, has token, app status=ACTIVE, no city/activity |
+| **RET-ACTIVE-Q** | Returning user, has token, app status=ACTIVE, has city+activity (mid-questionnaire) |
+| **RET-ABANDONED** | Returning user, has token, app status=ABANDONED |
+| **RET-NI** | Returning user, has token, app status=NOT_INTERESTED |
+| **RET-SUBMITTED** | Returning user, has token, app status=SUBMITTED |
+| **RET-REVIEW** | Returning user, has token, app status=UNDER_REVIEW |
+| **RET-INT-PEND** | Returning user, app status=INTERVIEW_PENDING |
+| **RET-INT-SCHED** | Returning user, app status=INTERVIEW_SCHEDULED |
+| **RET-SELECTED** | Returning user, app status=SELECTED |
+| **RET-REJECTED** | Returning user, app status=REJECTED |
+| **RET-CLUB** | Returning user, app status=CLUB_CREATED |
+| **RET-EXPIRED** | Returning user, has token but it's expired (401) |
+| **RET-CORRUPT** | Returning user, corrupted JSON in localStorage |
 
 ---
 
-# SECTION A: New User — Complete Happy Path
+# 1. LOADING SCREEN
 
-## TC-FLOW-01: Full new user journey (link source)
+No user interaction possible. Purely animated splash.
 
-**Preconditions:** Fresh browser, no localStorage, opened via direct link (not app)
-
-| Step | Action | Expected Result |
-|------|--------|----------------|
-| 1 | Open `/start-your-club` | Loading screen appears (Misfits logo animation) |
-| 2 | Wait ~2s | Loading completes, Story screen slide 0 appears |
-| 3 | Observe slide 0 | Pill fades in (400ms), then heading (1000ms), then subtext (1700ms), then tap hint (2500ms) |
-| 4 | Tap before heading appears (<1s) | Nothing happens (soft-gate blocks) |
-| 5 | Tap after heading appears (>1s) | Advances to slide 1 |
-| 6 | Tap through slide 1 (after gate) | Advances to slide 2 |
-| 7 | Tap through slide 2 (after gate) | Advances to Decision screen (slide 3) |
-| 8 | Decision screen shows two buttons | "Yes, I want to lead a club" and "Not sure, I'd like to join a club" visible |
-| 9 | Tap "Yes, I want to lead" | Login screen appears |
-| 10 | Enter valid phone number | OTP sent, OTP screen appears |
-| 11 | Enter correct OTP | Verification succeeds |
-| 12 | If user has no name | Name Capture screen appears |
-| 13 | Enter name "Test User" | Name saved to localStorage, proceeds |
-| 14 | City/Activity screen appears | City dropdown and activity list visible |
-| 15 | Select city and activity | Questionnaire screen appears |
-| 16 | Answer all required questions | Submit button becomes enabled |
-| 17 | Tap Submit | Application submitted, Progress screen appears |
-| 18 | Progress screen | Shows "Application submitted" with status badge |
-
-**Backend verification:**
-- `club_applications` row created with `status=SUBMITTED`, `source=link`, `submitted_at` set
-- `club_application_events` has transitions: (none)->ACTIVE, ACTIVE->SUBMITTED
-- `analytics_events` has: page_landed, form_submitted
+| ID | Action | User Type | Expected |
+|----|--------|-----------|----------|
+| L-01 | Wait 2.8s | NEW | Animation plays: miffy (200ms) → dots (700-1000ms) → cloud+text (1150ms) → fade out (2300ms) → transitions to Story |
+| L-02 | Wait 2.8s | RET-ACTIVE | Animation plays → `checkExistingUser(token)` → routes to CityActivity |
+| L-03 | Wait 2.8s | RET-ACTIVE-Q | Animation → `checkExistingUser` → routes to Questionnaire (city+activity prefilled) |
+| L-04 | Wait 2.8s | RET-ABANDONED | Animation → `checkExistingUser` → routes to CityActivity or Questionnaire (resume) |
+| L-05 | Wait 2.8s | RET-NI | Animation → `checkExistingUser` → routes to CityActivity or Questionnaire (resume) |
+| L-06 | Wait 2.8s | RET-SUBMITTED | Animation → `checkExistingUser` → routes to Progress |
+| L-07 | Wait 2.8s | RET-REVIEW | Animation → `checkExistingUser` → routes to Progress |
+| L-08 | Wait 2.8s | RET-INT-PEND | Animation → `checkExistingUser` → routes to Progress |
+| L-09 | Wait 2.8s | RET-INT-SCHED | Animation → `checkExistingUser` → routes to Progress |
+| L-10 | Wait 2.8s | RET-SELECTED | Animation → `checkExistingUser` → routes to Progress |
+| L-11 | Wait 2.8s | RET-REJECTED | Animation → `checkExistingUser` → routes to WelcomeBack |
+| L-12 | Wait 2.8s | RET-CLUB | Animation → `checkExistingUser` → routes to WelcomeBack |
+| L-13 | Wait 2.8s | RET-EXPIRED | Animation → `checkExistingUser` → 401 → clears localStorage → Story |
+| L-14 | Wait 2.8s | RET-CORRUPT | `loadUser()` catches JSON.parse error → null → Story |
+| L-15 | Android hardware back | Any | FlutterBridge close or `window.history.back()` |
 
 ---
 
-## TC-FLOW-02: Full new user journey (app source)
+# 2. STORY SCREEN (Slides 0-2 + Decision)
 
-**Preconditions:** Opened from Flutter app via WebView (`?source=app`)
+## Slide 0: "Imagine this"
 
-| Step | Action | Expected Result |
-|------|--------|----------------|
-| 1-17 | Same as TC-FLOW-01 | Same results |
-| 18 | Check DB | `source=app` in club_applications |
-| 19 | Back button on Progress | FlutterBridge.postMessage("close") called (closes WebView) |
+| ID | Action | Expected |
+|----|--------|----------|
+| S0-01 | Wait, observe | Pill "Imagine this" fades in at 400ms |
+| S0-02 | Wait more | Bold heading appears at 1000ms, `canTap` becomes true |
+| S0-03 | Wait more | Subtext "Pretty cool stuff! People love it..." appears at 1700ms |
+| S0-04 | Wait more | Tap hint + shake animation at 2500ms |
+| S0-05 | Tap before 1000ms (before heading) | **Nothing happens** — soft-gate active |
+| S0-06 | Tap after 1000ms | Advances to Slide 1 |
+| S0-07 | Tap back (<) button | Exit modal opens (`onClose`) — this is slide 0, no previous slide |
+| S0-08 | Tap X (close) button | Exit modal opens |
+| S0-09 | Android hardware back | Exit modal opens (same as back button on slide 0) |
 
----
+## Slide 1: "That's Your club."
 
-## TC-FLOW-03: New user — skip story
+| ID | Action | Expected |
+|----|--------|----------|
+| S1-01 | Arrive at slide 1 | `canTap` resets to false. Pill "That's Your club." animates in |
+| S1-02 | Tap before heading (< 1s) | Nothing — gate active |
+| S1-03 | Tap after heading | Advances to Slide 2 |
+| S1-04 | Tap back (<) | Goes to Slide 0 |
+| S1-05 | Tap X | Exit modal opens |
 
-**Preconditions:** Fresh browser, no localStorage
+## Slide 2: "And..."
 
-| Step | Action | Expected Result |
-|------|--------|----------------|
-| 1 | Open `/start-your-club`, wait for Story | Story screen appears |
-| 2 | Tap X (close) button on Story | Exit modal appears |
-| 3 | Tap "Skip to application form" | Modal closes, Login screen appears |
-| 4 | Complete login + OTP + name | City/Activity screen appears |
-| 5 | Check DB | `story_viewed` may be true (set by handleSkipStory) |
+| ID | Action | Expected |
+|----|--------|----------|
+| S2-01 | Arrive at slide 2 | `canTap` resets. Pill "And..." fades in |
+| S2-02 | Heading appears | "You made ₹40K last month." |
+| S2-03 | Subtext appears | "By putting in just 10 hours a week. On your terms." |
+| S2-04 | Tap after heading | Advances to Decision screen (slide 3) |
+| S2-05 | Tap back (<) | Goes to Slide 1 |
+| S2-06 | Tap X | Exit modal opens |
 
----
+## Decision Screen (Slide 3)
 
-## TC-FLOW-04: New user — "Not sure, I'd like to join"
+| ID | Action | User Type | Expected |
+|----|--------|-----------|----------|
+| SD-01 | Tap "Yes, I'd like to start a club" | NEW | `storyViewed=true`, goes to Login |
+| SD-02 | Tap "Yes, I'd like to start a club" | RET (auth) | `storyViewed=true`, goes to Login |
+| SD-03 | Tap "Not sure, I'd like to join" | NEW (link) | No API call, redirects to `misfits.net.in` |
+| SD-04 | Tap "Not sure, I'd like to join" | NEW-APP | No API call, FlutterBridge close |
+| SD-05 | Tap "Not sure, I'd like to join" | RET (auth, has app, link) | `exitApplication("not_interested")`, then `window.history.back()` |
+| SD-06 | Tap "Not sure, I'd like to join" | RET (auth, has app, app source) | `exitApplication("not_interested")`, then FlutterBridge `open_clubs` |
+| SD-07 | Tap back (<) | Any | Goes to Slide 2 |
+| SD-08 | Back from Decision → Slide 2 → back again | Any | Goes to Slide 1 (**NOT** exit modal — Bug #2 fix) |
 
-**Preconditions:** Fresh browser, no localStorage, unauthorized
+## Speed-through test
 
-| Step | Action | Expected Result |
-|------|--------|----------------|
-| 1 | Open `/start-your-club`, go through Story | Decision screen appears |
-| 2 | Tap "Not sure, I'd like to join a club" | Redirects to misfits.net.in (link source) or FlutterBridge closes (app source) |
-| 3 | Check DB | No application created (user was unauthorized) |
-
----
-
-# SECTION B: Exit Modal — All 4 Buttons x Auth States
-
-## Unauthorized User (no token, no application)
-
-### TC-EM-01: Continue — unauthorized
-
-| Step | Action | Expected Result |
-|------|--------|----------------|
-| 1 | Story screen -> tap X | Exit modal appears |
-| 2 | Tap "Continue" | Modal closes, returns to Story screen |
-| 3 | Check | No API call made, no DB changes |
-
-### TC-EM-02: Skip to application form — unauthorized
-
-| Step | Action | Expected Result |
-|------|--------|----------------|
-| 1 | Story screen -> tap X | Exit modal appears |
-| 2 | Tap "Skip to application form" | Modal closes, goes to Login screen |
-| 3 | Check | `storyViewed=true` set in state, no API call |
-
-### TC-EM-03: Will come back later — unauthorized
-
-| Step | Action | Expected Result |
-|------|--------|----------------|
-| 1 | Story screen -> tap X | Exit modal appears |
-| 2 | Tap "Will come back later" | Modal closes |
-| 3 | Check landing | Redirects to `misfits.net.in` (link) or FlutterBridge close (app) |
-| 4 | Check | No API call made, no DB changes |
-
-### TC-EM-04: Yes, I want to exit — unauthorized
-
-| Step | Action | Expected Result |
-|------|--------|----------------|
-| 1 | Story screen -> tap X | Exit modal appears |
-| 2 | Tap "Yes, I want to exit" | Modal closes |
-| 3 | Check landing | Redirects to `misfits.net.in` (link) or FlutterBridge close (app) |
-| 4 | Check | No API call made, no DB changes |
-
-## Authorized User (has token + active application)
-
-### TC-EM-05: Continue — authorized
-
-| Step | Action | Expected Result |
-|------|--------|----------------|
-| 1 | On Questionnaire screen -> tap X | Exit modal appears |
-| 2 | Tap "Continue" | Modal closes, returns to Questionnaire (exact question preserved) |
-| 3 | Check | No API call made, no DB changes |
-
-### TC-EM-06: Skip to application form — authorized
-
-| Step | Action | Expected Result |
-|------|--------|----------------|
-| 1 | Story screen (after WelcomeBack -> Start New) -> tap X | Exit modal appears |
-| 2 | Tap "Skip to application form" | Goes to Login screen (NOTE: Bug #3 — should skip Login for authenticated users) |
-| 3 | Check | No API call made |
-
-### TC-EM-07: Will come back later — authorized, from Story
-
-| Step | Action | Expected Result |
-|------|--------|----------------|
-| 1 | Story screen (authenticated) -> tap X | Exit modal appears |
-| 2 | Tap "Will come back later" | Modal closes |
-| 3 | Check API | `POST /exit` called with `type=interested`, `tracking={last_screen: "story", last_story_slide: N}` |
-| 4 | Check DB | `status=ABANDONED`, `exit_type=interested`, `abandoned_at=NOW()`, `last_screen=story`, `reminder_state` initialized |
-| 5 | Check landing | FlutterBridge close or `window.history.back()` |
-
-### TC-EM-08: Will come back later — authorized, from Questionnaire Q5
-
-| Step | Action | Expected Result |
-|------|--------|----------------|
-| 1 | Questionnaire Q5 of 12 -> tap X | Exit modal appears |
-| 2 | Tap "Will come back later" | Modal closes |
-| 3 | Check API | `POST /exit` with `type=interested`, tracking includes `last_question_index=5`, `last_question_section`, `total_questions=12` |
-| 4 | Check DB | `status=ABANDONED`, `exit_type=interested`, `last_screen=questionnaire`, `last_question_index=5`, `abandoned_at=NOW()`, `reminder_state` initialized |
-
-### TC-EM-09: Yes, I want to exit — authorized, from Story
-
-| Step | Action | Expected Result |
-|------|--------|----------------|
-| 1 | Story screen (authenticated) -> tap X | Exit modal appears |
-| 2 | Tap "Yes, I want to exit" | Modal closes |
-| 3 | Check API | `POST /exit` with `type=not_interested`, tracking data sent |
-| 4 | Check DB | `status=NOT_INTERESTED`, `exit_type=not_interested`, `last_screen=story`. NO `abandoned_at`, NO `reminder_state` |
-| 5 | Check landing | FlutterBridge close or `window.history.back()` |
-
-### TC-EM-10: Yes, I want to exit — authorized, from Questionnaire
-
-| Step | Action | Expected Result |
-|------|--------|----------------|
-| 1 | Questionnaire Q5 of 12 -> tap X | Exit modal appears |
-| 2 | Tap "Yes, I want to exit" | Modal closes |
-| 3 | Check DB | `status=NOT_INTERESTED`, `last_screen=questionnaire`, `last_question_index=5`, `last_question_section`, `total_questions=12`. NO `abandoned_at`, NO `reminder_state` |
-
-### TC-EM-11: Yes, I want to exit — authorized, API fails
-
-| Step | Action | Expected Result |
-|------|--------|----------------|
-| 1 | Disconnect network, then "Yes, I want to exit" | Modal closes |
-| 2 | Check | Error caught silently, user still redirected |
-| 3 | Check DB | No changes (app stays in previous status) |
-
-### TC-EM-12: Tap overlay (outside modal) — Bug #1 Fix
-
-| Step | Action | Expected Result |
-|------|--------|----------------|
-| 1 | Exit modal is open | Modal visible with overlay |
-| 2 | Tap the dark overlay area (outside the modal card) | **Nothing happens** — modal stays open |
-| 3 | Must use one of the 4 buttons to dismiss | Buttons work normally |
+| ID | Action | Expected |
+|----|--------|----------|
+| S-SPEED-01 | Tap as soon as enabled on each slide | Minimum ~3 seconds total (1s gate x 3 slides) |
+| S-SPEED-02 | Verify all 3 headings were visible | User saw the hook text for every slide |
 
 ---
 
-# SECTION C: Silent Exit (beforeunload)
+# 3. EXIT MODAL
 
-### TC-SILENT-01: Close tab during Story (authorized)
+Can appear from: Story (X button, back on slide 0), CityActivity (back, X), Questionnaire (X)
 
-| Step | Action | Expected Result |
-|------|--------|----------------|
-| 1 | Authenticated user on Story screen | Application exists in DB |
-| 2 | Close browser tab (Cmd+W) | `beforeunload` fires |
-| 3 | Check | keepalive `fetch` sends `PATCH /exit` with `{exit_type: "silent", last_screen: "story", last_story_slide: N}` |
-| 4 | Check DB | Backend processes silent exit (status update, NO reminder_state for silent) |
+## Button: "Continue"
 
-### TC-SILENT-02: Close tab during Questionnaire (authorized)
+| ID | Screen | User Type | Expected |
+|----|--------|-----------|----------|
+| EM-01 | Story | Any | Modal closes, returns to exact story slide |
+| EM-02 | CityActivity | Any | Modal closes, returns to CityActivity (selection preserved) |
+| EM-03 | Questionnaire | Any | Modal closes, returns to exact question |
 
-| Step | Action | Expected Result |
-|------|--------|----------------|
-| 1 | Authenticated user on Questionnaire Q7 | Application exists |
-| 2 | Close tab | `beforeunload` fires |
-| 3 | Check payload | `{exit_type: "silent", last_screen: "questionnaire", last_question_index: 7, last_question_section: "...", total_questions: N}` |
+## Button: "Skip to application form"
 
-### TC-SILENT-03: Close tab on Progress screen (authorized)
+| ID | User Type | Expected |
+|----|-----------|----------|
+| EM-04 | NEW (no token) | `storyViewed=true`, goes to Login |
+| EM-05 | RET (has token) | `storyViewed=true`, calls `handlePostAuth(user)` directly → routes by app status (skips Login) |
 
-| Step | Action | Expected Result |
-|------|--------|----------------|
-| 1 | Authenticated user on Progress screen | Application SUBMITTED |
-| 2 | Close tab | `beforeunload` fires but **skips** API call (Progress is excluded) |
-| 3 | Check | No exit API call made |
+## Button: "Will come back later"
 
-### TC-SILENT-04: Close tab after explicit exit (no double-fire)
+| ID | User Type | Expected |
+|----|-----------|----------|
+| EM-06 | NEW (no token, link) | No API call. Redirect to `misfits.net.in` |
+| EM-07 | NEW (no token, app) | No API call. FlutterBridge close |
+| EM-08 | RET (auth, has app, link) | API: `exitApplication("interested", tracking)`. DB: status=ABANDONED, exit_type=interested, abandoned_at set, reminder_state initialized. Landing: `window.history.back()` |
+| EM-09 | RET (auth, has app, app) | Same API call. Landing: FlutterBridge close |
+| EM-10 | RET (auth, API fails) | Error caught silently. Still redirects. DB unchanged. |
 
-| Step | Action | Expected Result |
-|------|--------|----------------|
-| 1 | User clicks "Yes, I want to exit" | `hasExited.current = true` |
-| 2 | Page unloads (redirect) | `beforeunload` fires but `hasExited.current` is true → skips |
-| 3 | Check | Only ONE exit API call made (not two) |
+## Button: "Yes, I want to exit"
 
-### TC-SILENT-05: Close tab — unauthorized
+| ID | User Type | Expected |
+|----|-----------|----------|
+| EM-11 | NEW (no token, link) | No API call. Redirect to `misfits.net.in` |
+| EM-12 | NEW (no token, app) | No API call. FlutterBridge close |
+| EM-13 | RET (auth, has app, link) | API: `exitApplication("not_interested", tracking)`. DB: status=NOT_INTERESTED, exit_type=not_interested. NO abandoned_at, NO reminder_state. Landing: `window.history.back()` |
+| EM-14 | RET (auth, has app, app) | Same API call. Landing: FlutterBridge close |
+| EM-15 | RET (auth, API fails) | Error caught silently. Still redirects. |
 
-| Step | Action | Expected Result |
-|------|--------|----------------|
-| 1 | No token in localStorage | User on Story screen |
-| 2 | Close tab | `beforeunload` checks `loadUser()` → null → skips |
-| 3 | Check | No API call made |
+## Tracking data sent with exit
 
----
+| ID | Exit from screen | Tracking payload |
+|----|-----------------|------------------|
+| EM-T1 | Story slide 1 | `{last_screen: "story", last_story_slide: 2}` (1-indexed) |
+| EM-T2 | CityActivity | `{last_screen: "city_activity"}` |
+| EM-T3 | Questionnaire Q5 of 12 | `{last_screen: "questionnaire", last_question_index: 5, last_question_section: "motivation", total_questions: 12}` |
 
-# SECTION D: Story Navigation & Soft-Gate
+## Overlay tap
 
-### TC-STORY-01: Full stagger reveal sequence
-
-| Step | Action | Expected Result |
-|------|--------|----------------|
-| 1 | Land on Story slide 0 | Screen is blank/dark initially |
-| 2 | Wait 400ms | Pill fades in ("Imagine this" or similar) |
-| 3 | Wait 1000ms | Bold heading appears (fade in + slide up) |
-| 4 | Wait 1700ms | Subtext appears (fade in + slide up, lighter color) |
-| 5 | Wait 2500ms | "Tap anywhere to continue" hint appears + shake animation |
-
-### TC-STORY-02: Soft-gate blocks tap before heading
-
-| Step | Action | Expected Result |
-|------|--------|----------------|
-| 1 | Slide 0 appears | Pill visible but heading not yet |
-| 2 | Tap at 500ms (before heading) | Nothing happens — `canTap=false` |
-| 3 | Wait until 1000ms+ | Heading appears, `canTap=true` |
-| 4 | Tap | Advances to slide 1 |
-
-### TC-STORY-03: Soft-gate resets on new slide
-
-| Step | Action | Expected Result |
-|------|--------|----------------|
-| 1 | Advance from slide 0 to slide 1 | `canTap` resets to `false` |
-| 2 | Immediately tap | Nothing happens |
-| 3 | Wait 1000ms for heading | `canTap=true`, tap works |
-
-### TC-STORY-04: Minimum time through all 3 story slides
-
-| Step | Action | Expected Result |
-|------|--------|----------------|
-| 1 | Tap as soon as enabled each slide | 3 slides x ~1s gate = ~3 seconds minimum |
-| 2 | All 3 headings were visible | User saw the hook text for each slide |
-
-### TC-STORY-05: Back button on slide 0
-
-| Step | Action | Expected Result |
-|------|--------|----------------|
-| 1 | On slide 0, tap back (<) | `onClose()` fires → exit modal appears |
-
-### TC-STORY-06: Back button on slide 1
-
-| Step | Action | Expected Result |
-|------|--------|----------------|
-| 1 | On slide 1, tap back (<) | Goes to slide 0 |
-
-### TC-STORY-07: Back button on slide 2
-
-| Step | Action | Expected Result |
-|------|--------|----------------|
-| 1 | On slide 2, tap back (<) | Goes to slide 1 |
-
-### TC-STORY-08: Back from Decision screen
-
-| Step | Action | Expected Result |
-|------|--------|----------------|
-| 1 | On Decision screen (slide 3), tap back (<) | Goes to slide 2 |
-
-### TC-STORY-09: Back from slide 2 after returning from Decision (Bug #2 fix)
-
-| Step | Action | Expected Result |
-|------|--------|----------------|
-| 1 | Go to Decision screen (slide 3) | Decision visible |
-| 2 | Tap back | Goes to slide 2 |
-| 3 | Tap back again | **Goes to slide 1** (NOT exit modal) |
-
-### TC-STORY-10: X (close) button during soft-gate
-
-| Step | Action | Expected Result |
-|------|--------|----------------|
-| 1 | During soft-gate (heading not yet visible) | X button in header |
-| 2 | Tap X | Exit modal appears (X is NOT gated) |
-
-### TC-STORY-11: Back button during soft-gate
-
-| Step | Action | Expected Result |
-|------|--------|----------------|
-| 1 | During soft-gate on slide 1 | Back button visible |
-| 2 | Tap back | Goes to slide 0 (back is NOT gated) |
+| ID | Action | Expected |
+|----|--------|----------|
+| EM-16 | Tap dark overlay outside modal card | **Nothing happens** — modal stays open. Must use a button. |
 
 ---
 
-# SECTION E: Returning User Flows
+# 4. SILENT EXIT (beforeunload)
 
-### TC-RETURN-01: Returning user — ACTIVE with city+activity
-
-**Preconditions:** User has token in localStorage, app status=ACTIVE, city and activity saved
-
-| Step | Action | Expected Result |
-|------|--------|----------------|
-| 1 | Open `/start-your-club` | Loading screen |
-| 2 | Loading completes | `checkExistingUser` called with stored token |
-| 3 | API returns ACTIVE app with city+activity | Goes directly to Questionnaire (skips Story, Login, CityActivity) |
-| 4 | Previous answers prefilled | Questionnaire data from `application.questionnaire_data` |
-
-### TC-RETURN-02: Returning user — ACTIVE without city/activity
-
-**Preconditions:** User has token, app status=ACTIVE, no city/activity saved
-
-| Step | Action | Expected Result |
-|------|--------|----------------|
-| 1 | Open `/start-your-club` | Loading -> CityActivity screen |
-
-### TC-RETURN-03: Returning user — ABANDONED (interested)
-
-**Preconditions:** User previously exited with "Will come back later"
-
-| Step | Action | Expected Result |
-|------|--------|----------------|
-| 1 | Open `/start-your-club` | Loading screen |
-| 2 | `checkExistingUser` returns ABANDONED app | Resumes: city+activity exists → Questionnaire, else → CityActivity |
-| 3 | Check DB on resume | Backend transitions ABANDONED → ACTIVE when questionnaire endpoint called |
-
-### TC-RETURN-04: Returning user — NOT_INTERESTED
-
-**Preconditions:** User previously exited with "Yes, I want to exit"
-
-| Step | Action | Expected Result |
-|------|--------|----------------|
-| 1 | Open `/start-your-club` | Loading screen |
-| 2 | `checkExistingUser` returns NOT_INTERESTED app | Resumes: city+activity exists → Questionnaire, else → CityActivity |
-| 3 | Check DB | NOT_INTERESTED → ACTIVE on resume |
-
-### TC-RETURN-05: Returning user — SUBMITTED
-
-| Step | Action | Expected Result |
-|------|--------|----------------|
-| 1 | Open `/start-your-club` | Loading -> Progress screen |
-| 2 | Progress shows | "Application submitted" status, timeline |
-
-### TC-RETURN-06: Returning user — UNDER_REVIEW / INTERVIEW_PENDING / INTERVIEW_SCHEDULED / SELECTED
-
-| Step | Action | Expected Result |
-|------|--------|----------------|
-| 1 | Open `/start-your-club` | Loading -> Progress screen (all non-terminal, non-journey statuses) |
-
-### TC-RETURN-07: Returning user — REJECTED
-
-| Step | Action | Expected Result |
-|------|--------|----------------|
-| 1 | Open `/start-your-club` | Loading -> WelcomeBack screen |
-| 2 | WelcomeBack shows | Past application listed, "Start New" button available |
-
-### TC-RETURN-08: Returning user — CLUB_CREATED
-
-| Step | Action | Expected Result |
-|------|--------|----------------|
-| 1 | Open `/start-your-club` | Loading -> WelcomeBack screen |
-| 2 | WelcomeBack shows | Past application listed as completed |
-
-### TC-RETURN-09: Returning user — expired token (401)
-
-| Step | Action | Expected Result |
-|------|--------|----------------|
-| 1 | Open `/start-your-club` with expired JWT in localStorage | Loading screen |
-| 2 | `checkExistingUser` gets 401 | localStorage cleared, user set to null |
-| 3 | Redirect | Story screen (fresh start) |
-
-### TC-RETURN-10: WelcomeBack — Start New
-
-| Step | Action | Expected Result |
-|------|--------|----------------|
-| 1 | On WelcomeBack screen, tap "Start New" | All state resets: application=null, storyViewed=false, city="", activity="" |
-| 2 | Screen | Story screen (starts fresh journey) |
+| ID | Screen | User Type | Expected |
+|----|--------|-----------|----------|
+| SX-01 | Story | NEW (no token) | `loadUser()` returns null → skip, no API call |
+| SX-02 | Story | RET (auth, has app) | keepalive fetch: `PATCH /exit` with `{exit_type: "silent", last_screen: "story", last_story_slide: N}` |
+| SX-03 | Questionnaire Q7 | RET (auth) | keepalive fetch with question tracking |
+| SX-04 | CityActivity | RET (auth) | keepalive fetch with `{exit_type: "silent", last_screen: "city_activity"}` |
+| SX-05 | Login | RET (auth, has app) | keepalive fetch with `{last_screen: "login"}` |
+| SX-06 | Progress | Any | **Skipped** — Progress is excluded from silent exit |
+| SX-07 | WelcomeBack | Any | **Skipped** — excluded |
+| SX-08 | ThankYou | Any | **Skipped** — excluded |
+| SX-09 | Loading | Any | **Skipped** — excluded |
+| SX-10 | After explicit exit | Any | `hasExited.current = true` → **Skipped** — no double-fire |
 
 ---
 
-# SECTION F: Back Button Navigation (All Screens)
+# 5. LOGIN SCREEN
 
-### TC-NAV-01: Back on Login
-
-| Step | Action | Expected |
-|------|--------|---------|
-| 1 | Login screen, tap back | Goes to Story |
-
-### TC-NAV-02: Back on OTP
-
-| Step | Action | Expected |
-|------|--------|---------|
-| 1 | OTP screen, tap back / "Change phone" | Goes to Login |
-
-### TC-NAV-03: Back on Name
-
-| Step | Action | Expected |
-|------|--------|---------|
-| 1 | Name screen, tap back | Goes to OTP |
-
-### TC-NAV-04: Back on CityActivity
-
-| Step | Action | Expected |
-|------|--------|---------|
-| 1 | CityActivity screen, tap back | Goes to Name |
-
-### TC-NAV-05: Back on Questionnaire
-
-| Step | Action | Expected |
-|------|--------|---------|
-| 1 | Questionnaire screen, tap back | Goes to CityActivity |
-
-### TC-NAV-06: Back on Progress / WelcomeBack / ThankYou / Loading
-
-| Step | Action | Expected |
-|------|--------|---------|
-| 1 | Any terminal screen, tap back | FlutterBridge.postMessage("close") or `window.history.back()` |
-
-### TC-NAV-07: Android hardware back on Story
-
-| Step | Action | Expected |
-|------|--------|---------|
-| 1 | Story screen, press Android hardware back | Story/Questionnaire handle their own internal back (no action from main handler) |
-
-### TC-NAV-08: Android hardware back on Login
-
-| Step | Action | Expected |
-|------|--------|---------|
-| 1 | Login screen, press hardware back | Goes to Story |
-
-### TC-NAV-09: Android hardware back on root screens
-
-| Step | Action | Expected |
-|------|--------|---------|
-| 1 | Loading/Progress/WelcomeBack/ThankYou, press hardware back | FlutterBridge.postMessage("close") or `window.history.back()` |
+| ID | Action | Expected |
+|----|--------|----------|
+| LG-01 | Enter valid 10-digit number, tap Continue | `sendOtp(phone)` called, goes to OTP screen |
+| LG-02 | Enter "7597665166" | Accepts, sends OTP |
+| LG-03 | Enter "+917597665166" | Strips +91, sends "7597665166" |
+| LG-04 | Enter "07597665166" | Strips leading 0, sends "7597665166" |
+| LG-05 | Enter "759766" (< 10 digits) | Error: "Please enter a valid 10-digit number" |
+| LG-06 | Enter "abcdefghij" | All non-digits stripped → empty → error on submit |
+| LG-07 | Enter number, API fails | Error message shown, stays on Login |
+| LG-08 | Tap back | Goes to Story |
+| LG-09 | Button text while loading | Shows "Sending..." and is disabled |
+| LG-10 | Android hardware back | Goes to Story |
 
 ---
 
-# SECTION G: Input Validation
+# 6. OTP SCREEN
 
-### TC-INPUT-01: Login — invalid phone number
-
-| Step | Action | Expected |
-|------|--------|---------|
-| 1 | Enter "123" in phone field | Error shown, cannot proceed |
-
-### TC-INPUT-02: OTP — wrong code
-
-| Step | Action | Expected |
-|------|--------|---------|
-| 1 | Enter incorrect OTP | Error message shown, stays on OTP screen |
-
-### TC-INPUT-03: Name — empty field
-
-| Step | Action | Expected |
-|------|--------|---------|
-| 1 | Leave name empty, try to submit | Submit disabled or error shown |
-
-### TC-INPUT-04: City — not selected
-
-| Step | Action | Expected |
-|------|--------|---------|
-| 1 | Try to proceed without selecting city | Submit disabled |
-
-### TC-INPUT-05: Activity — not selected
-
-| Step | Action | Expected |
-|------|--------|---------|
-| 1 | Try to proceed without selecting activity | Submit disabled |
-
-### TC-INPUT-06: Questionnaire — skip required question
-
-| Step | Action | Expected |
-|------|--------|---------|
-| 1 | Skip a required question, try to proceed | Cannot advance past that question |
+| ID | Action | Expected |
+|----|--------|----------|
+| OTP-01 | Enter correct 6-digit OTP | Auto-validates when 6th digit entered. Goes to Name (new user) or handlePostAuth (existing user with name) |
+| OTP-02 | Enter wrong OTP | Error: "The code you entered is incorrect. Please try again." |
+| OTP-03 | Paste 6-digit OTP | All 6 inputs filled, auto-validates |
+| OTP-04 | Enter 5 digits, tap Verify | Button disabled (needs 6 digits) |
+| OTP-05 | Backspace on empty input | Focus moves to previous input |
+| OTP-06 | Resend OTP (timer at 0) | `sendOtp(phone)` called, timer resets to 30s, new nonce stored |
+| OTP-07 | Resend OTP (timer > 0) | Button disabled, shows countdown |
+| OTP-08 | Tap back / "Change phone" | Goes to Login |
+| OTP-09 | Phone display | Shows masked: "+91 75XXXXXX66" |
+| OTP-10 | Enter key after 6 digits | Triggers validation |
+| OTP-11 | Android hardware back | Goes to Login |
 
 ---
 
-# SECTION H: Status Machine Transitions
+# 7. NAME CAPTURE SCREEN
 
-## Applicant-Triggered
-
-| ID | From | To | Trigger | DB Writes |
-|----|------|----|---------|-----------|
-| TC-SM-01 | (none) | ACTIVE | `POST /start` | CreateClubApplication + Analytics("page_landed") |
-| TC-SM-02 | ACTIVE | ABANDONED | Exit type=interested | Status event + UpdateStatus + exit tracking + abandoned_at + reminder_state |
-| TC-SM-03 | ACTIVE | NOT_INTERESTED | Exit type=not_interested | Status event + UpdateStatus + exit tracking (NO abandoned_at, NO reminder_state) |
-| TC-SM-04 | ACTIVE | SUBMITTED | `POST /submit` | Status event + UpdateStatus + submitted_at + Analytics("form_submitted") |
-| TC-SM-05 | ABANDONED | ACTIVE | User returns, calls questionnaire | Status event (ABANDONED->ACTIVE) + UpdateStatus |
-| TC-SM-06 | NOT_INTERESTED | ACTIVE | User returns, calls questionnaire | Status event (NOT_INTERESTED->ACTIVE) + UpdateStatus |
-
-## Admin-Triggered
-
-| ID | From | To | Trigger | Requires |
-|----|------|----|---------|----------|
-| TC-SM-07 | SUBMITTED | UNDER_REVIEW | Admin opens for review | - |
-| TC-SM-08 | UNDER_REVIEW | INTERVIEW_PENDING | Admin: select_interview | 5-dim screening ratings |
-| TC-SM-09 | UNDER_REVIEW | REJECTED | Admin: reject | rejection_reason |
-| TC-SM-10 | UNDER_REVIEW | ON_HOLD | Admin: on_hold | - |
-| TC-SM-11 | ON_HOLD | INTERVIEW_PENDING | Admin: select_interview | 5-dim ratings |
-| TC-SM-12 | ON_HOLD | REJECTED | Admin: reject | rejection_reason |
-| TC-SM-13 | INTERVIEW_DONE | SELECTED | Admin: select | split_template_id |
-| TC-SM-14 | INTERVIEW_DONE | REJECTED | Admin: reject | rejection_reason |
-| TC-SM-15 | SELECTED | CLUB_CREATED | marketing_launched=true (auto) | all milestones done |
-| TC-SM-16 | Any non-terminal | REJECTED | Admin: blanket reject | rejection_reason |
-
-## System-Triggered
-
-| ID | From | To | Trigger |
-|----|------|----|---------|
-| TC-SM-17 | INTERVIEW_PENDING | INTERVIEW_SCHEDULED | Calendly webhook `invitee.created` |
-| TC-SM-18 | INTERVIEW_SCHEDULED | INTERVIEW_PENDING | Calendly webhook `invitee.canceled` |
-
-## Invalid Transitions (Should Fail)
-
-| ID | From | To | Expected |
-|----|------|----|----------|
-| TC-SM-19 | REJECTED | anything | 400 error — terminal status |
-| TC-SM-20 | CLUB_CREATED | anything | 400 error — terminal status |
-| TC-SM-21 | ACTIVE | SELECTED | 400 error — invalid transition |
-| TC-SM-22 | SUBMITTED | CLUB_CREATED | 400 error — invalid transition |
+| ID | Action | Expected |
+|----|--------|----------|
+| NC-01 | Enter first name "Saurabh", tap Continue | Name saved to localStorage + sent to backend via `startApplication({name: "Saurabh"})` |
+| NC-02 | Enter first + last name "Saurabh Sharma" | Combined as "Saurabh Sharma", saved and sent |
+| NC-03 | Leave first name empty, tap Continue | Error: first name required |
+| NC-04 | Enter only spaces | Trimmed → empty → error |
+| NC-05 | Last name empty | Allowed — last name is optional |
+| NC-06 | Tap back | Goes to OTP |
+| NC-07 | Android hardware back | Goes to OTP |
 
 ---
 
-# SECTION I: Questionnaire-Specific
+# 8. CITY/ACTIVITY SCREEN
 
-### TC-Q-01: Save + restore partial answers
+## City Step
 
-| Step | Action | Expected |
-|------|--------|---------|
-| 1 | Answer Q1-Q5, then exit (ABANDONED) | `saveQuestionnaire` called, `data` JSONB saved |
-| 2 | Return later | Questionnaire pre-fills answers from `application.questionnaire_data` |
+| ID | Action | Expected |
+|----|--------|----------|
+| CA-01 | Screen loads | Dropdown is **collapsed** (no autoFocus) |
+| CA-02 | Tap search input | Dropdown opens, shows cities |
+| CA-03 | Type "mum" | Filters to "Mumbai" |
+| CA-04 | Type "indore" (lowercase) | Shows "Indore" match. **No** "Add" option (case-insensitive match) |
+| CA-05 | Type "Sikar" (not in list) | Shows: `My city is not listed — use "Sikar"` |
+| CA-06 | Type "xyz" (zero matches) | Shows: `My city is not listed — use "xyz"` (Add shows even with 0 matches) |
+| CA-07 | Select a city from dropdown | Input shows city name, dropdown closes, Next button activates |
+| CA-08 | Select custom city via "not listed" | Custom city name used |
+| CA-09 | Tap Next without selecting city | Button disabled |
+| CA-10 | Tap Next with city selected | Animates to Activity step |
+| CA-11 | Tap back (<) | **Exit modal opens** (not Name/OTP) |
+| CA-12 | Tap X (close) | Exit modal opens |
+| CA-13 | Android hardware back | **Exit modal opens** (not Name) |
+| CA-14 | Cities API fails | Falls back to CITIES_FALLBACK (15 hardcoded cities) |
 
-### TC-Q-02: Change city/activity after partial questionnaire
+## Activity Step
 
-| Step | Action | Expected |
-|------|--------|---------|
-| 1 | Answer Q1-Q5, go back to CityActivity | CityActivity screen |
-| 2 | Select different activity | New activity's questions shown (different per activity) |
+| ID | Action | Expected |
+|----|--------|----------|
+| CA-15 | Screen loads | Dropdown collapsed |
+| CA-16 | Tap search input | Dropdown opens, shows 23 activities with emojis |
+| CA-17 | Type "board" | Filters to "Boardgaming" |
+| CA-18 | Type "boardgaming" (exact match) | Shows match, **no** Add option |
+| CA-19 | Type "Yoga" (not in list) | Shows: `My activity is not listed — use "Yoga"` |
+| CA-20 | Select activity | Input shows activity, dropdown closes, Next activates |
+| CA-21 | Tap Next with activity selected | Calls `onSubmit(city, cleanActivity)`. Activity is lowercased + emoji-stripped. Goes to Questionnaire |
+| CA-22 | Tap Next without selection | Button disabled |
+| CA-23 | Tap back (<) | Goes back to City step (NOT exit modal) |
+| CA-24 | Tap X | Exit modal opens |
 
-### TC-Q-03: Submit with all required fields
+## Progress Bar
 
-| Step | Action | Expected |
-|------|--------|---------|
-| 1 | Complete all questions | Submit button enabled |
-| 2 | Tap submit | `submitApplication` succeeds, status=SUBMITTED |
-
-### TC-Q-04: Auto-save on each answer
-
-| Step | Action | Expected |
-|------|--------|---------|
-| 1 | Answer each question | `saveQuestionnaire` called after each answer change |
-| 2 | Network failure during auto-save | Silent fail, user continues |
-
-### TC-Q-05: Submit with null application (edge case)
-
-| Step | Action | Expected |
-|------|--------|---------|
-| 1 | Application creation failed earlier, user reaches questionnaire end | `handleQuestionnaireComplete` tries `startApplication` first |
-| 2 | If 409 conflict | Uses existing application |
-| 3 | If total failure | Alert shown, back to CityActivity |
-
----
-
-# SECTION J: Admin Dashboard
-
-## Tab Structure
-
-| Tab | Statuses | Subsections |
-|-----|----------|-------------|
-| Follow Up | ACTIVE, ABANDONED | Active (in-progress), Screening (last_screen=questionnaire), Engagement (all others) |
-| Submitted | SUBMITTED, UNDER_REVIEW | New (SUBMITTED), Reviewing (UNDER_REVIEW) |
-| Interview Phase | INTERVIEW_PENDING, INTERVIEW_SCHEDULED, INTERVIEW_DONE, ON_HOLD | Pending, Scheduled, Done, On Hold |
-| Selected | SELECTED, CLUB_CREATED | Onboarding (SELECTED), Club Created (CLUB_CREATED) |
-| Dropped | NOT_INTERESTED, REJECTED | Not Interested, Rejected |
-
-### TC-ADMIN-01: Follow Up tab shows ACTIVE users
-
-| Step | Action | Expected |
-|------|--------|---------|
-| 1 | Open admin dashboard, go to Follow Up tab | Shows ACTIVE and ABANDONED applications |
-| 2 | "Last Seen" column for ACTIVE app | Shows `updated_at` + "in progress" badge (blue) |
-| 3 | "Last Seen" column for ABANDONED (interested) app | Shows `abandoned_at` + "will return" badge (orange) |
-| 4 | "Last Seen" column for ABANDONED (silent) app | Shows `abandoned_at` or `updated_at` + "silent" badge (gray) |
-
-### TC-ADMIN-02: Funnel card for Follow Up
-
-| Step | Action | Expected |
-|------|--------|---------|
-| 1 | Check Follow Up tab header | Shows count = active_journey + abandoned |
-| 2 | Tooltip/breakdown | Shows individual counts for active and abandoned |
-
-### TC-ADMIN-03: Submitted tab — screening workflow
-
-| Step | Action | Expected |
-|------|--------|---------|
-| 1 | Click on a SUBMITTED application | Detail view opens |
-| 2 | Rate on 5 screening dimensions (1-5 each) | Ratings saved as `screening_ratings` JSONB |
-| 3 | Click "Select for Interview" | Status → INTERVIEW_PENDING |
-| 4 | Click "Reject" | Status → REJECTED, requires rejection_reason |
-| 5 | Click "Put on Hold" | Status → ON_HOLD |
-
-### TC-ADMIN-04: Interview phase — Calendly integration
-
-| Step | Action | Expected |
-|------|--------|---------|
-| 1 | App is INTERVIEW_PENDING | Calendly link available |
-| 2 | Applicant books via Calendly | Webhook fires, status → INTERVIEW_SCHEDULED |
-| 3 | Check DB | `interview_scheduled_at`, `calendly_event_uri`, `calendly_meet_link` saved |
-| 4 | Applicant cancels | Webhook fires, status → INTERVIEW_PENDING, calendly fields cleared |
-
-### TC-ADMIN-05: Selected tab — milestones
-
-| Step | Action | Expected |
-|------|--------|---------|
-| 1 | App is SELECTED | Milestone toggles visible |
-| 2 | Toggle first_call_done | Saved, status stays SELECTED |
-| 3 | Toggle venue_sorted | Saved, status stays SELECTED |
-| 4 | Toggle marketing_launched (all prior done) | Auto-transition: SELECTED → CLUB_CREATED |
-| 5 | Toggle marketing_launched (first_call NOT done) | Milestone saved, NO auto-transition |
-
-### TC-ADMIN-06: Dropped tab — NOT_INTERESTED with tracking
-
-| Step | Action | Expected |
-|------|--------|---------|
-| 1 | View NOT_INTERESTED app | `last_screen` and tracking columns visible |
-| 2 | Check `abandoned_at` | Should be NULL (only ABANDONED gets this) |
-| 3 | Check `reminder_state` | Should be NULL (only ABANDONED gets this) |
-
-### TC-ADMIN-07: Info modal
-
-| Step | Action | Expected |
-|------|--------|---------|
-| 1 | Click Info button | Modal opens with "Status Definitions" tab |
-| 2 | All 12 statuses listed | Correct badges, grouped into 3 layers |
-| 3 | Switch to "Dashboard SOP" tab | 5 numbered steps with instructions |
-| 4 | Close via X or overlay | Modal closes |
-
-### TC-ADMIN-08: Search and filters
-
-| Step | Action | Expected |
-|------|--------|---------|
-| 1 | Search by applicant name | Matching rows shown |
-| 2 | Filter by city | Only matching city apps shown |
-| 3 | Filter by activity | Only matching activity apps shown |
-| 4 | Combine filters | Intersection of all filters |
-| 5 | Clear all filters | All apps in current tab shown |
-| 6 | Switch tabs | Filters reset |
-
-### TC-ADMIN-09: Bulk archive
-
-| Step | Action | Expected |
-|------|--------|---------|
-| 1 | Select multiple apps, click Archive | All selected archived |
-| 2 | Try to archive ON_HOLD app | ON_HOLD is protected — excluded or error |
-| 3 | Empty selection, click Archive | No action |
-
-### TC-ADMIN-10: Add lead
-
-| Step | Action | Expected |
-|------|--------|---------|
-| 1 | Click "Add Lead" | Form appears (name + phone + city) |
-| 2 | Fill and submit | New application created with `admin_created=true`, status ACTIVE |
-
-### TC-ADMIN-11: Timeline
-
-| Step | Action | Expected |
-|------|--------|---------|
-| 1 | View app with multiple transitions | All transitions shown chronologically |
-| 2 | Exit events | Show "ACTIVE → NOT_INTERESTED (applicant)" format |
-| 3 | Admin actions | Show "SUBMITTED → UNDER_REVIEW (admin)" format |
-| 4 | Calendly events | Show "INTERVIEW_PENDING → INTERVIEW_SCHEDULED (system)" format |
+| ID | Action | Expected |
+|----|--------|----------|
+| CA-25 | City step | Progress shows ~10% (1 of ~10 total steps) |
+| CA-26 | Activity step | Progress shows ~20% (2 of ~10 total steps) |
 
 ---
 
-# SECTION K: Calendly Webhook Tests
+# 9. QUESTIONNAIRE SCREEN
 
-### TC-CAL-01: invitee.created — valid
+## Loading State
 
-| Step | Action | Expected |
-|------|--------|---------|
-| 1 | Calendly fires `invitee.created` webhook | Backend receives POST |
-| 2 | App is INTERVIEW_PENDING | Status → INTERVIEW_SCHEDULED |
-| 3 | DB | `interview_scheduled_at`, `calendly_event_uri`, `calendly_invitee_uri`, `calendly_meet_link` saved |
+| ID | Action | Expected |
+|----|--------|----------|
+| Q-01 | Screen loads | Shows "Loading questions..." while fetching |
+| Q-02 | Config loaded (43 questions for boardgaming) | Shows first question with animation |
+| Q-03 | Config API fails | Shows "No questions configured yet" + Continue button |
+| Q-04 | No questions for activity | Shows Continue button → calls `onComplete({})` |
 
-### TC-CAL-02: invitee.canceled — valid
+## Question Types
 
-| Step | Action | Expected |
-|------|--------|---------|
-| 1 | Calendly fires `invitee.canceled` webhook | Backend receives POST |
-| 2 | App is INTERVIEW_SCHEDULED | Status → INTERVIEW_PENDING |
-| 3 | DB | Calendly fields cleared |
+### MCQ (Multiple Choice)
 
-### TC-CAL-03: Webhook for non-existent app
+| ID | Action | Expected |
+|----|--------|----------|
+| Q-05 | Options displayed | Grid of option buttons |
+| Q-06 | Tap an option | Option highlighted, **auto-advances after 300ms** |
+| Q-07 | Tap different option before 300ms | New option selected, timer resets |
+| Q-08 | Last question: tap option | Auto-calls `onComplete(allAnswers)` after 300ms |
+| Q-09 | No Next button visible | MCQ auto-advances — no next button needed |
 
-| Step | Action | Expected |
-|------|--------|---------|
-| 1 | Webhook fires with unknown app ID | 404 error, no DB changes |
+### Yes/No
 
-### TC-CAL-04: Duplicate webhook
+| ID | Action | Expected |
+|----|--------|----------|
+| Q-10 | Two buttons shown | "Yes" and "No" |
+| Q-11 | Tap Yes or No | Selected, auto-advances after 300ms |
 
-| Step | Action | Expected |
-|------|--------|---------|
-| 1 | Same `invitee.created` fires twice | Second is idempotent — already in INTERVIEW_SCHEDULED |
+### Text Input
 
-### TC-CAL-05: Webhook missing required fields
+| ID | Action | Expected |
+|----|--------|----------|
+| Q-12 | Single-line input shown | Next button visible at bottom |
+| Q-13 | Type text | Answer stored in `answers[pk]` |
+| Q-14 | Required + empty: tap Next | Button disabled |
+| Q-15 | Required + filled: tap Next | Advances to next question |
+| Q-16 | Optional + empty: tap Next | Advances (allowed) |
 
-| Step | Action | Expected |
-|------|--------|---------|
-| 1 | Webhook payload missing event URI | 400 error, no DB changes |
+### Textarea (Long Text)
 
----
+| ID | Action | Expected |
+|----|--------|----------|
+| Q-17 | Multi-line textarea shown | Hint: "Most strong responses are 100+ words" |
+| Q-18 | Type long answer | Answer stored |
+| Q-19 | Next button | Same as text input validation |
 
-# SECTION L: Analytics Events
+## Navigation
 
-| ID | Event | When | Metadata |
-|----|-------|------|----------|
-| TC-AE-01 | `page_landed` | App created (POST /start) | `{source: "app"/"link"}` |
-| TC-AE-02 | `story_completed` | Story viewed before auth | `{pre_auth: "true"}` |
-| TC-AE-03 | `form_autosaved` | Questionnaire data saved | `{}` |
-| TC-AE-04 | `form_submitted` | Application submitted | `{}` |
-| TC-AE-05 | `form_exit_not_interested` | "Yes, I want to exit" (auth) | `{}` |
-| TC-AE-06 | `form_exit_interested` | "Will come back later" (auth) | `{}` |
-| TC-AE-07 | `form_exit_silent` | Silent/browser close | `{}` |
-| TC-AE-08 | `admin_rated` | Admin screens applicant | `{ratings: {...}}` |
-| TC-AE-09 | `applicant_rejected` | Admin rejects | `{reason: "..."}` |
-| TC-AE-10 | `applicant_selected` | Admin selects | `{split_template_id: N}` |
-| TC-AE-11 | `milestone_marked` | Admin toggles milestone | `{type: "first_call_done"}` |
-| TC-AE-12 | `club_created` | marketing_launched auto-transition | `{}` |
+| ID | Action | Expected |
+|----|--------|----------|
+| Q-20 | Tap back on Q1 | Goes to CityActivity |
+| Q-21 | Tap back on Q3 | Goes to Q2, previous answer preserved |
+| Q-22 | Tap X (close) | Exit modal opens |
+| Q-23 | Android hardware back on Q1 | Goes to CityActivity (handled internally) |
+| Q-24 | Android hardware back on Q5 | Goes to Q4 |
 
-**Verification:** For each event, check `analytics_events` table has a row with correct `event_type`, `application_pk`, and `metadata` JSONB.
+## Progress
 
----
+| ID | Action | Expected |
+|----|--------|----------|
+| Q-25 | On Q3 of 10 | Progress bar shows ~50% (city+activity+3 of 10) |
+| Q-26 | Progress callback fires | `onProgressChange(currentIndex, totalQuestions, section)` called |
 
-# SECTION M: Edge Cases & Race Conditions
+## Important Badge
 
-### TC-EDGE-01: Two tabs, exit in both
+| ID | Action | Expected |
+|----|--------|----------|
+| Q-27 | Question with section="important" | Shows "IMPORTANT" badge |
+| Q-28 | Regular question | No badge |
 
-| Step | Action | Expected |
-|------|--------|---------|
-| 1 | Open SYC in two tabs (same user) | Both show same screen |
-| 2 | Exit in Tab 1 | Status changes (e.g., ACTIVE → NOT_INTERESTED) |
-| 3 | Exit in Tab 2 | API may fail (invalid transition from NOT_INTERESTED) — caught silently, user redirected |
+## Submit (Last Question)
 
-### TC-EDGE-02: Exit → return → exit cycle
-
-| Step | Action | Expected |
-|------|--------|---------|
-| 1 | ACTIVE → exit "will come back" | ABANDONED |
-| 2 | Return | ABANDONED → ACTIVE |
-| 3 | Exit "yes exit" | ACTIVE → NOT_INTERESTED |
-| 4 | Return | NOT_INTERESTED → ACTIVE |
-| 5 | Timeline | Shows full history of all transitions |
-
-### TC-EDGE-03: Admin rejects while user is mid-questionnaire
-
-| Step | Action | Expected |
-|------|--------|---------|
-| 1 | User is filling questionnaire | App is ACTIVE |
-| 2 | Admin rejects (ACTIVE → REJECTED) | Status changes in DB |
-| 3 | User submits questionnaire | Backend rejects submit (REJECTED is terminal) → error shown |
-
-### TC-EDGE-04: Token expires mid-session
-
-| Step | Action | Expected |
-|------|--------|---------|
-| 1 | User is on questionnaire, JWT expires | Next API call returns 401 |
-| 2 | Frontend behavior | Should catch 401 and route to Story (fresh start) |
-| 3 | Note | `checkExistingUser` handles 401, but mid-flow calls (e.g., `saveQuestionnaire`) may not handle 401 gracefully |
-
-### TC-EDGE-05: Rapid double-click on "Yes, I want to exit"
-
-| Step | Action | Expected |
-|------|--------|---------|
-| 1 | Double-click fast on exit button | First click: modal closes + API + redirect |
-| 2 | Check | Second click: modal already gone, no-op. Only ONE API call. |
-
-### TC-EDGE-06: Submit with null application
-
-| Step | Action | Expected |
-|------|--------|---------|
-| 1 | Application creation failed (startApplication errored) | `application` state is null |
-| 2 | User reaches end of questionnaire | `handleQuestionnaireComplete` attempts to create app |
-| 3 | If 409 | Uses existing app from error response |
-| 4 | If total failure | Alert + back to CityActivity |
-
-### TC-EDGE-07: Browser back button (not in-app)
-
-| Step | Action | Expected |
-|------|--------|---------|
-| 1 | On SYC in browser, press browser back | No popstate listener → navigates away from SPA |
-| 2 | Check | No exit API call. App stays in current DB status. |
+| ID | Action | Expected |
+|----|--------|----------|
+| Q-29 | Answer last MCQ question | Auto-calls `onComplete(answers)` → `handleQuestionnaireComplete` |
+| Q-30 | Answer last text question, tap Next | Same as above |
+| Q-31 | `handleQuestionnaireComplete` — app exists | `saveQuestionnaire` + `submitApplication` → Progress screen |
+| Q-32 | `handleQuestionnaireComplete` — app is null | Tries `startApplication` first. If 409 → uses existing. If fails → alert + back to CityActivity |
+| Q-33 | Submit API fails | Goes to Progress anyway (save may have succeeded) |
 
 ---
 
-# SECTION N: Security & Auth
+# 10. PROGRESS SCREEN
 
-### TC-SEC-01: Expired JWT
-
-| Step | Action | Expected |
-|------|--------|---------|
-| 1 | Use expired token on any API call | 401 response |
-| 2 | Frontend | Clears localStorage, routes to Story |
-
-### TC-SEC-02: Invalid JWT (malformed)
-
-| Step | Action | Expected |
-|------|--------|---------|
-| 1 | Send garbage token | 401 response |
-
-### TC-SEC-03: Access another user's application
-
-| Step | Action | Expected |
-|------|--------|---------|
-| 1 | Valid JWT for User A, try to access User B's app | 403 Forbidden |
-
-### TC-SEC-04: Admin endpoint without admin auth
-
-| Step | Action | Expected |
-|------|--------|---------|
-| 1 | Call `/admin/all` without admin token | 401 or 403 |
-
-### TC-SEC-05: XSS in questionnaire answers
-
-| Step | Action | Expected |
-|------|--------|---------|
-| 1 | Enter `<script>alert('xss')</script>` in text answer | Stored as-is in JSONB, but React escapes on render |
+| ID | Action | User Status | Expected |
+|----|--------|-------------|----------|
+| P-01 | View | SUBMITTED | Step 1: "In review" (review icon). Steps 2-3 locked. |
+| P-02 | View | UNDER_REVIEW | Same as SUBMITTED display |
+| P-03 | View | INTERVIEW_PENDING | Step 1: cleared (check). Step 2: "In process" with "Book a call" button |
+| P-04 | Tap "Book a call" | INTERVIEW_PENDING | Opens Calendly link (FlutterBridge or window.open) |
+| P-05 | View | INTERVIEW_SCHEDULED | Step 2: "In process" with "Join Call" button + scheduled datetime |
+| P-06 | Tap "Join Call" | INTERVIEW_SCHEDULED | Opens `calendly_meet_link` |
+| P-07 | View | INTERVIEW_SCHEDULED, no meet link | "Interview scheduled" button (disabled/grayed) |
+| P-08 | View | INTERVIEW_DONE | Step 2: cleared (check) |
+| P-09 | View | SELECTED | Steps 1-2 cleared. Step 3: "Next steps" with 3 links |
+| P-10 | Tap "Create your club" | SELECTED | Opens `misfitsclubs.app.link/CreateClub` |
+| P-11 | Tap "Onboarding form" | SELECTED | Opens Google Form |
+| P-12 | Tap "Contract" | SELECTED, contract exists | Opens contract URL |
+| P-13 | Tap "Contract" | SELECTED, no contract | Grayed out / disabled |
+| P-14 | View | CLUB_CREATED | All 3 steps cleared (check icons) |
+| P-15 | View | admin_created=true | Yellow badge: "Application created by Misfits team" |
+| P-16 | Tap back (X) | Any | `window.history.back()` or FlutterBridge close |
+| P-17 | Tap phone number at bottom | Any | Opens `tel:9311923197` |
+| P-18 | Android hardware back | Any | FlutterBridge close or `window.history.back()` |
 
 ---
 
-# SECTION O: localStorage & Persistence
+# 11. WELCOME BACK SCREEN
 
-### TC-LS-01: Fresh browser — no localStorage
-
-| Step | Action | Expected |
-|------|--------|---------|
-| 1 | No SYC_USER in localStorage | user=null → Story after loading |
-
-### TC-LS-02: Valid user in localStorage
-
-| Step | Action | Expected |
-|------|--------|---------|
-| 1 | SYC_USER exists with valid token | checkExistingUser called → routes by app status |
-
-### TC-LS-03: Corrupted JSON in localStorage
-
-| Step | Action | Expected |
-|------|--------|---------|
-| 1 | SYC_USER = "not-json" | `loadUser()` catches JSON.parse error → null → fresh start |
-
-### TC-LS-04: localStorage disabled (private browsing)
-
-| Step | Action | Expected |
-|------|--------|---------|
-| 1 | localStorage.setItem throws | User not persisted, each reload = fresh start |
+| ID | Action | User Status | Expected |
+|----|--------|-------------|----------|
+| WB-01 | View | REJECTED | Shows past app card with "Rejected" + applied date |
+| WB-02 | View | CLUB_CREATED | Shows past app card with "Completed" + applied date |
+| WB-03 | View | No past apps | Subtitle: "Start your club journey" |
+| WB-04 | Tap "Start a new application" | Any | Resets all state (app=null, city="", activity=""), goes to Story |
+| WB-05 | Tap back | Any | `window.history.back()` |
+| WB-06 | Tap phone number | Any | Opens `tel:9311923197` |
+| WB-07 | Android hardware back | Any | FlutterBridge close or `window.history.back()` |
 
 ---
 
-# SECTION P: Flutter WebView
+# 12. THANK YOU SCREEN
 
-### TC-FLUTTER-01: FlutterBridge close (app source, authorized)
-
-| Step | Action | Expected |
-|------|--------|---------|
-| 1 | Back on Progress screen in WebView | `FlutterBridge.postMessage("close")` called |
-| 2 | Result | WebView closes, returns to Flutter app |
-
-### TC-FLUTTER-02: FlutterBridge open_clubs
-
-| Step | Action | Expected |
-|------|--------|---------|
-| 1 | "Not sure, I'd like to join" in WebView (authorized) | `FlutterBridge.postMessage("open_clubs")` called |
-| 2 | Result | Flutter app navigates to all clubs section |
-
-### TC-FLUTTER-03: nativeBack event
-
-| Step | Action | Expected |
-|------|--------|---------|
-| 1 | Android hardware back on Login screen | `nativeBack` event dispatched by Flutter |
-| 2 | Event handler | Routes to Story |
-
-### TC-FLUTTER-04: No FlutterBridge (link source)
-
-| Step | Action | Expected |
-|------|--------|---------|
-| 1 | All exit/back actions via link (no FlutterBridge) | Falls back to `window.history.back()` or `misfits.net.in` redirect |
+| ID | Action | Expected |
+|----|--------|----------|
+| TY-01 | View | Shows "Thank you!" message + Miffy image |
+| TY-02 | Tap "Explore Misfits" | Opens `misfitsclubs.app.link/home` |
+| TY-03 | Tap back | `window.history.back()` |
 
 ---
 
-# SECTION Q: Responsive & Mobile UI
+# 13. KEYBOARD / MOBILE UX
 
-### TC-UI-01: Story on 320px width
-
-| Step | Action | Expected |
-|------|--------|---------|
-| 1 | View Story on narrow screen | Text readable, no overflow, buttons tappable |
-
-### TC-UI-02: Exit modal on small screen
-
-| Step | Action | Expected |
-|------|--------|---------|
-| 1 | View exit modal on narrow screen | All 4 buttons visible without scrolling |
-
-### TC-UI-03: Stagger animation performance
-
-| Step | Action | Expected |
-|------|--------|---------|
-| 1 | Watch Story animation on low-end device | No jank (CSS transitions use transform + opacity = GPU-accelerated) |
-
-### TC-UI-04: FlutterBridge WebView
-
-| Step | Action | Expected |
-|------|--------|---------|
-| 1 | All screens in Flutter WebView | Render correctly, no viewport issues |
+| ID | Screen | Action | Expected |
+|----|--------|--------|----------|
+| KB-01 | CityActivity | Open keyboard by tapping search | Next button stays visible above keyboard (100dvh shrinks viewport) |
+| KB-02 | Questionnaire (text) | Open keyboard | Next button visible above keyboard |
+| KB-03 | Login | Open keyboard | Continue button visible |
+| KB-04 | OTP | Open keyboard | Verify button visible |
+| KB-05 | Any | Close keyboard | Button returns to bottom of screen |
+| KB-06 | CityActivity | iPhone safe area | Footer respects `env(safe-area-inset-bottom)` |
 
 ---
 
-# SECTION R: Bugs Fixed
+# 14. RETURNING USER — FULL RESUME FLOWS
 
-### BUG-01: Name not saved to backend — FIXED
-
-**Was:** NameCapture only saved name to localStorage. Backend pulled name from `users` table (often empty/wrong).
-**Fix:** `name` field added to `StartApplicationRequest`. Frontend sends name in `startApplication()` call. Backend prefers request name, falls back to users table.
-**Verify:** Create new application after NameCapture → check `club_applications.name` has the entered name.
-
-### BUG-03: "Skip to application form" for authenticated users — FIXED
-
-**Was:** Authenticated user on Story → X → "Skip to application form" → went to Login unnecessarily.
-**Fix:** `handleSkipStory` now checks `user?.token` — if authenticated, calls `handlePostAuth(user)` directly.
-**Verify:** Authenticated user → WelcomeBack → Start New → Story → X → "Skip to application form" → should go to CityActivity/Questionnaire (NOT Login).
+| ID | Token | App Status | City/Activity | Route To | What User Sees |
+|----|-------|-----------|---------------|----------|----------------|
+| RF-01 | Valid | ACTIVE | No | CityActivity | Picks city + activity, then questionnaire |
+| RF-02 | Valid | ACTIVE | Yes | Questionnaire | Resumes from where they left off, previous answers prefilled |
+| RF-03 | Valid | ABANDONED | No | CityActivity | Same as RF-01, backend transitions ABANDONED→ACTIVE |
+| RF-04 | Valid | ABANDONED | Yes | Questionnaire | Same as RF-02, backend transitions ABANDONED→ACTIVE |
+| RF-05 | Valid | NOT_INTERESTED | No | CityActivity | Same resume, backend transitions NI→ACTIVE |
+| RF-06 | Valid | NOT_INTERESTED | Yes | Questionnaire | Same resume |
+| RF-07 | Valid | SUBMITTED | - | Progress | Sees "Application submitted" |
+| RF-08 | Valid | UNDER_REVIEW | - | Progress | Sees step 1 in review |
+| RF-09 | Valid | INTERVIEW_PENDING | - | Progress | Sees "Book a call" button |
+| RF-10 | Valid | INTERVIEW_SCHEDULED | - | Progress | Sees scheduled date + "Join Call" |
+| RF-11 | Valid | INTERVIEW_DONE | - | Progress | Sees step 2 cleared |
+| RF-12 | Valid | SELECTED | - | Progress | Sees step 3 with onboarding links |
+| RF-13 | Valid | CLUB_CREATED | - | Progress | All steps complete |
+| RF-14 | Valid | REJECTED | - | WelcomeBack | Past app shown, can start new |
+| RF-15 | Expired | Any | - | Story | 401 → localStorage cleared → fresh start |
+| RF-16 | Corrupt | Any | - | Story | JSON.parse fails → null → fresh start |
+| RF-17 | Valid | No app exists | - | WelcomeBack | "Start your club journey" |
 
 ---
 
-# SECTION S: DB Verification Queries
+# 15. EDGE CASES
 
-Use these queries to verify test results:
+| ID | Scenario | Expected |
+|----|----------|----------|
+| EC-01 | Two tabs open, exit in both | First exit works. Second exit: API may fail (invalid transition) — caught silently, user redirected. |
+| EC-02 | Exit (ABANDONED) → return → exit (NOT_INTERESTED) → return → submit | Full cycle works. Timeline shows all transitions. |
+| EC-03 | Admin rejects while user is mid-questionnaire | User submits → backend rejects (REJECTED is terminal) → error shown |
+| EC-04 | Token expires mid-questionnaire | Next API call gets 401. Should route to Story. **Note:** mid-flow 401 handling may be incomplete. |
+| EC-05 | Rapid double-click "Yes, I want to exit" | First click: modal closes + API + redirect. Second: modal gone, no-op. One API call only. |
+| EC-06 | Network offline during questionnaire submit | `saveQuestionnaire` fails silently. `submitApplication` fails → still goes to Progress. |
+| EC-07 | Browser back button (not in-app) | No popstate listener → navigates away entirely. No exit API call. |
+| EC-08 | localStorage disabled (private browsing) | `setItem` throws → user not persisted. Each reload = fresh start. |
+| EC-09 | Close tab right after explicit exit | `hasExited.current = true` → beforeunload skips → no double API call. |
+| EC-10 | Open SYC with `?screen=questionnaire` (debug param) | Goes directly to questionnaire screen (debug mode). |
+
+---
+
+# 16. FLUTTER WEBVIEW SPECIFIC
+
+| ID | Action | Expected |
+|----|--------|----------|
+| FW-01 | Back on Progress (app source) | `FlutterBridge.postMessage("close")` |
+| FW-02 | "Not sure, join" (auth, app source) | `FlutterBridge.postMessage("open_clubs")` |
+| FW-03 | "Not sure, join" (unauth, app source) | `FlutterBridge.postMessage("close")` |
+| FW-04 | "Will come back later" (auth, app source) | Exit API call + `FlutterBridge.postMessage("close")` |
+| FW-05 | Android hardware back on Login | `nativeBack` event → goes to Story |
+| FW-06 | Android hardware back on CityActivity | `nativeBack` event → exit modal opens |
+| FW-07 | Android hardware back on Story/Questionnaire | `nativeBack` event → handled internally by component |
+| FW-08 | "Book a call" on Progress | `FlutterBridge.postMessage({type: "open_url", url})` |
+| FW-09 | No FlutterBridge (link source) | All exits fall back to `window.history.back()` or `misfits.net.in` |
+
+---
+
+# 17. DB VERIFICATION (for backend testers)
 
 ```sql
--- Check application status and tracking
+-- Check application status + tracking after any test
 SELECT pk, status, exit_type, last_screen, last_question_index,
-       last_question_section, total_questions, abandoned_at, reminder_state,
-       source, submitted_at, created_at, updated_at
-FROM club_applications
-WHERE user_id = '<user_id>'
+       last_question_section, total_questions, abandoned_at,
+       reminder_state, name, city, activity, source,
+       submitted_at, created_at, updated_at
+FROM club_applications WHERE user_id = '<user_id>'
 ORDER BY created_at DESC;
 
 -- Check status transitions (timeline)
-SELECT id, application_pk, from_status, to_status, actor, created_at
-FROM club_application_events
-WHERE application_pk = <app_pk>
+SELECT from_status, to_status, actor, created_at
+FROM club_application_events WHERE application_pk = <pk>
 ORDER BY created_at;
 
 -- Check analytics events
-SELECT id, application_pk, event_type, metadata, created_at
-FROM analytics_events
-WHERE application_pk = <app_pk>
+SELECT event_type, metadata, created_at
+FROM analytics_events WHERE application_pk = <pk>
 ORDER BY created_at;
 
--- Funnel counts
-SELECT status, COUNT(*)
-FROM club_applications
-WHERE archived = false
-GROUP BY status
-ORDER BY status;
+-- Verify NOT_INTERESTED has no abandoned_at or reminder_state
+SELECT pk, status, abandoned_at, reminder_state
+FROM club_applications WHERE status = 'NOT_INTERESTED';
 
--- NOT_INTERESTED with tracking (verify Section H tests)
-SELECT pk, status, exit_type, last_screen, last_question_index,
-       abandoned_at, reminder_state
-FROM club_applications
-WHERE status = 'NOT_INTERESTED'
-ORDER BY updated_at DESC;
+-- Verify ABANDONED has abandoned_at and reminder_state
+SELECT pk, status, abandoned_at, reminder_state
+FROM club_applications WHERE status = 'ABANDONED';
 ```
 
 ---
 
 # Summary
 
-| Section | Test Cases | Priority |
-|---------|-----------|----------|
-| A. New User Happy Path | 4 | P0 |
-| B. Exit Modal (all buttons x auth) | 12 | P0 |
-| C. Silent Exit | 5 | P0 |
-| D. Story Navigation & Soft-Gate | 11 | P1 |
-| E. Returning User Flows | 10 | P0 |
-| F. Back Button Navigation | 9 | P1 |
-| G. Input Validation | 6 | P1 |
-| H. Status Machine | 22 | P0 |
-| I. Questionnaire | 5 | P1 |
-| J. Admin Dashboard | 11 | P1 |
-| K. Calendly Webhooks | 5 | P1 |
-| L. Analytics Events | 12 | P2 |
-| M. Edge Cases | 7 | P1 |
-| N. Security & Auth | 5 | P2 |
-| O. localStorage | 4 | P2 |
-| P. Flutter WebView | 4 | P1 |
-| Q. Responsive UI | 4 | P2 |
-| R. Known Bugs | 2 | Reference |
-| S. DB Queries | - | Reference |
-| **TOTAL** | **~138** | |
+| Section | Test Cases |
+|---------|-----------|
+| 1. Loading | 15 |
+| 2. Story (all slides + decision) | 20 |
+| 3. Exit Modal (4 buttons x user types) | 19 |
+| 4. Silent Exit | 10 |
+| 5. Login | 10 |
+| 6. OTP | 11 |
+| 7. Name Capture | 7 |
+| 8. City/Activity | 26 |
+| 9. Questionnaire | 33 |
+| 10. Progress | 18 |
+| 11. Welcome Back | 7 |
+| 12. Thank You | 3 |
+| 13. Keyboard/Mobile | 6 |
+| 14. Returning User Flows | 17 |
+| 15. Edge Cases | 10 |
+| 16. Flutter WebView | 9 |
+| 17. DB Queries | - |
+| **TOTAL** | **221** |
