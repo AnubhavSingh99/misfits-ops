@@ -15,6 +15,7 @@ import ScalingPlannerV2 from './pages/ScalingPlannerV2'
 import LeaderRequirementsDashboard from './pages/LeaderRequirementsDashboard'
 import VenueRequirementsDashboard from './pages/VenueRequirementsDashboard'
 import CustomerServiceDashboard from './pages/CustomerServiceDashboard'
+import SharkTankInvites from './pages/SharkTankInvites'
 import SharkTankCRM from './pages/SharkTankCRM'
 import StartYourClub from './pages/StartYourClub'
 
@@ -37,6 +38,7 @@ function App() {
         <Route path="/leader-requirements" element={<LeaderRequirementsDashboard />} />
         <Route path="/venue-requirements" element={<VenueRequirementsDashboard />} />
         <Route path="/customer-service" element={<CustomerServiceDashboard />} />
+        <Route path="/shark-tank-invites" element={<SharkTankInvites />} />
         <Route path="/shark-tank" element={<SharkTankCRM />} />
         <Route path="/start-your-club" element={<StartYourClub />} />
       </Routes>

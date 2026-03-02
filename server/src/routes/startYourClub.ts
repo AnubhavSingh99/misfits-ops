@@ -934,6 +934,15 @@ router.post('/admin/:id/upload-contract', contractUpload.single('contract'), asy
       return res.status(400).json({ success: false, error: 'No file uploaded' });
     }
 
+    // Validate application exists and is SELECTED
+    const appResult = await queryProduction('SELECT status FROM club_application WHERE pk = $1', [id]);
+    if (appResult.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'Application not found' });
+    }
+    if (appResult.rows[0].status !== 'SELECTED') {
+      return res.status(409).json({ success: false, error: 'Contracts can only be uploaded for SELECTED applications' });
+    }
+
     const contractUrl = `/api/start-club/contracts/${file.filename}`;
 
     await queryProduction(
@@ -976,7 +985,12 @@ router.post('/admin/:id/upload-signed-contract', contractUpload.single('contract
 
 // GET /contracts/:filename — Serve contract files (public, shareable)
 router.get('/contracts/:filename', (req: Request, res: Response) => {
-  const filePath = path.join(UPLOADS_DIR, req.params.filename);
+  // Prevent path traversal — only allow alphanumeric, hyphens, underscores, dots
+  const filename = path.basename(req.params.filename);
+  if (filename !== req.params.filename || filename.includes('..')) {
+    return res.status(400).json({ success: false, error: 'Invalid filename' });
+  }
+  const filePath = path.join(UPLOADS_DIR, filename);
   if (!fs.existsSync(filePath)) {
     return res.status(404).json({ success: false, error: 'File not found' });
   }
