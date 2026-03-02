@@ -11,6 +11,7 @@ const DASHBOARD_CONFIG = {
   'leader-requirements': true,
   'venue-requirements': true,
   'health-dashboard': true,
+  'start-your-club': true,
   'shark-tank-invites': true,
 
   // Hidden dashboards (older/deprecated)

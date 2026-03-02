@@ -1303,3 +1303,85 @@ export interface ClubMatchResult {
 export interface StageProgressWithUA extends StageProgress {
   unattributed_meetups: number;  // Meetups beyond target capacity
 }
+
+// ============================================================
+// Start Your Club — Club Application Pipeline Types
+// ============================================================
+
+export type ClubApplicationStatus =
+  | 'ACTIVE' | 'ABANDONED' | 'NOT_INTERESTED'
+  | 'SUBMITTED' | 'UNDER_REVIEW' | 'ON_HOLD'
+  | 'INTERVIEW_PENDING' | 'INTERVIEW_SCHEDULED' | 'INTERVIEW_DONE'
+  | 'SELECTED' | 'CLUB_CREATED' | 'REJECTED';
+
+export interface ScreeningRatings {
+  [key: string]: number;
+}
+
+export type RejectionReason =
+  | 'insufficient_experience'
+  | 'low_commitment'
+  | 'unclear_motivation'
+  | 'city_not_available'
+  | 'incomplete_responses'
+  | 'other';
+
+export interface ClubApplication {
+  id: string;
+  user_id: number | null;
+  user_phone: string | null;
+  name: string | null;
+  status: ClubApplicationStatus;
+  exit_type: 'interested' | 'silent' | null;
+  source: 'app' | 'link';
+  city: string | null;
+  activity: string | null;
+  awareness: 'yes' | 'no' | 'maybe' | null;
+  archived: boolean;
+  questionnaire_data: Record<string, any>;
+  last_screen: string | null;
+  last_story_slide: number | null;
+  last_question_index: number | null;
+  last_question_section: string | null;
+  total_questions: number | null;
+  abandoned_at: string | null;
+  screening_ratings: ScreeningRatings | null;
+  interview_ratings: ScreeningRatings | null;
+  reviewed_by: string | null;
+  rejection_reason: string | null;
+  split_template_id: string | null;
+  split_percentage: Record<string, number> | null;
+  contract_url: string | null;
+  contract_uploaded_at: string | null;
+  signed_contract_url: string | null;
+  signed_contract_uploaded_at: string | null;
+  first_call_done: boolean;
+  venue_sorted: boolean;
+  marketing_launched: boolean;
+  created_at: string;
+  updated_at: string;
+  submitted_at: string | null;
+  selected_at: string | null;
+  club_created_at: string | null;
+}
+
+export interface ApplicationStatusEvent {
+  id: string;
+  application_id: string;
+  from_status: string | null;
+  to_status: string;
+  actor: 'applicant' | 'admin' | 'system';
+  actor_id: number | null;
+  metadata: Record<string, any>;
+  created_at: string;
+}
+
+export interface ApplicationActivity {
+  id: string;
+  application_id: string;
+  type: 'note' | 'call' | 'connect_request';
+  content: string | null;
+  metadata: Record<string, any>;
+  created_by: number | null;
+  created_at: string;
+}

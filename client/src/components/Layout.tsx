@@ -32,6 +32,7 @@ const allNavigation = [
   { id: 'customer-service', name: 'Customer Service', href: '/customer-service', icon: Headphones },
   { id: 'shark-tank-invites', name: 'Shark Tank Invites', href: '/shark-tank-invites', icon: Tv },
   { id: 'shark-tank', name: 'Shark Tank CRM', href: '/shark-tank', icon: Zap },
+  { id: 'start-your-club', name: 'Start Your Club', href: '/start-your-club', icon: Users },
 ]
 
 const API_BASE = import.meta.env.VITE_API_URL
