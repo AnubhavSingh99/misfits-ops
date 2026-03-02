@@ -1833,13 +1833,13 @@ function InfoModal({ onClose }: { onClose: () => void }) {
         <div className="px-6 py-5 max-h-[70vh] overflow-y-auto">
           {activeTab === 'statuses' && (
             <div className="space-y-1">
-              <p className="text-xs text-slate-500 mb-4">Every applicant moves through these statuses. Statuses are grouped into 3 layers.</p>
+              <p className="text-xs text-slate-500 mb-4">Every person who applies goes through these stages. Think of it like a journey from "just started" to "club is live."</p>
 
-              <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Layer 1 — Journey (Pre-Submit)</div>
+              <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Before they submit the form</div>
               {[
-                { status: 'ACTIVE', desc: 'Applicant is currently filling out the application form. They may be on any screen (story, login, city selection, or questionnaire). Shows in the Follow Up tab under "Active (In Progress)."' },
-                { status: 'ABANDONED', desc: 'Applicant started but left mid-way and chose "Will come back later." They are interested but haven\'t finished. Shows in the Follow Up tab, grouped by where they dropped off.' },
-                { status: 'NOT_INTERESTED', desc: 'Applicant explicitly chose "Yes, I want to exit" or "Not sure, I\'d like to join a club." They do not want to lead. Shows in Dropped tab.' },
+                { status: 'ACTIVE', desc: 'This person is still filling out the form right now. They haven\'t finished yet. You\'ll find them in the Follow Up tab.' },
+                { status: 'ABANDONED', desc: 'They started the form but left before finishing. They said "I\'ll come back later" — so they\'re still interested, just not done yet.' },
+                { status: 'NOT_INTERESTED', desc: 'They said they don\'t want to lead a club, or they withdrew their application. You\'ll see them in the Dropped tab.' },
               ].map(({ status, desc }) => (
                 <div key={status} className="flex gap-3 py-2.5 px-3 rounded-lg hover:bg-slate-50">
                   <span className={`shrink-0 inline-flex items-center px-2 py-0.5 text-[10px] font-semibold rounded-full border ${STATUS_CONFIG[status]?.badgeClass || 'bg-slate-50 text-slate-600 border-slate-200'}`}>
@@ -1852,14 +1852,14 @@ function InfoModal({ onClose }: { onClose: () => void }) {
                 </div>
               ))}
 
-              <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide mt-5 mb-2">Layer 2 — Evaluation (Post-Submit)</div>
+              <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide mt-5 mb-2">After they submit — your turn to review</div>
               {[
-                { status: 'SUBMITTED', desc: 'Application is complete and submitted. Waiting for an admin to start reviewing. Shows in the Submitted tab under "New."' },
-                { status: 'UNDER_REVIEW', desc: 'An admin has opened the application and started screening. They are reading responses and rating the applicant.' },
-                { status: 'ON_HOLD', desc: 'Application paused during review. The applicant looks promising but there\'s a reason to wait (e.g., city not open yet, need more info). Can be moved to interview or rejected later.' },
-                { status: 'INTERVIEW_PENDING', desc: 'Selected for an interview. The Calendly scheduling link has been sent but the applicant hasn\'t picked a time yet.' },
-                { status: 'INTERVIEW_SCHEDULED', desc: 'The applicant booked an interview time via Calendly. Date and Google Meet link are visible in the detail view.' },
-                { status: 'INTERVIEW_DONE', desc: 'Interview has been completed. Waiting for the admin to make a final decision — select or reject.' },
+                { status: 'SUBMITTED', desc: 'They finished and submitted. This is waiting for YOU to open and review. Check the Submitted tab.' },
+                { status: 'UNDER_REVIEW', desc: 'You opened it and started reading their answers. You\'re in the middle of reviewing.' },
+                { status: 'ON_HOLD', desc: 'Looks promising, but you\'re not ready to decide yet. Maybe their city isn\'t open, or you need more info. You can come back to them later.' },
+                { status: 'INTERVIEW_PENDING', desc: 'You liked their answers and selected them for an interview. They got a link to book a call, but haven\'t picked a time yet.' },
+                { status: 'INTERVIEW_SCHEDULED', desc: 'They picked a date and time for the call. You\'ll see the date and a Google Meet link to join.' },
+                { status: 'INTERVIEW_DONE', desc: 'The call happened. Now it\'s your turn again — decide whether to select them as a leader or reject.' },
               ].map(({ status, desc }) => (
                 <div key={status} className="flex gap-3 py-2.5 px-3 rounded-lg hover:bg-slate-50">
                   <span className={`shrink-0 inline-flex items-center px-2 py-0.5 text-[10px] font-semibold rounded-full border ${STATUS_CONFIG[status]?.badgeClass || 'bg-slate-50 text-slate-600 border-slate-200'}`}>
@@ -1872,11 +1872,11 @@ function InfoModal({ onClose }: { onClose: () => void }) {
                 </div>
               ))}
 
-              <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide mt-5 mb-2">Layer 3 — Outcome</div>
+              <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide mt-5 mb-2">Final result</div>
               {[
-                { status: 'SELECTED', desc: 'Approved as a club leader. Onboarding is in progress. Three milestones must be completed: First Call, Venue Sorted, and Marketing Launched.' },
-                { status: 'CLUB_CREATED', desc: 'Fully onboarded. All 3 milestones are done, the club is live. This is the final success state.' },
-                { status: 'REJECTED', desc: 'Application was declined. Can happen at screening (after review), on hold, or after interview. The rejection reason and the stage it was rejected from are recorded.' },
+                { status: 'SELECTED', desc: 'You approved them as a club leader! Now help them get started — there are 3 things to do: First Call, Venue, and Marketing.' },
+                { status: 'CLUB_CREATED', desc: 'All 3 things are done. Their club is live on Misfits. This is the finish line!' },
+                { status: 'REJECTED', desc: 'You said no to this person. The reason you picked and when it happened are saved for reference.' },
               ].map(({ status, desc }) => (
                 <div key={status} className="flex gap-3 py-2.5 px-3 rounded-lg hover:bg-slate-50">
                   <span className={`shrink-0 inline-flex items-center px-2 py-0.5 text-[10px] font-semibold rounded-full border ${STATUS_CONFIG[status]?.badgeClass || 'bg-slate-50 text-slate-600 border-slate-200'}`}>
@@ -1893,24 +1893,25 @@ function InfoModal({ onClose }: { onClose: () => void }) {
 
           {activeTab === 'sop' && (
             <div className="space-y-6">
-              <p className="text-xs text-slate-500">Step-by-step guide for operating this dashboard. Follow these steps in order, every day.</p>
+              <p className="text-xs text-slate-500">This is your daily checklist. Do these things in order, every day. Each step tells you exactly what to click and what to do.</p>
 
               {/* Step 1 */}
               <div className="space-y-2">
                 <div className="flex items-center gap-2">
                   <span className="flex items-center justify-center w-6 h-6 rounded-full bg-indigo-100 text-indigo-700 text-xs font-bold">1</span>
-                  <span className="text-sm font-semibold text-slate-800">Review new applications (Submitted tab)</span>
+                  <span className="text-sm font-semibold text-slate-800">"A new application came in"</span>
                 </div>
-                <div className="ml-8 text-xs text-slate-600 leading-relaxed space-y-1">
-                  <p>Open the <strong>Submitted</strong> tab. Look at the "New" subsection first.</p>
-                  <p>Click on any application row to expand it. Read the applicant's city, activity, and all questionnaire responses carefully.</p>
-                  <p>Rate the applicant on each screening dimension (1-5 scale). Consider their experience, passion, availability, and clarity of answers.</p>
-                  <p>After rating, choose one action:</p>
-                  <ul className="list-disc list-inside ml-2 space-y-0.5">
-                    <li><strong>Select for Interview</strong> — You think they could be a good leader. Moves to Interview Pending.</li>
-                    <li><strong>Reject</strong> — Not a fit. Pick a rejection reason. This is final.</li>
-                    <li><strong>Put On Hold</strong> — Promising but not ready (e.g., city not open, need to revisit later).</li>
+                <div className="ml-8 text-xs text-slate-600 leading-relaxed space-y-1.5">
+                  <p><strong>Where to look:</strong> Click the <strong>Submitted</strong> tab at the top. Then click <strong>"New"</strong> on the left side.</p>
+                  <p><strong>What to do:</strong> Click on a person's row to open their application. Read everything they wrote — their city, what activity they want to run, and all their answers.</p>
+                  <p><strong>How to rate:</strong> You'll see 5 sliders (like giving stars). Rate each one from 1 to 5 based on how good their answers are. Think about: Do they seem passionate? Do they have time? Do they know what they're doing?</p>
+                  <p><strong>Then pick one of these 3 buttons:</strong></p>
+                  <ul className="list-disc list-inside ml-2 space-y-1">
+                    <li><strong>"Select for Interview"</strong> — Their answers look great and you want to talk to them. They'll get a link to book a call with you.</li>
+                    <li><strong>"Reject"</strong> — They're not the right fit. Pick a reason why (you'll see a list). This cannot be undone.</li>
+                    <li><strong>"Put On Hold"</strong> — They seem good but you're not sure yet. Maybe their city isn't open, or you want to think about it. You can decide later.</li>
                   </ul>
+                  <p className="text-amber-600"><strong>Important:</strong> If you see a red "Overdue" tag on an application, review it right away — it's been waiting too long.</p>
                 </div>
               </div>
 
@@ -1918,13 +1919,12 @@ function InfoModal({ onClose }: { onClose: () => void }) {
               <div className="space-y-2">
                 <div className="flex items-center gap-2">
                   <span className="flex items-center justify-center w-6 h-6 rounded-full bg-indigo-100 text-indigo-700 text-xs font-bold">2</span>
-                  <span className="text-sm font-semibold text-slate-800">Manage interviews (Interview Phase tab)</span>
+                  <span className="text-sm font-semibold text-slate-800">"Someone needs to book a call"</span>
                 </div>
-                <div className="ml-8 text-xs text-slate-600 leading-relaxed space-y-1">
-                  <p>Once you select someone for interview, they move to <strong>Interview Pending</strong>. They'll receive a Calendly link to book a time.</p>
-                  <p>When they book, the status auto-updates to <strong>Interview Scheduled</strong>. You'll see the date and Google Meet link.</p>
-                  <p>After the interview, mark it as <strong>Interview Done</strong>. Then rate them again on interview-specific dimensions.</p>
-                  <p>Final decision: <strong>Select</strong> (they become a leader) or <strong>Reject</strong> (with reason).</p>
+                <div className="ml-8 text-xs text-slate-600 leading-relaxed space-y-1.5">
+                  <p><strong>Where to look:</strong> Click the <strong>Interview Phase</strong> tab. Check <strong>"Pending Schedule"</strong> on the left.</p>
+                  <p><strong>What's happening:</strong> These people got your interview link but haven't picked a time yet. If someone has been here for more than 2-3 days, call or message them to remind them to book.</p>
+                  <p><strong>You don't need to do anything else here</strong> — once they pick a time, they automatically move to "Scheduled" and you'll see the date and a Google Meet link to join the call.</p>
                 </div>
               </div>
 
@@ -1932,16 +1932,16 @@ function InfoModal({ onClose }: { onClose: () => void }) {
               <div className="space-y-2">
                 <div className="flex items-center gap-2">
                   <span className="flex items-center justify-center w-6 h-6 rounded-full bg-indigo-100 text-indigo-700 text-xs font-bold">3</span>
-                  <span className="text-sm font-semibold text-slate-800">Onboard selected leaders (Selected tab)</span>
+                  <span className="text-sm font-semibold text-slate-800">"I just finished a call with someone"</span>
                 </div>
-                <div className="ml-8 text-xs text-slate-600 leading-relaxed space-y-1">
-                  <p>Selected applicants appear in the <strong>Selected</strong> tab. There are 3 onboarding milestones to complete:</p>
-                  <ol className="list-decimal list-inside ml-2 space-y-0.5">
-                    <li><strong>First Call Done</strong> — Have the onboarding call with the new leader. Check this off when done.</li>
-                    <li><strong>Venue Sorted</strong> — Confirm the venue for their club sessions. Check this off when confirmed.</li>
-                    <li><strong>Marketing Launched</strong> — The club's listing or promo is live. When you check this off, the status automatically changes to Club Created.</li>
-                  </ol>
-                  <p className="mt-1">Once all 3 milestones are done, the applicant becomes a fully onboarded club leader.</p>
+                <div className="ml-8 text-xs text-slate-600 leading-relaxed space-y-1.5">
+                  <p><strong>Where to look:</strong> In the <strong>Interview Phase</strong> tab, click <strong>"Scheduled"</strong> and find the person you just talked to.</p>
+                  <p><strong>What to do:</strong> Click their row. Mark the interview as <strong>Done</strong>. Then you'll rate them again — this time based on how the call went.</p>
+                  <p><strong>Then pick one:</strong></p>
+                  <ul className="list-disc list-inside ml-2 space-y-1">
+                    <li><strong>"Select"</strong> — They were great on the call. They're going to become a club leader!</li>
+                    <li><strong>"Reject"</strong> — The call didn't go well. Pick a reason. This is final.</li>
+                  </ul>
                 </div>
               </div>
 
@@ -1949,16 +1949,16 @@ function InfoModal({ onClose }: { onClose: () => void }) {
               <div className="space-y-2">
                 <div className="flex items-center gap-2">
                   <span className="flex items-center justify-center w-6 h-6 rounded-full bg-indigo-100 text-indigo-700 text-xs font-bold">4</span>
-                  <span className="text-sm font-semibold text-slate-800">Follow up with active & abandoned applicants (Follow Up tab)</span>
+                  <span className="text-sm font-semibold text-slate-800">"Someone got selected — now what?"</span>
                 </div>
-                <div className="ml-8 text-xs text-slate-600 leading-relaxed space-y-1">
-                  <p>The <strong>Follow Up</strong> tab shows two groups:</p>
-                  <ul className="list-disc list-inside ml-2 space-y-0.5">
-                    <li><strong>Active (In Progress)</strong> — Currently filling out the form. They started but haven't submitted yet. No action needed unless they've been active for a long time without progressing.</li>
-                    <li><strong>Abandoned</strong> — Left mid-way and chose "Will come back later." Grouped by where they dropped off: Screening, Activity, Basics, Login, or Story.</li>
-                  </ul>
-                  <p>Prioritize <strong>Screening</strong> drop-offs — these people got the furthest and are most likely to convert with a nudge.</p>
-                  <p>Reach out via phone or message. When they return and submit, they'll move to the Submitted tab automatically.</p>
+                <div className="ml-8 text-xs text-slate-600 leading-relaxed space-y-1.5">
+                  <p><strong>Where to look:</strong> Click the <strong>Selected</strong> tab.</p>
+                  <p><strong>What to do:</strong> Help them get their club ready. There are 3 checkboxes you need to complete:</p>
+                  <ol className="list-decimal list-inside ml-2 space-y-1">
+                    <li><strong>First Call Done</strong> — Have a welcome call with them to explain how everything works. Check this box when you're done.</li>
+                    <li><strong>Venue Sorted</strong> — Help them find a place for their club sessions. Check this box when the venue is confirmed.</li>
+                    <li><strong>Marketing Launched</strong> — Their club page or post is live for people to see. When you check this last box, the system automatically marks their club as created!</li>
+                  </ol>
                 </div>
               </div>
 
@@ -1966,28 +1966,45 @@ function InfoModal({ onClose }: { onClose: () => void }) {
               <div className="space-y-2">
                 <div className="flex items-center gap-2">
                   <span className="flex items-center justify-center w-6 h-6 rounded-full bg-indigo-100 text-indigo-700 text-xs font-bold">5</span>
-                  <span className="text-sm font-semibold text-slate-800">Monitor the funnel (Summary cards + Analytics)</span>
+                  <span className="text-sm font-semibold text-slate-800">"People started but didn't finish the form"</span>
                 </div>
-                <div className="ml-8 text-xs text-slate-600 leading-relaxed space-y-1">
-                  <p>The 5 cards at the top show counts per stage. Click any card to jump to that tab.</p>
-                  <p>Use the 3 analytics buttons (Conversion Funnel, TAT, Dropped Analysis) in the analytics section to understand:</p>
-                  <ul className="list-disc list-inside ml-2 space-y-0.5">
-                    <li><strong>Conversion Funnel</strong> — How many people move from one stage to the next. Spot where people are dropping.</li>
-                    <li><strong>TAT (Turnaround Time)</strong> — How fast you're processing applications. Aim to review within 2 working days.</li>
-                    <li><strong>Dropped Analysis</strong> — Breakdown of why and where people leave the pipeline.</li>
+                <div className="ml-8 text-xs text-slate-600 leading-relaxed space-y-1.5">
+                  <p><strong>Where to look:</strong> Click the <strong>Follow Up</strong> tab.</p>
+                  <p><strong>What you'll see:</strong> People who started filling out the form but stopped before submitting. They're grouped by how far they got:</p>
+                  <ul className="list-disc list-inside ml-2 space-y-1">
+                    <li><strong>Screening</strong> — They answered most of the questions but didn't finish. These people are the closest to submitting. <strong>Call them first!</strong></li>
+                    <li><strong>Activity / Basics / Login / Story</strong> — They stopped earlier in the process. Less likely to come back on their own.</li>
+                  </ul>
+                  <p><strong>What to do:</strong> Call or message them. Ask if they need help or have questions. When they come back and finish, they'll automatically show up in the Submitted tab.</p>
+                </div>
+              </div>
+
+              {/* Step 6 */}
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <span className="flex items-center justify-center w-6 h-6 rounded-full bg-indigo-100 text-indigo-700 text-xs font-bold">6</span>
+                  <span className="text-sm font-semibold text-slate-800">"How do I check if things are going well?"</span>
+                </div>
+                <div className="ml-8 text-xs text-slate-600 leading-relaxed space-y-1.5">
+                  <p><strong>The 5 cards at the top</strong> show how many people are in each stage. Click any card to jump straight to that tab.</p>
+                  <p><strong>The chart buttons</strong> (below the cards) give you deeper info:</p>
+                  <ul className="list-disc list-inside ml-2 space-y-1">
+                    <li><strong>Conversion Funnel</strong> — Shows how many people move from one step to the next. If a lot of people drop at a certain step, something might be wrong there.</li>
+                    <li><strong>Speed</strong> — Shows how fast you're reviewing applications. Try to review new ones within 2 days.</li>
+                    <li><strong>Drop-off</strong> — Shows where and why people leave. Helps you figure out what to fix.</li>
                   </ul>
                 </div>
               </div>
 
               {/* Tips */}
               <div className="pt-4 border-t border-slate-100">
-                <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">Quick Tips</div>
+                <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">Good to know</div>
                 <div className="space-y-2 text-xs text-slate-600 leading-relaxed">
-                  <p><strong>Bulk archive:</strong> Select multiple applications with checkboxes, then click Archive. ON_HOLD applications are protected from archive.</p>
-                  <p><strong>Search:</strong> Use the search bar to find applicants by name, phone, city, or activity.</p>
-                  <p><strong>Filters:</strong> Combine subsection, status, city, and activity filters to narrow your view.</p>
-                  <p><strong>SLA badge:</strong> Submitted applications show a "Due in X day(s)" badge. If it says "Overdue," review it immediately.</p>
-                  <p><strong>Add Lead:</strong> Use the "Add Lead" button to manually create an application (e.g., from a phone inquiry).</p>
+                  <p><strong>Cleaning up old applications:</strong> Select multiple rows using the checkboxes, then click "Archive." This hides them from the main view. Don't worry — you can't accidentally archive someone you put On Hold. The system protects them.</p>
+                  <p><strong>Finding someone:</strong> Use the search bar at the top. Type their name, phone number, city, or activity to find them quickly.</p>
+                  <p><strong>Narrowing your view:</strong> Use the dropdown filters (city, activity, status) to see only what you need. You can combine multiple filters.</p>
+                  <p><strong>Adding someone manually:</strong> If someone calls or messages asking to apply, click the <strong>"Add Lead"</strong> button to create their application for them.</p>
+                  <p><strong>The "Overdue" tag:</strong> If you see a red "Overdue" tag on a submitted application, it means you're taking too long to review it. Open it and decide — don't let it sit.</p>
                 </div>
               </div>
             </div>
