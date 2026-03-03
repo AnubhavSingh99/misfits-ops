@@ -1332,10 +1332,11 @@ export interface ClubApplication {
   user_phone: string | null;
   name: string | null;
   status: ClubApplicationStatus;
-  exit_type: 'interested' | 'silent' | null;
-  source: 'app' | 'link';
-  city: string | null;
-  activity: string | null;
+  exit_type: 'interested' | 'silent' | 'not_interested' | 'withdrawn' | null;
+  city_id: number | null;
+  activity_id: number | null;
+  city: string | null;       // from JOIN (city_name alias)
+  activity: string | null;   // from JOIN (activity_name alias)
   awareness: 'yes' | 'no' | 'maybe' | null;
   archived: boolean;
   questionnaire_data: Record<string, any>;
@@ -1347,7 +1348,8 @@ export interface ClubApplication {
   abandoned_at: string | null;
   screening_ratings: ScreeningRatings | null;
   interview_ratings: ScreeningRatings | null;
-  reviewed_by: string | null;
+  reviewed_by_id: number | null;
+  reviewed_by: string | null; // from JOIN (reviewer name alias)
   rejection_reason: string | null;
   split_template_id: string | null;
   split_percentage: Record<string, number> | null;
@@ -1355,9 +1357,15 @@ export interface ClubApplication {
   contract_uploaded_at: string | null;
   signed_contract_url: string | null;
   signed_contract_uploaded_at: string | null;
-  first_call_done: boolean;
-  venue_sorted: boolean;
-  marketing_launched: boolean;
+  first_call_done: boolean;       // derived from first_call_done_at
+  venue_sorted: boolean;          // derived from venue_sorted_at
+  marketing_launched: boolean;    // derived from marketing_launched_at
+  toolkit_shared: boolean;        // derived from toolkit_shared_at
+  first_call_done_at: string | null;
+  venue_sorted_at: string | null;
+  marketing_launched_at: string | null;
+  toolkit_shared_at: string | null;
+  admin_created: boolean;
   created_at: string;
   updated_at: string;
   submitted_at: string | null;
@@ -1370,7 +1378,8 @@ export interface ApplicationStatusEvent {
   application_id: string;
   from_status: string | null;
   to_status: string;
-  actor: 'applicant' | 'admin' | 'system';
+  actor_type: 'applicant' | 'admin' | 'system';
+  actor: string;  // mapped from actor_type for backward compat
   actor_id: number | null;
   metadata: Record<string, any>;
   created_at: string;

@@ -15,6 +15,17 @@ function mapAppRow(row: any) {
   // Map production column names to ops frontend names
   if (row.split_snapshot !== undefined) row.split_percentage = row.split_snapshot;
   if (row.contract_pdf_url !== undefined) row.contract_url = row.contract_pdf_url;
+  // Map new schema names to frontend-expected names
+  if (row.city_name !== undefined) row.city = row.city_name;
+  if (row.activity_name !== undefined) row.activity = row.activity_name;
+  if (row.reviewed_by_name !== undefined) row.reviewed_by = row.reviewed_by_name;
+  // Derive milestone booleans from timestamps for frontend compat
+  if (row.first_call_done_at !== undefined) row.first_call_done = !!row.first_call_done_at;
+  if (row.venue_sorted_at !== undefined) row.venue_sorted = !!row.venue_sorted_at;
+  if (row.marketing_launched_at !== undefined) row.marketing_launched = !!row.marketing_launched_at;
+  if (row.toolkit_shared_at !== undefined) row.toolkit_shared = !!row.toolkit_shared_at;
+  // Map status event actor_type → actor for frontend compat
+  if (row.actor_type !== undefined) row.actor = row.actor_type;
   return row;
 }
 function mapAppRows(rows: any[]) {
@@ -53,13 +64,13 @@ async function recordStatusEvent(
   applicationId: string | number,
   fromStatus: string | null,
   toStatus: string,
-  actor: 'applicant' | 'admin' | 'system',
+  actorType: 'applicant' | 'admin' | 'system',
   metadata: Record<string, any> = {}
 ) {
   await queryProduction(
-    `INSERT INTO club_application_status_event (application_id, from_status, to_status, actor, metadata)
+    `INSERT INTO club_application_status_event (application_id, from_status, to_status, actor_type, metadata)
      VALUES ($1, $2, $3, $4, $5)`,
-    [applicationId, fromStatus, toStatus, actor, JSON.stringify(metadata)]
+    [applicationId, fromStatus, toStatus, actorType, JSON.stringify(metadata)]
   );
 }
 
@@ -87,15 +98,15 @@ router.get('/admin/all', async (req: Request, res: Response) => {
       params.push(status);
     }
     if (city) {
-      conditions.push(`ca.city = $${paramIdx++}`);
+      conditions.push(`cac.name = $${paramIdx++}`);
       params.push(city);
     }
     if (activity) {
-      conditions.push(`ca.activity = $${paramIdx++}`);
+      conditions.push(`caa.name = $${paramIdx++}`);
       params.push(activity);
     }
     if (search) {
-      conditions.push(`(ca.name ILIKE $${paramIdx} OR u.name ILIKE $${paramIdx} OR ca.city ILIKE $${paramIdx} OR ca.activity ILIKE $${paramIdx})`);
+      conditions.push(`(ca.name ILIKE $${paramIdx} OR u.name ILIKE $${paramIdx} OR u.phone ILIKE $${paramIdx} OR cac.name ILIKE $${paramIdx} OR caa.name ILIKE $${paramIdx})`);
       params.push(`%${search}%`);
       paramIdx++;
     }
@@ -105,19 +116,29 @@ router.get('/admin/all', async (req: Request, res: Response) => {
     const allowedSorts = ['created_at', 'updated_at', 'submitted_at', 'name', 'city', 'activity', 'status'];
     const sortCol = allowedSorts.includes(sort as string) ? sort : 'created_at';
     const sortOrder = order === 'asc' ? 'ASC' : 'DESC';
-    const sortPrefix = sortCol === 'name' ? 'COALESCE(ca.name, u.name)' : `ca.${sortCol}`;
+    const sortPrefix = sortCol === 'name' ? 'COALESCE(ca.name, u.name)'
+      : sortCol === 'city' ? 'cac.name'
+      : sortCol === 'activity' ? 'caa.name'
+      : `ca.${sortCol}`;
 
     const pageNum = Math.max(1, parseInt(page as string, 10) || 1);
     const limitNum = Math.min(100, Math.max(1, parseInt(limit as string, 10) || 50));
     const offset = (pageNum - 1) * limitNum;
 
+    const joinClause = `FROM club_application ca
+      LEFT JOIN users u ON u.pk = ca.user_id
+      LEFT JOIN club_app_city cac ON cac.pk = ca.city_id
+      LEFT JOIN club_app_activity caa ON caa.pk = ca.activity_id
+      LEFT JOIN users reviewer ON reviewer.pk = ca.reviewed_by_id`;
+
     const countResult = await queryProduction(
-      `SELECT COUNT(*) FROM club_application ca LEFT JOIN users u ON u.pk = ca.user_id ${where}`, params
+      `SELECT COUNT(*) ${joinClause} ${where}`, params
     );
     const total = parseInt(countResult.rows[0].count, 10);
 
     const dataResult = await queryProduction(
-      `SELECT ca.*, COALESCE(ca.name, u.name) as name FROM club_application ca LEFT JOIN users u ON u.pk = ca.user_id ${where}
+      `SELECT ca.*, COALESCE(ca.name, u.name) as name, u.phone as user_phone, cac.name as city_name, caa.name as activity_name, reviewer.name as reviewed_by_name
+       ${joinClause} ${where}
        ORDER BY ${sortPrefix} ${sortOrder}
        LIMIT $${paramIdx++} OFFSET $${paramIdx++}`,
       [...params, limitNum, offset]
@@ -149,18 +170,20 @@ router.get('/admin/funnel', async (req: Request, res: Response) => {
     );
 
     const byCity = await queryProduction(
-      `SELECT city, COUNT(*)::int as count
-       FROM club_application
-       WHERE archived = false AND city IS NOT NULL
-       GROUP BY city
+      `SELECT cac.name as city, COUNT(*)::int as count
+       FROM club_application ca
+       JOIN club_app_city cac ON cac.pk = ca.city_id
+       WHERE ca.archived = false
+       GROUP BY cac.name
        ORDER BY count DESC`
     );
 
     const byActivity = await queryProduction(
-      `SELECT activity, COUNT(*)::int as count
-       FROM club_application
-       WHERE archived = false AND activity IS NOT NULL
-       GROUP BY activity
+      `SELECT caa.name as activity, COUNT(*)::int as count
+       FROM club_application ca
+       JOIN club_app_activity caa ON caa.pk = ca.activity_id
+       WHERE ca.archived = false
+       GROUP BY caa.name
        ORDER BY count DESC`
     );
 
@@ -365,7 +388,11 @@ router.delete('/admin/rating-dimensions/:id', async (req: Request, res: Response
 router.get('/admin/cities', async (req: Request, res: Response) => {
   try {
     const result = await queryProduction(
-      `SELECT DISTINCT city FROM club_application WHERE city IS NOT NULL AND archived = false ORDER BY city`
+      `SELECT DISTINCT cac.name as city
+       FROM club_application ca
+       JOIN club_app_city cac ON cac.pk = ca.city_id
+       WHERE ca.archived = false
+       ORDER BY cac.name`
     );
     res.json({ success: true, data: result.rows.map((r: any) => r.city) });
   } catch (error: any) {
@@ -377,7 +404,11 @@ router.get('/admin/cities', async (req: Request, res: Response) => {
 router.get('/admin/activities', async (req: Request, res: Response) => {
   try {
     const result = await queryProduction(
-      `SELECT DISTINCT activity FROM club_application WHERE activity IS NOT NULL AND archived = false ORDER BY activity`
+      `SELECT DISTINCT caa.name as activity
+       FROM club_application ca
+       JOIN club_app_activity caa ON caa.pk = ca.activity_id
+       WHERE ca.archived = false
+       ORDER BY caa.name`
     );
     res.json({ success: true, data: result.rows.map((r: any) => r.activity) });
   } catch (error: any) {
@@ -391,7 +422,13 @@ router.get('/admin/:id', async (req: Request, res: Response) => {
     const { id } = req.params;
 
     const appResult = await queryProduction(
-      'SELECT ca.*, COALESCE(ca.name, u.name) as name FROM club_application ca LEFT JOIN users u ON u.pk = ca.user_id WHERE ca.pk = $1', [id]
+      `SELECT ca.*, COALESCE(ca.name, u.name) as name, u.phone as user_phone, cac.name as city_name, caa.name as activity_name, reviewer.name as reviewed_by_name
+       FROM club_application ca
+       LEFT JOIN users u ON u.pk = ca.user_id
+       LEFT JOIN club_app_city cac ON cac.pk = ca.city_id
+       LEFT JOIN club_app_activity caa ON caa.pk = ca.activity_id
+       LEFT JOIN users reviewer ON reviewer.pk = ca.reviewed_by_id
+       WHERE ca.pk = $1`, [id]
     );
     if (appResult.rows.length === 0) {
       return res.status(404).json({ success: false, error: 'Application not found' });
@@ -415,7 +452,11 @@ router.get('/admin/:id', async (req: Request, res: Response) => {
     let pastApps: any[] = [];
     if (app.user_id) {
       const pastResult = await queryProduction(
-        'SELECT pk as id, status, city, activity, created_at, archived FROM club_application WHERE user_id = $1 AND pk != $2 ORDER BY created_at DESC',
+        `SELECT ca2.pk as id, ca2.status, cac2.name as city, caa2.name as activity, ca2.created_at, ca2.archived
+         FROM club_application ca2
+         LEFT JOIN club_app_city cac2 ON cac2.pk = ca2.city_id
+         LEFT JOIN club_app_activity caa2 ON caa2.pk = ca2.activity_id
+         WHERE ca2.user_id = $1 AND ca2.pk != $2 ORDER BY ca2.created_at DESC`,
         [app.user_id, id]
       );
       pastApps = pastResult.rows;
@@ -440,10 +481,23 @@ router.get('/admin/:id', async (req: Request, res: Response) => {
 router.patch('/admin/:id/pick', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const { reviewed_by } = req.body;
+    const { reviewed_by, reviewed_by_id: rawId } = req.body;
 
-    if (!reviewed_by?.trim()) {
-      return res.status(400).json({ success: false, error: 'reviewed_by (your name) is required' });
+    // Accept either reviewed_by (name string) or reviewed_by_id (user pk)
+    let resolvedId = rawId;
+    if (!resolvedId && reviewed_by) {
+      // Look up admin user by name
+      const userResult = await queryProduction(
+        `SELECT pk FROM users WHERE name ILIKE $1 LIMIT 1`,
+        [reviewed_by.trim()]
+      );
+      if (userResult.rows.length > 0) {
+        resolvedId = userResult.rows[0].pk;
+      }
+    }
+
+    if (!resolvedId) {
+      return res.status(400).json({ success: false, error: 'reviewed_by (name) or reviewed_by_id (user pk) is required' });
     }
 
     const appResult = await queryProduction('SELECT * FROM club_application WHERE pk = $1', [id]);
@@ -457,13 +511,13 @@ router.patch('/admin/:id/pick', async (req: Request, res: Response) => {
     }
 
     await queryProduction(
-      `UPDATE club_application SET status = 'UNDER_REVIEW', reviewed_by = $2, picked_at = NOW(), updated_at = NOW() WHERE pk = $1`,
-      [id, reviewed_by.trim()]
+      `UPDATE club_application SET status = 'UNDER_REVIEW', reviewed_by_id = $2, picked_at = NOW(), updated_at = NOW() WHERE pk = $1`,
+      [id, resolvedId]
     );
 
-    await recordStatusEvent(id, 'SUBMITTED', 'UNDER_REVIEW', 'admin', { reviewed_by: reviewed_by.trim() });
+    await recordStatusEvent(id, 'SUBMITTED', 'UNDER_REVIEW', 'admin', { reviewed_by_id: resolvedId, reviewed_by: reviewed_by || null });
     broadcast('application_updated', { id, status: 'UNDER_REVIEW' });
-    res.json({ success: true, data: { id, status: 'UNDER_REVIEW', reviewed_by: reviewed_by.trim() } });
+    res.json({ success: true, data: { id, status: 'UNDER_REVIEW', reviewed_by_id: resolvedId } });
   } catch (error: any) {
     logger.error('Failed to pick application:', error);
     res.status(500).json({ success: false, error: error.message });
@@ -471,11 +525,21 @@ router.patch('/admin/:id/pick', async (req: Request, res: Response) => {
 });
 
 // PATCH /admin/:id/review — 3-outcome review (select-for-interview / reject / on-hold)
-// ALL actions require screening ratings. Also handles SUBMITTED directly (sets reviewed_by).
+// ALL actions require screening ratings. Also handles SUBMITTED directly (sets reviewed_by_id).
 router.patch('/admin/:id/review', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const { action, ratings, rejection_reason, rejection_note, reviewed_by } = req.body;
+    const { action, ratings, rejection_reason, rejection_note, reviewed_by_id: rawId, reviewed_by } = req.body;
+
+    // Accept either reviewed_by (name string) or reviewed_by_id (user pk)
+    let resolvedReviewerId = rawId;
+    if (!resolvedReviewerId && reviewed_by) {
+      const userResult = await queryProduction(
+        `SELECT pk FROM users WHERE name ILIKE $1 LIMIT 1`,
+        [reviewed_by.trim()]
+      );
+      if (userResult.rows.length > 0) resolvedReviewerId = userResult.rows[0].pk;
+    }
 
     const appResult = await queryProduction('SELECT * FROM club_application WHERE pk = $1', [id]);
     if (appResult.rows.length === 0) {
@@ -495,9 +559,9 @@ router.patch('/admin/:id/review', async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, error: 'Invalid action. Must be select_for_interview, reject, or on_hold' });
     }
 
-    // If coming from SUBMITTED, require reviewed_by
-    if (app.status === 'SUBMITTED' && !reviewed_by?.trim()) {
-      return res.status(400).json({ success: false, error: 'Your name (reviewed_by) is required when reviewing from Submitted' });
+    // If coming from SUBMITTED, require reviewer identity
+    if (app.status === 'SUBMITTED' && !resolvedReviewerId) {
+      return res.status(400).json({ success: false, error: 'reviewed_by (name) or reviewed_by_id (user pk) is required when reviewing from Submitted' });
     }
 
     const validation = validateTransition({
@@ -525,10 +589,10 @@ router.patch('/admin/:id/review', async (req: Request, res: Response) => {
       updates.push(`rejection_reason = $${paramIdx++}`);
       updateParams.push(rejection_reason);
     }
-    // Set reviewed_by + picked_at when coming from SUBMITTED
-    if (reviewed_by?.trim()) {
-      updates.push(`reviewed_by = $${paramIdx++}`);
-      updateParams.push(reviewed_by.trim());
+    // Set reviewed_by_id + picked_at when coming from SUBMITTED
+    if (resolvedReviewerId) {
+      updates.push(`reviewed_by_id = $${paramIdx++}`);
+      updateParams.push(resolvedReviewerId);
       updates.push('picked_at = NOW()');
     }
     // Track which stage they were rejected from
@@ -551,7 +615,7 @@ router.patch('/admin/:id/review', async (req: Request, res: Response) => {
       ...(ratings && { ratings }),
       ...(rejection_reason && { rejection_reason }),
       ...(rejection_note && { rejection_note }),
-      ...(reviewed_by && { reviewed_by: reviewed_by.trim() }),
+      ...(resolvedReviewerId && { reviewed_by_id: resolvedReviewerId }),
     });
 
     broadcast('application_updated', { id, status: toStatus });
@@ -726,20 +790,14 @@ router.patch('/admin/:id/milestones', async (req: Request, res: Response) => {
     let paramIdx = 2;
 
     if (first_call_done !== undefined) {
-      updates.push(`first_call_done = $${paramIdx++}`);
-      params.push(first_call_done);
       if (first_call_done) updates.push('first_call_done_at = NOW()');
       else updates.push('first_call_done_at = NULL');
     }
     if (venue_sorted !== undefined) {
-      updates.push(`venue_sorted = $${paramIdx++}`);
-      params.push(venue_sorted);
       if (venue_sorted) updates.push('venue_sorted_at = NOW()');
       else updates.push('venue_sorted_at = NULL');
     }
     if (toolkit_shared !== undefined) {
-      updates.push(`toolkit_shared = $${paramIdx++}`);
-      params.push(toolkit_shared);
       if (toolkit_shared) updates.push('toolkit_shared_at = NOW()');
       else updates.push('toolkit_shared_at = NULL');
     }
@@ -750,8 +808,8 @@ router.patch('/admin/:id/milestones', async (req: Request, res: Response) => {
     if (marketing_launched !== undefined) {
       // Gate: marketing_launched can only be set to true if first_call_done AND venue_sorted AND split saved
       if (marketing_launched === true) {
-        const fcDone = first_call_done !== undefined ? first_call_done : app.first_call_done;
-        const vsDone = venue_sorted !== undefined ? venue_sorted : app.venue_sorted;
+        const fcDone = first_call_done !== undefined ? first_call_done : (app.first_call_done_at != null);
+        const vsDone = venue_sorted !== undefined ? venue_sorted : (app.venue_sorted_at != null);
         if (!fcDone || !vsDone) {
           return res.status(400).json({ success: false, error: 'First call and venue must be completed before marketing launch' });
         }
@@ -759,8 +817,6 @@ router.patch('/admin/:id/milestones', async (req: Request, res: Response) => {
           return res.status(400).json({ success: false, error: 'Revenue split must be saved before marketing launch' });
         }
       }
-      updates.push(`marketing_launched = $${paramIdx++}`);
-      params.push(marketing_launched);
       if (marketing_launched) updates.push('marketing_launched_at = NOW()');
       else updates.push('marketing_launched_at = NULL');
     }
@@ -770,7 +826,7 @@ router.patch('/admin/:id/milestones', async (req: Request, res: Response) => {
     // If marketing_launched is true and all milestones done → auto-transition to CLUB_CREATED
     const updatedResult = await queryProduction('SELECT * FROM club_application WHERE pk = $1', [id]);
     const updated = updatedResult.rows[0];
-    if (updated.first_call_done && updated.venue_sorted && updated.marketing_launched) {
+    if (updated.first_call_done_at && updated.venue_sorted_at && updated.marketing_launched_at) {
       await queryProduction(
         `UPDATE club_application SET status = 'CLUB_CREATED', club_created_at = NOW(), updated_at = NOW() WHERE pk = $1`,
         [id]
@@ -781,7 +837,7 @@ router.patch('/admin/:id/milestones', async (req: Request, res: Response) => {
     }
 
     broadcast('application_updated', { id, status: 'SELECTED' });
-    res.json({ success: true, data: { id, milestones: { first_call_done: updated.first_call_done, venue_sorted: updated.venue_sorted, toolkit_shared: updated.toolkit_shared, marketing_launched: updated.marketing_launched, contract_url: updated.contract_url } } });
+    res.json({ success: true, data: { id, milestones: { first_call_done: updated.first_call_done_at != null, venue_sorted: updated.venue_sorted_at != null, toolkit_shared: updated.toolkit_shared_at != null, marketing_launched: updated.marketing_launched_at != null, contract_url: updated.contract_url } } });
   } catch (error: any) {
     logger.error('Failed to update milestones:', error);
     res.status(500).json({ success: false, error: error.message });
@@ -1088,14 +1144,26 @@ router.post('/admin/create-lead', async (req: Request, res: Response) => {
     // Build the INSERT with status-dependent timestamps
     const name = `${first_name.trim()} ${(last_name || '').trim()}`.trim();
 
+    // Resolve city and activity to IDs via get-or-create
+    const cityResult = await queryProduction(
+      `INSERT INTO club_app_city (name) VALUES ($1) ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name RETURNING pk`,
+      [city.trim()]
+    );
+    const cityId = cityResult.rows[0].pk;
+
+    const activityResult = await queryProduction(
+      `INSERT INTO club_app_activity (name) VALUES ($1) ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name RETURNING pk`,
+      [activity.trim()]
+    );
+    const activityId = activityResult.rows[0].pk;
+
     // Determine which timestamps to set based on target status
     const statusOrder = ['SUBMITTED', 'UNDER_REVIEW', 'INTERVIEW_PENDING', 'INTERVIEW_SCHEDULED', 'INTERVIEW_DONE', 'SELECTED'];
     const targetIdx = statusOrder.indexOf(target_status);
 
     const extraCols: string[] = [];
     const extraVals: string[] = [];
-    const extraParams: any[] = [];
-    let paramIdx = 7; // first 6 params are: user_id, name, city, activity, status, source
+    let paramIdx = 6; // first 5 params are: user_id, name, city_id, activity_id, status
 
     // Always set submitted_at for admin-created leads
     extraCols.push('submitted_at');
@@ -1112,17 +1180,17 @@ router.post('/admin/create-lead', async (req: Request, res: Response) => {
 
     const insertResult = await queryProduction(
       `INSERT INTO club_application (
-        user_id, name, city, activity, status, source,
-        admin_created, admin_created_by,
+        user_id, name, city_id, activity_id, status,
+        admin_created,
         ${extraCols.join(', ')},
         created_at, updated_at
       ) VALUES (
-        $1, $2, $3, $4, $5, $6,
-        true, 'admin',
+        $1, $2, $3, $4, $5,
+        true,
         ${extraVals.join(', ')},
         NOW(), NOW()
       ) RETURNING *`,
-      [userId, name, city.trim(), activity.trim(), target_status, 'admin']
+      [userId, name, cityId, activityId, target_status]
     );
 
     const created = mapAppRow(insertResult.rows[0]);

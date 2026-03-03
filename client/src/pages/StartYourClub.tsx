@@ -143,7 +143,6 @@ interface Application {
   name: string | null;
   status: string;
   exit_type: string | null;
-  source: string;
   city: string | null;
   activity: string | null;
   awareness: string | null;
@@ -216,8 +215,7 @@ interface AnalyticsData {
   };
 }
 
-interface DetailData extends Omit<Application, 'activity'> {
-  activity: string | null;
+interface DetailData extends Application {
   timeline: any[];
   activity_log: any[];
   past_applications: any[];
@@ -624,8 +622,7 @@ function LeadRow({
                     <div>
                       <h3 className="text-base font-bold text-slate-800">{detail.name || 'Anonymous'}</h3>
                       <div className="flex items-center gap-2 mt-0.5 text-xs text-slate-500">
-                        <span>{detail.city}</span><span>·</span><span>{detail.activity}</span>
-                        <span>·</span><span>Source: {detail.source}</span>
+                        <span>{detail.city || '-'}</span><span>·</span><span>{detail.activity || '-'}</span>
                         {detail.user_phone && (<><span>·</span><Phone className="h-3 w-3 inline" /> {detail.user_phone}</>)}
                         {detail.reviewed_by && (<><span>·</span><User className="h-3 w-3 inline" /> Reviewed by: {detail.reviewed_by}</>)}
                       </div>
