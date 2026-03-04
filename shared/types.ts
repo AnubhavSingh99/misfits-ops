@@ -1351,7 +1351,6 @@ export interface ClubApplication {
   reviewed_by_id: number | null;
   reviewed_by: string | null; // from JOIN (reviewer name alias)
   rejection_reason: string | null;
-  split_template_id: string | null;
   split_percentage: Record<string, number> | null;
   contract_url: string | null;
   contract_uploaded_at: string | null;

@@ -366,6 +366,7 @@ function LeadRow({
   // Split percentage (configurable)
   const [splitMisfits, setSplitMisfits] = useState('70');
   const [splitLeader, setSplitLeader] = useState('30');
+  const [showSelectConfirm, setShowSelectConfirm] = useState(false);
 
   // Notes
   const [noteText, setNoteText] = useState('');
@@ -1182,13 +1183,26 @@ function LeadRow({
                                 <p className="text-[10px] text-red-500">Must add up to 100%</p>
                               )}
                             </div>
-                            <button
-                              onClick={handleSelect}
-                              disabled={!allInterviewRated || parseInt(splitMisfits) + parseInt(splitLeader) !== 100}
-                              className="w-full py-2 text-xs font-medium text-white bg-purple-600 rounded-lg hover:bg-purple-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                            >
-                              Select & Assign Split
-                            </button>
+                            {!showSelectConfirm ? (
+                              <button
+                                onClick={() => setShowSelectConfirm(true)}
+                                disabled={!allInterviewRated || parseInt(splitMisfits) + parseInt(splitLeader) !== 100}
+                                className="w-full py-2 text-xs font-medium text-white bg-purple-600 rounded-lg hover:bg-purple-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                              >
+                                Select & Assign Split
+                              </button>
+                            ) : (
+                              <div className="p-3 bg-purple-50 rounded-lg border border-purple-300 mt-1">
+                                <p className="text-xs text-purple-800 font-medium mb-1">
+                                  Select <span className="font-bold">{app.name || 'this applicant'}</span> with {splitMisfits}% / {splitLeader}% split?
+                                </p>
+                                <p className="text-[10px] text-purple-500 mb-2">This cannot be undone.</p>
+                                <div className="flex gap-2">
+                                  <button onClick={async () => { await handleSelect(); setShowSelectConfirm(false); }} className="flex-1 py-1.5 text-xs font-medium text-white bg-purple-600 rounded-lg hover:bg-purple-700">Confirm Selection</button>
+                                  <button onClick={() => setShowSelectConfirm(false)} className="px-3 py-1.5 text-xs text-slate-600 bg-white border rounded-lg hover:bg-slate-50">Cancel</button>
+                                </div>
+                              </div>
+                            )}
                             {!showRejectForm ? (
                               <button
                                 onClick={() => setShowRejectForm(true)}
