@@ -591,14 +591,19 @@ router.patch('/admin/:id/review', async (req: Request, res: Response) => {
       updateParams.push(app.status);
     }
     // Track interview start time
-    if (toStatus === 'INTERVIEW_PENDING') {
+    if (toStatus === 'INTERVIEW_SCHEDULED') {
       updates.push('interview_started_at = NOW()');
     }
 
-    await queryProduction(
-      `UPDATE club_application SET ${updates.join(', ')} WHERE pk = $1`,
+    const statusGuardIdx = paramIdx++;
+    updateParams.push(app.status);
+    const result = await queryProduction(
+      `UPDATE club_application SET ${updates.join(', ')} WHERE pk = $1 AND status = $${statusGuardIdx}`,
       updateParams
     );
+    if (result.rowCount === 0) {
+      return res.status(409).json({ success: false, error: 'Status changed concurrently, please refresh and try again' });
+    }
 
     await recordStatusEvent(id, app.status, toStatus, 'admin', {
       action,
@@ -654,6 +659,11 @@ router.patch('/admin/:id/status', async (req: Request, res: Response) => {
       updates.push('club_created_at = NOW()');
     }
 
+    if (to_status === 'REJECTED') {
+      updates.push(`rejected_from_status = $${paramIdx++}`);
+      params.push(app.status);
+    }
+
     if (metadata.rejection_reason) {
       updates.push(`rejection_reason = $${paramIdx++}`);
       params.push(metadata.rejection_reason);
@@ -667,7 +677,12 @@ router.patch('/admin/:id/status', async (req: Request, res: Response) => {
       params.push(JSON.stringify(metadata.interview_ratings));
     }
 
-    await queryProduction(`UPDATE club_application SET ${updates.join(', ')} WHERE pk = $1`, params);
+    const statusGuardIdx = paramIdx++;
+    params.push(app.status);
+    const result = await queryProduction(`UPDATE club_application SET ${updates.join(', ')} WHERE pk = $1 AND status = $${statusGuardIdx}`, params);
+    if (result.rowCount === 0) {
+      return res.status(409).json({ success: false, error: 'Status changed concurrently, please refresh and try again' });
+    }
     await recordStatusEvent(id, app.status, to_status, actor, metadata);
 
     broadcast('application_updated', { id, status: to_status });
@@ -714,12 +729,15 @@ router.post('/admin/:id/select', async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, error: validation.error });
     }
 
-    await queryProduction(
+    const selectResult = await queryProduction(
       `UPDATE club_application
        SET status = 'SELECTED', split_snapshot = $2, interview_ratings = $3, selected_at = NOW(), updated_at = NOW()
-       WHERE pk = $1`,
+       WHERE pk = $1 AND status = 'INTERVIEW_DONE'`,
       [id, JSON.stringify(split_percentage || { misfits: 70, leader: 30 }), JSON.stringify(interview_ratings)]
     );
+    if (selectResult.rowCount === 0) {
+      return res.status(409).json({ success: false, error: 'Status changed concurrently, please refresh and try again' });
+    }
 
     await recordStatusEvent(id, 'INTERVIEW_DONE', 'SELECTED', 'admin', { split_percentage, interview_ratings });
     broadcast('application_updated', { id, status: 'SELECTED' });
@@ -792,7 +810,7 @@ router.patch('/admin/:id/milestones', async (req: Request, res: Response) => {
       else updates.push('toolkit_shared_at = NULL');
     }
     if (contract_url !== undefined) {
-      updates.push(`contract_url = $${paramIdx++}`);
+      updates.push(`contract_pdf_url = $${paramIdx++}`);
       params.push(contract_url || null);
     }
     if (marketing_launched !== undefined) {
@@ -920,7 +938,12 @@ router.patch('/admin/:id/reject', async (req: Request, res: Response) => {
       params.push(JSON.stringify(interview_ratings));
     }
 
-    await queryProduction(`UPDATE club_application SET ${updates.join(', ')} WHERE pk = $1`, params);
+    const statusGuardIdx = paramIdx++;
+    params.push(app.status);
+    const rejectResult = await queryProduction(`UPDATE club_application SET ${updates.join(', ')} WHERE pk = $1 AND status = $${statusGuardIdx}`, params);
+    if (rejectResult.rowCount === 0) {
+      return res.status(409).json({ success: false, error: 'Status changed concurrently, please refresh and try again' });
+    }
 
     await recordStatusEvent(id, app.status, 'REJECTED', 'admin', { rejection_reason, rejection_note, ratings, interview_ratings });
     broadcast('application_updated', { id, status: 'REJECTED' });
@@ -941,7 +964,7 @@ router.post('/admin/bulk-archive', async (req: Request, res: Response) => {
     }
 
     // Block archiving for high-investment statuses (Interview Phase + Selected + Onboarded)
-    const blockedStatuses = ['INTERVIEW_PENDING', 'INTERVIEW_SCHEDULED', 'INTERVIEW_DONE', 'SELECTED', 'CLUB_CREATED'];
+    const blockedStatuses = ['ON_HOLD', 'INTERVIEW_PENDING', 'INTERVIEW_SCHEDULED', 'INTERVIEW_DONE', 'SELECTED', 'CLUB_CREATED'];
     const blockedCheck = await queryProduction(
       `SELECT pk, status FROM club_application WHERE pk = ANY($1::bigint[]) AND status = ANY($2)`,
       [ids, blockedStatuses]
