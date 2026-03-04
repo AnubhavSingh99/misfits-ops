@@ -106,7 +106,7 @@ router.get('/admin/all', async (req: Request, res: Response) => {
       params.push(activity);
     }
     if (search) {
-      conditions.push(`(ca.name ILIKE $${paramIdx} OR u.name ILIKE $${paramIdx} OR u.phone ILIKE $${paramIdx} OR cac.name ILIKE $${paramIdx} OR caa.name ILIKE $${paramIdx})`);
+      conditions.push(`(ca.name ILIKE $${paramIdx} OR CONCAT(u.first_name, ' ', COALESCE(u.last_name, '')) ILIKE $${paramIdx} OR u.phone ILIKE $${paramIdx} OR cac.name ILIKE $${paramIdx} OR caa.name ILIKE $${paramIdx})`);
       params.push(`%${search}%`);
       paramIdx++;
     }
@@ -116,7 +116,7 @@ router.get('/admin/all', async (req: Request, res: Response) => {
     const allowedSorts = ['created_at', 'updated_at', 'submitted_at', 'name', 'city', 'activity', 'status'];
     const sortCol = allowedSorts.includes(sort as string) ? sort : 'created_at';
     const sortOrder = order === 'asc' ? 'ASC' : 'DESC';
-    const sortPrefix = sortCol === 'name' ? 'COALESCE(ca.name, u.name)'
+    const sortPrefix = sortCol === 'name' ? 'COALESCE(ca.name, CONCAT(u.first_name, \' \', COALESCE(u.last_name, \'\')))'
       : sortCol === 'city' ? 'cac.name'
       : sortCol === 'activity' ? 'caa.name'
       : `ca.${sortCol}`;
@@ -137,7 +137,7 @@ router.get('/admin/all', async (req: Request, res: Response) => {
     const total = parseInt(countResult.rows[0].count, 10);
 
     const dataResult = await queryProduction(
-      `SELECT ca.*, COALESCE(ca.name, u.name) as name, u.phone as user_phone, cac.name as city_name, caa.name as activity_name, reviewer.name as reviewed_by_name
+      `SELECT ca.*, COALESCE(ca.name, CONCAT(u.first_name, ' ', COALESCE(u.last_name, ''))) as name, u.phone as user_phone, cac.name as city_name, caa.name as activity_name, CONCAT(reviewer.first_name, ' ', COALESCE(reviewer.last_name, '')) as reviewed_by_name
        ${joinClause} ${where}
        ORDER BY ${sortPrefix} ${sortOrder}
        LIMIT $${paramIdx++} OFFSET $${paramIdx++}`,
@@ -422,7 +422,7 @@ router.get('/admin/:id', async (req: Request, res: Response) => {
     const { id } = req.params;
 
     const appResult = await queryProduction(
-      `SELECT ca.*, COALESCE(ca.name, u.name) as name, u.phone as user_phone, cac.name as city_name, caa.name as activity_name, reviewer.name as reviewed_by_name
+      `SELECT ca.*, COALESCE(ca.name, CONCAT(u.first_name, ' ', COALESCE(u.last_name, ''))) as name, u.phone as user_phone, cac.name as city_name, caa.name as activity_name, CONCAT(reviewer.first_name, ' ', COALESCE(reviewer.last_name, '')) as reviewed_by_name
        FROM club_application ca
        LEFT JOIN users u ON u.pk = ca.user_id
        LEFT JOIN club_app_city cac ON cac.pk = ca.city_id
