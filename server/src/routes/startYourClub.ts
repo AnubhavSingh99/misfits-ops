@@ -98,15 +98,15 @@ router.get('/admin/all', async (req: Request, res: Response) => {
       params.push(status);
     }
     if (city) {
-      conditions.push(`cac.name = $${paramIdx++}`);
+      conditions.push(`ca.city_name = $${paramIdx++}`);
       params.push(city);
     }
     if (activity) {
-      conditions.push(`caa.name = $${paramIdx++}`);
+      conditions.push(`ca.activity_name = $${paramIdx++}`);
       params.push(activity);
     }
     if (search) {
-      conditions.push(`(ca.name ILIKE $${paramIdx} OR CONCAT(u.first_name, ' ', COALESCE(u.last_name, '')) ILIKE $${paramIdx} OR u.phone ILIKE $${paramIdx} OR cac.name ILIKE $${paramIdx} OR caa.name ILIKE $${paramIdx})`);
+      conditions.push(`(ca.name ILIKE $${paramIdx} OR CONCAT(u.first_name, ' ', COALESCE(u.last_name, '')) ILIKE $${paramIdx} OR u.phone ILIKE $${paramIdx} OR ca.city_name ILIKE $${paramIdx} OR ca.activity_name ILIKE $${paramIdx})`);
       params.push(`%${search}%`);
       paramIdx++;
     }
@@ -117,8 +117,8 @@ router.get('/admin/all', async (req: Request, res: Response) => {
     const sortCol = allowedSorts.includes(sort as string) ? sort : 'created_at';
     const sortOrder = order === 'asc' ? 'ASC' : 'DESC';
     const sortPrefix = sortCol === 'name' ? 'COALESCE(ca.name, CONCAT(u.first_name, \' \', COALESCE(u.last_name, \'\')))'
-      : sortCol === 'city' ? 'cac.name'
-      : sortCol === 'activity' ? 'caa.name'
+      : sortCol === 'city' ? 'ca.city_name'
+      : sortCol === 'activity' ? 'ca.activity_name'
       : `ca.${sortCol}`;
 
     const pageNum = Math.max(1, parseInt(page as string, 10) || 1);
@@ -127,8 +127,6 @@ router.get('/admin/all', async (req: Request, res: Response) => {
 
     const joinClause = `FROM club_application ca
       LEFT JOIN users u ON u.pk = ca.user_id
-      LEFT JOIN club_app_city cac ON cac.pk = ca.city_id
-      LEFT JOIN club_app_activity caa ON caa.pk = ca.activity_id
       LEFT JOIN users reviewer ON reviewer.pk = ca.reviewed_by_id`;
 
     const countResult = await queryProduction(
@@ -137,7 +135,7 @@ router.get('/admin/all', async (req: Request, res: Response) => {
     const total = parseInt(countResult.rows[0].count, 10);
 
     const dataResult = await queryProduction(
-      `SELECT ca.*, COALESCE(ca.name, CONCAT(u.first_name, ' ', COALESCE(u.last_name, ''))) as name, u.phone as user_phone, cac.name as city_name, caa.name as activity_name, CONCAT(reviewer.first_name, ' ', COALESCE(reviewer.last_name, '')) as reviewed_by_name
+      `SELECT ca.*, COALESCE(ca.name, CONCAT(u.first_name, ' ', COALESCE(u.last_name, ''))) as name, u.phone as user_phone, ca.city_name, ca.activity_name, CONCAT(reviewer.first_name, ' ', COALESCE(reviewer.last_name, '')) as reviewed_by_name
        ${joinClause} ${where}
        ORDER BY ${sortPrefix} ${sortOrder}
        LIMIT $${paramIdx++} OFFSET $${paramIdx++}`,
@@ -170,20 +168,18 @@ router.get('/admin/funnel', async (req: Request, res: Response) => {
     );
 
     const byCity = await queryProduction(
-      `SELECT cac.name as city, COUNT(*)::int as count
+      `SELECT ca.city_name as city, COUNT(*)::int as count
        FROM club_application ca
-       JOIN club_app_city cac ON cac.pk = ca.city_id
-       WHERE ca.archived = false
-       GROUP BY cac.name
+       WHERE ca.archived = false AND ca.city_name IS NOT NULL
+       GROUP BY ca.city_name
        ORDER BY count DESC`
     );
 
     const byActivity = await queryProduction(
-      `SELECT caa.name as activity, COUNT(*)::int as count
+      `SELECT ca.activity_name as activity, COUNT(*)::int as count
        FROM club_application ca
-       JOIN club_app_activity caa ON caa.pk = ca.activity_id
-       WHERE ca.archived = false
-       GROUP BY caa.name
+       WHERE ca.archived = false AND ca.activity_name IS NOT NULL
+       GROUP BY ca.activity_name
        ORDER BY count DESC`
     );
 
@@ -388,11 +384,10 @@ router.delete('/admin/rating-dimensions/:id', async (req: Request, res: Response
 router.get('/admin/cities', async (req: Request, res: Response) => {
   try {
     const result = await queryProduction(
-      `SELECT DISTINCT cac.name as city
+      `SELECT DISTINCT ca.city_name as city
        FROM club_application ca
-       JOIN club_app_city cac ON cac.pk = ca.city_id
-       WHERE ca.archived = false
-       ORDER BY cac.name`
+       WHERE ca.archived = false AND ca.city_name IS NOT NULL
+       ORDER BY ca.city_name`
     );
     res.json({ success: true, data: result.rows.map((r: any) => r.city) });
   } catch (error: any) {
@@ -404,11 +399,10 @@ router.get('/admin/cities', async (req: Request, res: Response) => {
 router.get('/admin/activities', async (req: Request, res: Response) => {
   try {
     const result = await queryProduction(
-      `SELECT DISTINCT caa.name as activity
+      `SELECT DISTINCT ca.activity_name as activity
        FROM club_application ca
-       JOIN club_app_activity caa ON caa.pk = ca.activity_id
-       WHERE ca.archived = false
-       ORDER BY caa.name`
+       WHERE ca.archived = false AND ca.activity_name IS NOT NULL
+       ORDER BY ca.activity_name`
     );
     res.json({ success: true, data: result.rows.map((r: any) => r.activity) });
   } catch (error: any) {
@@ -422,11 +416,9 @@ router.get('/admin/:id', async (req: Request, res: Response) => {
     const { id } = req.params;
 
     const appResult = await queryProduction(
-      `SELECT ca.*, COALESCE(ca.name, CONCAT(u.first_name, ' ', COALESCE(u.last_name, ''))) as name, u.phone as user_phone, cac.name as city_name, caa.name as activity_name, CONCAT(reviewer.first_name, ' ', COALESCE(reviewer.last_name, '')) as reviewed_by_name
+      `SELECT ca.*, COALESCE(ca.name, CONCAT(u.first_name, ' ', COALESCE(u.last_name, ''))) as name, u.phone as user_phone, ca.city_name, ca.activity_name, CONCAT(reviewer.first_name, ' ', COALESCE(reviewer.last_name, '')) as reviewed_by_name
        FROM club_application ca
        LEFT JOIN users u ON u.pk = ca.user_id
-       LEFT JOIN club_app_city cac ON cac.pk = ca.city_id
-       LEFT JOIN club_app_activity caa ON caa.pk = ca.activity_id
        LEFT JOIN users reviewer ON reviewer.pk = ca.reviewed_by_id
        WHERE ca.pk = $1`, [id]
     );
@@ -452,10 +444,8 @@ router.get('/admin/:id', async (req: Request, res: Response) => {
     let pastApps: any[] = [];
     if (app.user_id) {
       const pastResult = await queryProduction(
-        `SELECT ca2.pk as id, ca2.status, cac2.name as city, caa2.name as activity, ca2.created_at, ca2.archived
+        `SELECT ca2.pk as id, ca2.status, ca2.city_name as city, ca2.activity_name as activity, ca2.created_at, ca2.archived
          FROM club_application ca2
-         LEFT JOIN club_app_city cac2 ON cac2.pk = ca2.city_id
-         LEFT JOIN club_app_activity caa2 ON caa2.pk = ca2.activity_id
          WHERE ca2.user_id = $1 AND ca2.pk != $2 ORDER BY ca2.created_at DESC`,
         [app.user_id, id]
       );
@@ -1144,26 +1134,13 @@ router.post('/admin/create-lead', async (req: Request, res: Response) => {
     // Build the INSERT with status-dependent timestamps
     const name = `${first_name.trim()} ${(last_name || '').trim()}`.trim();
 
-    // Resolve city and activity to IDs via get-or-create
-    const cityResult = await queryProduction(
-      `INSERT INTO club_app_city (name) VALUES ($1) ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name RETURNING pk`,
-      [city.trim()]
-    );
-    const cityId = cityResult.rows[0].pk;
-
-    const activityResult = await queryProduction(
-      `INSERT INTO club_app_activity (name) VALUES ($1) ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name RETURNING pk`,
-      [activity.trim()]
-    );
-    const activityId = activityResult.rows[0].pk;
-
     // Determine which timestamps to set based on target status
     const statusOrder = ['SUBMITTED', 'UNDER_REVIEW', 'INTERVIEW_PENDING', 'INTERVIEW_SCHEDULED', 'INTERVIEW_DONE', 'SELECTED'];
     const targetIdx = statusOrder.indexOf(target_status);
 
     const extraCols: string[] = [];
     const extraVals: string[] = [];
-    let paramIdx = 6; // first 5 params are: user_id, name, city_id, activity_id, status
+    let paramIdx = 6; // first 5 params are: user_id, name, city_name, activity_name, status
 
     // Always set submitted_at for admin-created leads
     extraCols.push('submitted_at');
@@ -1180,7 +1157,7 @@ router.post('/admin/create-lead', async (req: Request, res: Response) => {
 
     const insertResult = await queryProduction(
       `INSERT INTO club_application (
-        user_id, name, city_id, activity_id, status,
+        user_id, name, city_name, activity_name, status,
         admin_created,
         ${extraCols.join(', ')},
         created_at, updated_at
@@ -1190,7 +1167,7 @@ router.post('/admin/create-lead', async (req: Request, res: Response) => {
         ${extraVals.join(', ')},
         NOW(), NOW()
       ) RETURNING *`,
-      [userId, name, cityId, activityId, target_status]
+      [userId, name, city.trim(), activity.trim(), target_status]
     );
 
     const created = mapAppRow(insertResult.rows[0]);
