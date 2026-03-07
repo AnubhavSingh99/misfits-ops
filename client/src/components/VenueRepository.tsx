@@ -338,6 +338,13 @@ export function VenueRepository() {
     }
   }, [filter.cities, filter.areas, filter.activities, filter.capacities, filter.notTransferred, activeStatusFilters, showOnboarded, showInactive]);
 
+  // Re-fetch when search is cleared so all venues come back
+  useEffect(() => {
+    if (isExpanded && filter.search === '') {
+      fetchVenues();
+    }
+  }, [filter.search]);
+
   // Cascading: clear orphaned area selections when city changes
   useEffect(() => {
     if (filter.cities.length > 0 && filter.areas.length > 0) {
