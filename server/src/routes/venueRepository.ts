@@ -1,12 +1,30 @@
 import { Router, Request, Response } from 'express';
 import { exec } from 'child_process';
 import { promisify } from 'util';
+import multer from 'multer';
+import sharp from 'sharp';
+import crypto from 'crypto';
+import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 import { logger } from '../utils/logger';
 import { queryLocal, queryProduction } from '../services/database';
 
 const execAsync = promisify(exec);
 
 const router = Router();
+
+// Multer for image uploads (max 10MB, images only)
+const imageUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    if (file.mimetype.startsWith('image/')) cb(null, true);
+    else cb(new Error('Only image files are allowed'));
+  }
+});
+
+// S3 client (uses EC2 instance credentials in production, AWS CLI credentials locally)
+const s3Client = new S3Client({ region: 'ap-south-1' });
+const S3_BUCKET = 'misfits-images';
 
 // URL validation helper - must be Google Maps, not share.google
 function validateMapsUrl(url: string): { valid: boolean; error?: string } {
@@ -1162,6 +1180,95 @@ router.get('/stats/summary', async (req: Request, res: Response) => {
 });
 
 // ============================================
+// IMAGE UPLOAD
+// ============================================
+
+/**
+ * POST /api/venue-repository/:id/upload-image
+ * Upload a venue image: convert to webp, upload to S3, create file record in production DB
+ */
+router.post('/:id/upload-image', imageUpload.single('image'), async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const file = req.file;
+
+    if (!file) {
+      return res.status(400).json({ error: 'No image file provided' });
+    }
+
+    // Verify venue exists
+    const venueResult = await queryLocal('SELECT id FROM venue_repository WHERE id = $1', [id]);
+    if (venueResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Venue not found' });
+    }
+
+    // Convert to webp using sharp
+    const webpBuffer = await sharp(file.buffer)
+      .resize(1200, 1200, { fit: 'inside', withoutEnlargement: true })
+      .webp({ quality: 80 })
+      .toBuffer();
+
+    // Generate random filename (same pattern as misfits backend)
+    const randomName = crypto.randomBytes(8).toString('base64url');
+    const fileName = `${randomName}.webp`;
+    const s3Url = `https://${S3_BUCKET}.s3.ap-south-1.amazonaws.com/${fileName}`;
+
+    // Upload to S3
+    await s3Client.send(new PutObjectCommand({
+      Bucket: S3_BUCKET,
+      Key: fileName,
+      Body: webpBuffer,
+      ContentType: 'image/webp',
+    }));
+
+    logger.info(`Uploaded venue image to S3: ${s3Url}`);
+
+    // Create file record in production DB to get a file_id
+    const fileResult = await queryProduction(
+      `INSERT INTO file (file_name, content_type, s3_url) VALUES ($1, $2, $3) RETURNING id`,
+      [fileName, 'image/webp', s3Url]
+    );
+    const fileId = fileResult.rows[0].id;
+
+    logger.info(`Created file record in production DB: file_id=${fileId}`);
+
+    // Update venue_repository with file_id and s3_url
+    await queryLocal(
+      'UPDATE venue_repository SET image_file_id = $1, image_s3_url = $2 WHERE id = $3',
+      [fileId, s3Url, id]
+    );
+
+    res.json({
+      success: true,
+      file_id: fileId,
+      s3_url: s3Url,
+      message: 'Image uploaded successfully'
+    });
+  } catch (error) {
+    logger.error('Error uploading venue image:', error);
+    res.status(500).json({ error: 'Failed to upload image' });
+  }
+});
+
+/**
+ * DELETE /api/venue-repository/:id/image
+ * Remove venue image reference (does not delete from S3)
+ */
+router.delete('/:id/image', async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    await queryLocal(
+      'UPDATE venue_repository SET image_file_id = NULL, image_s3_url = NULL WHERE id = $1',
+      [id]
+    );
+    res.json({ success: true });
+  } catch (error) {
+    logger.error('Error removing venue image:', error);
+    res.status(500).json({ error: 'Failed to remove image' });
+  }
+});
+
+// ============================================
 // VMS TRANSFER
 // ============================================
 
@@ -1255,7 +1362,15 @@ router.post('/:id/transfer-to-vms', async (req: Request, res: Response) => {
     if (venueInfo.amenities && venueInfo.amenities.length > 0) grpcRequest.amenities = venueInfo.amenities;
     if (venueInfo.chargeable !== undefined) grpcRequest.chargeable = venueInfo.chargeable;
     if (venueInfo.reason_for_charge) grpcRequest.reason_for_charge = venueInfo.reason_for_charge;
-    if (venueInfo.media && venueInfo.media.length > 0) grpcRequest.media = venueInfo.media;
+    if (venueInfo.media && venueInfo.media.length > 0) {
+      grpcRequest.media = venueInfo.media;
+    } else if (venue.image_file_id) {
+      // Use uploaded venue image
+      grpcRequest.media = [{ type: 'IMAGE', file_id: venue.image_file_id, order: 0 }];
+    } else {
+      // Default placeholder image (file ID 350) — required because location.image has a FK to file table
+      grpcRequest.media = [{ type: 'IMAGE', file_id: 350, order: 0 }];
+    }
 
     if (venueInfo.preferred_schedules && venueInfo.preferred_schedules.length > 0) {
       // Time slot name → VMS start_time/end_time mapping
@@ -1318,7 +1433,7 @@ router.post('/:id/transfer-to-vms', async (req: Request, res: Response) => {
     // Call gRPC CreateVenue
     const grpcData = JSON.stringify(grpcRequest);
     const escapedData = grpcData.replace(/'/g, "'\\''");
-    const grpcCmd = `/home/ec2-user/go/bin/grpcurl -plaintext -H 'authorization: bearer ${grpcApiKey}' -d '${escapedData}' 15.207.255.212:8001 LocationService.CreateVenue`;
+    const grpcCmd = `/home/ec2-user/go/bin/grpcurl -plaintext -H 'x-api-key: ${grpcApiKey}' -d '${escapedData}' 15.207.255.212:8001 LocationService.CreateVenue`;
 
     logger.info(`Calling gRPC CreateVenue for venue ${id}: ${venue.name}`, { grpcRequest: JSON.stringify(grpcRequest).substring(0, 500) });
 
