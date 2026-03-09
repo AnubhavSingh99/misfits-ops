@@ -867,7 +867,7 @@ export default function CustomerServiceDashboard() {
     };
     (async () => {
       try {
-        const wsUrl = await getWSUrl(selectedId);
+        const wsUrl = getWSUrl(selectedId);
         if (cancelled) return;
         const ws = new WebSocket(wsUrl);
         wsRef.current = ws;

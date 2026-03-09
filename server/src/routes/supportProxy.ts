@@ -1,4 +1,4 @@
-import { Router, Request, Response } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { Pool } from 'pg';
 import { logger } from '../utils/logger';
@@ -7,7 +7,33 @@ const router = Router();
 
 const MISFITS_URL = process.env.MISFITS_BACKEND_URL || 'http://localhost:8000';
 const ADMIN_USER_PK = parseInt(process.env.SUPPORT_ADMIN_USER_PK || '1', 10);
-const JWT_SECRET = process.env.MISFITS_JWT_SECRET || 'JWT_SECRET';
+
+// Critical: Refuse to start with a guessable default JWT secret
+const JWT_SECRET = process.env.MISFITS_JWT_SECRET;
+if (!JWT_SECRET) {
+  logger.warn('MISFITS_JWT_SECRET is not set — support proxy endpoints will be disabled');
+}
+
+// Validate that :id param is a positive integer
+function validateId(req: Request, res: Response, next: NextFunction): void {
+  const id = parseInt(req.params.id, 10);
+  if (isNaN(id) || id <= 0 || String(id) !== req.params.id) {
+    res.status(400).json({ error: 'Invalid ticket ID' });
+    return;
+  }
+  next();
+}
+
+// Block all support routes if JWT secret is not configured
+function requireJwtSecret(_req: Request, res: Response, next: NextFunction): void {
+  if (!JWT_SECRET) {
+    res.status(503).json({ error: 'Support proxy not configured: MISFITS_JWT_SECRET is required' });
+    return;
+  }
+  next();
+}
+
+router.use(requireJwtSecret);
 
 // Direct connection to misfits PostgreSQL for ticket listing (bypasses broken Go endpoint)
 const misfitsPool = new Pool({
@@ -25,6 +51,7 @@ let adminToken: string | null = null;
 let adminTokenExpiry = 0;
 
 function getAdminToken(): string {
+  if (!JWT_SECRET) throw new Error('MISFITS_JWT_SECRET not configured');
   const now = Math.floor(Date.now() / 1000);
   if (adminToken && adminTokenExpiry > now + 60) {
     return adminToken;
@@ -122,7 +149,7 @@ router.get('/agent/stats', async (req: Request, res: Response) => {
   }
 });
 
-router.patch('/agent/tickets/:id', async (req: Request, res: Response) => {
+router.patch('/agent/tickets/:id', validateId, async (req: Request, res: Response) => {
   try {
     const result = await proxyToMisfits('PATCH', `/v1/support/agent/tickets/${req.params.id}`, req.body);
     res.status(result.status).json(result.data);
@@ -132,7 +159,7 @@ router.patch('/agent/tickets/:id', async (req: Request, res: Response) => {
   }
 });
 
-router.patch('/agent/tickets/:id/status', async (req: Request, res: Response) => {
+router.patch('/agent/tickets/:id/status', validateId, async (req: Request, res: Response) => {
   try {
     const result = await proxyToMisfits('PATCH', `/v1/support/agent/tickets/${req.params.id}/status`, req.body);
     res.status(result.status).json(result.data);
@@ -142,24 +169,21 @@ router.patch('/agent/tickets/:id/status', async (req: Request, res: Response) =>
   }
 });
 
-router.patch('/agent/tickets/:id/priority', async (req: Request, res: Response) => {
+router.patch('/agent/tickets/:id/priority', validateId, async (req: Request, res: Response) => {
   try {
     const { priority } = req.body;
     if (!priority || !['LOW', 'MEDIUM', 'HIGH', 'URGENT'].includes(priority)) {
       return res.status(400).json({ error: 'Invalid priority' });
     }
-    await misfitsPool.query(
-      `UPDATE support_ticket SET priority = $1, updated_at = NOW() WHERE id = $2`,
-      [priority, req.params.id]
-    );
-    res.json({ ok: true });
+    const result = await proxyToMisfits('PATCH', `/v1/support/agent/tickets/${req.params.id}`, { priority });
+    res.status(result.status).json(result.data);
   } catch (error) {
     logger.error('Support proxy error (agent/tickets/:id/priority):', error);
-    res.status(500).json({ error: 'Failed to update priority' });
+    res.status(502).json({ error: 'Failed to reach support backend' });
   }
 });
 
-router.post('/agent/tickets/:id/accept', async (req: Request, res: Response) => {
+router.post('/agent/tickets/:id/accept', validateId, async (req: Request, res: Response) => {
   try {
     const result = await proxyToMisfits('POST', `/v1/support/agent/tickets/${req.params.id}/accept`);
     res.status(result.status).json(result.data);
@@ -169,7 +193,7 @@ router.post('/agent/tickets/:id/accept', async (req: Request, res: Response) => 
   }
 });
 
-router.post('/agent/tickets/:id/resolve', async (req: Request, res: Response) => {
+router.post('/agent/tickets/:id/resolve', validateId, async (req: Request, res: Response) => {
   try {
     const result = await proxyToMisfits('POST', `/v1/support/agent/tickets/${req.params.id}/resolve`, req.body);
     res.status(result.status).json(result.data);
@@ -180,7 +204,7 @@ router.post('/agent/tickets/:id/resolve', async (req: Request, res: Response) =>
 });
 
 // Ticket detail & messages
-router.get('/tickets/:id', async (req: Request, res: Response) => {
+router.get('/tickets/:id', validateId, async (req: Request, res: Response) => {
   try {
     const result = await proxyToMisfits('GET', `/v1/support/tickets/${req.params.id}`);
     res.status(result.status).json(result.data);
@@ -190,7 +214,7 @@ router.get('/tickets/:id', async (req: Request, res: Response) => {
   }
 });
 
-router.post('/tickets/:id/messages', async (req: Request, res: Response) => {
+router.post('/tickets/:id/messages', validateId, async (req: Request, res: Response) => {
   try {
     const result = await proxyToMisfits('POST', `/v1/support/tickets/${req.params.id}/messages`, req.body);
     res.status(result.status).json(result.data);
@@ -200,7 +224,7 @@ router.post('/tickets/:id/messages', async (req: Request, res: Response) => {
   }
 });
 
-router.post('/tickets/:id/messages/read', async (req: Request, res: Response) => {
+router.post('/tickets/:id/messages/read', validateId, async (req: Request, res: Response) => {
   try {
     const result = await proxyToMisfits('POST', `/v1/support/tickets/${req.params.id}/messages/read`, req.body);
     res.status(result.status).json(result.data);
@@ -221,12 +245,8 @@ router.post('/file/put-url', async (req: Request, res: Response) => {
   }
 });
 
-// WebSocket info for frontend
-router.get('/ws-info', (_req: Request, res: Response) => {
-  const wsBase = MISFITS_URL.replace(/^http/, 'ws');
-  const token = getAdminToken();
-  res.json({ wsBase, token });
-});
+// /ws-info removed — WebSocket is now proxied server-side via the HTTP upgrade handler in server.ts
+// The frontend connects to ws://<ops-host>/ws/support/chat?ticket_id=N directly
 
 // SSE endpoint for real-time incoming request notifications
 router.get('/agent/events', async (req: Request, res: Response) => {

@@ -161,18 +161,9 @@ export function getAgentEventsUrl(): string {
   return `${SUPPORT_BASE}/agent/events`;
 }
 
-// --- WebSocket ---
+// --- WebSocket (proxied through ops backend — no token exposed to browser) ---
 
-let wsInfoCache: { wsBase: string; token: string } | null = null;
-
-async function getWSInfo(): Promise<{ wsBase: string; token: string }> {
-  if (wsInfoCache) return wsInfoCache;
-  const res = await fetch(`${SUPPORT_BASE}/ws-info`);
-  wsInfoCache = await res.json();
-  return wsInfoCache!;
-}
-
-export async function getWSUrl(ticketId: number): Promise<string> {
-  const { wsBase, token } = await getWSInfo();
-  return `${wsBase}/ws/support/chat?token=${token}&ticket_id=${ticketId}`;
+export function getWSUrl(ticketId: number): string {
+  const wsBase = API_URL.replace(/^http/, 'ws');
+  return `${wsBase}/ws/support/chat?ticket_id=${ticketId}`;
 }

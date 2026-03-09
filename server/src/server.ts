@@ -6,7 +6,8 @@ import compression from 'compression';
 import rateLimit from 'express-rate-limit';
 import dotenv from 'dotenv';
 import path from 'path';
-import { createServer } from 'http';
+import { createServer, IncomingMessage } from 'http';
+import WebSocket from 'ws';
 
 // Import routes
 import authRoutes from './routes/auth';
@@ -316,6 +317,55 @@ async function startServer() {
 
     // Start server
     const server = createServer(app);
+
+    // WebSocket proxy for support chat — keeps admin JWT server-side
+    server.on('upgrade', (req: IncomingMessage, socket, head) => {
+      const url = new URL(req.url || '', `http://${req.headers.host}`);
+      if (url.pathname !== '/ws/support/chat') {
+        socket.destroy();
+        return;
+      }
+      const ticketId = url.searchParams.get('ticket_id');
+      if (!ticketId || !/^\d+$/.test(ticketId)) {
+        socket.destroy();
+        return;
+      }
+      const jwtSecret = process.env.MISFITS_JWT_SECRET;
+      if (!jwtSecret) {
+        socket.destroy();
+        return;
+      }
+      try {
+        const adminPk = parseInt(process.env.SUPPORT_ADMIN_USER_PK || '1', 10);
+        const now = Math.floor(Date.now() / 1000);
+        const token = require('jsonwebtoken').sign(
+          { USER_ID_KEY: adminPk, EXP_KEY: now + 3600 },
+          jwtSecret
+        );
+        const backendUrl = (process.env.MISFITS_BACKEND_URL || 'http://localhost:8000').replace(/^http/, 'ws');
+        const upstream = new WebSocket(`${backendUrl}/ws/support/chat?token=${token}&ticket_id=${ticketId}`);
+
+        upstream.on('open', () => {
+          const wss = new WebSocket.Server({ noServer: true });
+          wss.handleUpgrade(req, socket, head, (clientWs) => {
+            clientWs.on('message', (data) => {
+              if (upstream.readyState === WebSocket.OPEN) upstream.send(data);
+            });
+            upstream.on('message', (data) => {
+              if (clientWs.readyState === WebSocket.OPEN) clientWs.send(data);
+            });
+            clientWs.on('close', () => upstream.close());
+            upstream.on('close', () => clientWs.close());
+          });
+        });
+
+        upstream.on('error', () => {
+          socket.destroy();
+        });
+      } catch {
+        socket.destroy();
+      }
+    });
 
     server.listen(PORT, () => {
       logger.info(`🚀 Misfits Operations Server running on port ${PORT}`);
