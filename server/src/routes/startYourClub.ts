@@ -475,8 +475,8 @@ router.patch('/admin/:id/pick', async (req: Request, res: Response) => {
     }
 
     await queryProduction(
-      `UPDATE club_application SET status = 'UNDER_REVIEW', reviewed_by_id = $2, picked_at = NOW(), updated_at = NOW() WHERE pk = $1`,
-      [id, reviewed_by.trim()]
+      `UPDATE club_application SET status = 'UNDER_REVIEW', picked_at = NOW(), updated_at = NOW() WHERE pk = $1`,
+      [id]
     );
 
     await recordStatusEvent(id, 'SUBMITTED', 'UNDER_REVIEW', 'admin', { reviewed_by: reviewed_by.trim() });
@@ -543,10 +543,8 @@ router.patch('/admin/:id/review', async (req: Request, res: Response) => {
       updates.push(`rejection_reason = $${paramIdx++}`);
       updateParams.push(rejection_reason);
     }
-    // Set reviewed_by + picked_at when coming from SUBMITTED
+    // Set picked_at when coming from SUBMITTED
     if (reviewed_by?.trim()) {
-      updates.push(`reviewed_by_id = $${paramIdx++}`);
-      updateParams.push(reviewed_by.trim());
       updates.push('picked_at = NOW()');
     }
     // Track which stage they were rejected from
