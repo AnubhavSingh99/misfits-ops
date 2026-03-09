@@ -49,6 +49,22 @@ interface VenueInfo {
   reason_for_charge?: string;
 }
 
+interface AssociationRequest {
+  id: number;
+  raised_on: string;
+  club_id: number;
+  club_name: string;
+  venue_id: number;
+  venue_name: string;
+  estimated_footfall: string;
+  club_requirements: string;
+  note: string;
+  preferred_schedule: string;
+  request_status: string;
+  meeting_status: string;
+  tracking_notes?: string;
+}
+
 interface Venue {
   id: number;
   name: string;
@@ -183,6 +199,11 @@ export function VenueRepository() {
   const [options, setOptions] = useState<Options | null>(null);
   const [showModal, setShowModal] = useState(false);
   const [editingVenue, setEditingVenue] = useState<Venue | null>(null);
+
+  // Association Requests state
+  const [associationRequestsExpanded, setAssociationRequestsExpanded] = useState(false);
+  const [associationRequests, setAssociationRequests] = useState<AssociationRequest[]>([]);
+  const [loadingRequests, setLoadingRequests] = useState(false);
   const [filter, setFilter] = useState({
     search: '',
     cities: [] as number[],
@@ -331,12 +352,26 @@ export function VenueRepository() {
     }
   }, [isExpanded]);
 
+  // Fetch association requests when expanded
+  useEffect(() => {
+    if (associationRequestsExpanded && associationRequests.length === 0) {
+      fetchAssociationRequests();
+    }
+  }, [associationRequestsExpanded]);
+
   // Auto-refetch when dropdown filters change (only when expanded)
   useEffect(() => {
     if (isExpanded) {
       fetchVenues();
     }
   }, [filter.cities, filter.areas, filter.activities, filter.capacities, filter.notTransferred, activeStatusFilters, showOnboarded, showInactive]);
+
+  // Re-fetch when search is cleared so all venues come back
+  useEffect(() => {
+    if (isExpanded && filter.search === '') {
+      fetchVenues();
+    }
+  }, [filter.search]);
 
   // Cascading: clear orphaned area selections when city changes
   useEffect(() => {
@@ -382,6 +417,40 @@ export function VenueRepository() {
       }
     } catch (error) {
       console.error('Error fetching filter options:', error);
+    }
+  };
+
+  const fetchAssociationRequests = async () => {
+    setLoadingRequests(true);
+    try {
+      const res = await fetch(`${API_BASE}/venue-repository/association-requests`);
+      const data = await res.json();
+      if (data.success) {
+        setAssociationRequests(data.requests);
+      }
+    } catch (error) {
+      console.error('Error fetching association requests:', error);
+    } finally {
+      setLoadingRequests(false);
+    }
+  };
+
+  const handleMeetingStatusChange = async (requestId: number, newStatus: string) => {
+    try {
+      const res = await fetch(`${API_BASE}/venue-repository/association-requests/${requestId}/meeting-status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ meeting_status: newStatus })
+      });
+      const data = await res.json();
+      if (data.success) {
+        // Update local state
+        setAssociationRequests(prev =>
+          prev.map(req => req.id === requestId ? { ...req, meeting_status: newStatus } : req)
+        );
+      }
+    } catch (error) {
+      console.error('Error updating meeting status:', error);
     }
   };
 
@@ -1211,6 +1280,122 @@ export function VenueRepository() {
           </div>
         </div>
       )}
+
+      {/* Association Requests Section */}
+      <div className="mt-4 bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+        <button
+          onClick={() => setAssociationRequestsExpanded(!associationRequestsExpanded)}
+          className="w-full px-4 py-3 flex items-center justify-between bg-gray-50/80 hover:bg-gray-100 transition-colors"
+        >
+          <div className="flex items-center gap-2">
+            <MessageSquare className="h-5 w-5 text-purple-500" />
+            <span className="font-medium text-gray-700">
+              Association Requests ({associationRequests.length})
+            </span>
+          </div>
+          {associationRequestsExpanded ? <ChevronUp size={20} className="text-gray-400" /> : <ChevronDown size={20} className="text-gray-400" />}
+        </button>
+
+        {associationRequestsExpanded && (
+          <div className="border-t border-gray-200">
+            <div className="max-h-[600px] overflow-y-auto">
+              {loadingRequests ? (
+                <div className="flex items-center justify-center py-12">
+                  <Loader2 className="h-6 w-6 animate-spin text-purple-500" />
+                </div>
+              ) : associationRequests.length === 0 ? (
+                <div className="text-center py-12 text-gray-500">
+                  No association requests found.
+                </div>
+              ) : (
+                <table className="w-full text-sm">
+                  <thead className="bg-gray-50 sticky top-0 z-10">
+                    <tr>
+                      <th className="text-left px-4 py-3 font-medium text-gray-600">Raised On</th>
+                      <th className="text-left px-4 py-3 font-medium text-gray-600">Club Name</th>
+                      <th className="text-left px-4 py-3 font-medium text-gray-600">Venue Name</th>
+                      <th className="text-left px-4 py-3 font-medium text-gray-600">Estimated Footfall</th>
+                      <th className="text-left px-4 py-3 font-medium text-gray-600">Club Requirements</th>
+                      <th className="text-left px-4 py-3 font-medium text-gray-600">Note</th>
+                      <th className="text-left px-4 py-3 font-medium text-gray-600">Preferred Schedule</th>
+                      <th className="text-left px-4 py-3 font-medium text-gray-600">Request Status</th>
+                      <th className="text-left px-4 py-3 font-medium text-gray-600">Meeting Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {associationRequests.map((request) => {
+                      const raisedDate = new Date(request.raised_on);
+                      const formattedDate = raisedDate.toLocaleString('en-IN', {
+                        day: '2-digit',
+                        month: 'short',
+                        year: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        hour12: true,
+                        timeZone: 'Asia/Kolkata'
+                      });
+
+                      const statusConfig: Record<string, { label: string; color: string; bgColor: string }> = {
+                        PENDING: { label: 'Pending', color: 'text-yellow-600', bgColor: 'bg-yellow-50' },
+                        COMPLETED: { label: 'Completed', color: 'text-green-600', bgColor: 'bg-green-50' },
+                        DELETED: { label: 'Deleted', color: 'text-red-600', bgColor: 'bg-red-50' }
+                      };
+
+                      const meetingStatusConfig: Record<string, { label: string; color: string; bgColor: string }> = {
+                        not_picked: { label: 'Not Picked', color: 'text-gray-600', bgColor: 'bg-gray-50' },
+                        scheduled: { label: 'Scheduled', color: 'text-blue-600', bgColor: 'bg-blue-50' },
+                        done: { label: 'Done', color: 'text-green-600', bgColor: 'bg-green-50' },
+                        rescheduled: { label: 'Rescheduled', color: 'text-orange-600', bgColor: 'bg-orange-50' }
+                      };
+
+                      return (
+                        <tr key={request.id} className="hover:bg-gray-50">
+                          <td className="px-4 py-3 text-xs text-gray-600">{formattedDate}</td>
+                          <td className="px-4 py-3 text-sm font-medium text-gray-900">{request.club_name}</td>
+                          <td className="px-4 py-3 text-sm text-gray-700">{request.venue_name}</td>
+                          <td className="px-4 py-3 text-sm text-gray-600">{request.estimated_footfall}</td>
+                          <td className="px-4 py-3 text-xs text-gray-600 max-w-xs">
+                            <div className="line-clamp-2" title={request.club_requirements}>
+                              {request.club_requirements}
+                            </div>
+                          </td>
+                          <td className="px-4 py-3 text-xs text-gray-600 max-w-xs">
+                            <div className="line-clamp-2" title={request.note}>
+                              {request.note}
+                            </div>
+                          </td>
+                          <td className="px-4 py-3 text-xs text-gray-600 whitespace-pre-line max-w-xs">
+                            <div className="line-clamp-3" title={request.preferred_schedule}>
+                              {request.preferred_schedule}
+                            </div>
+                          </td>
+                          <td className="px-4 py-3">
+                            <span className={`text-xs px-2 py-1 rounded-full ${statusConfig[request.request_status]?.bgColor || 'bg-gray-50'} ${statusConfig[request.request_status]?.color || 'text-gray-600'}`}>
+                              {statusConfig[request.request_status]?.label || request.request_status}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3">
+                            <select
+                              value={request.meeting_status}
+                              onChange={(e) => handleMeetingStatusChange(request.id, e.target.value)}
+                              className={`text-xs px-2 py-1 rounded-full border ${meetingStatusConfig[request.meeting_status]?.bgColor || 'bg-gray-50'} ${meetingStatusConfig[request.meeting_status]?.color || 'text-gray-600'}`}
+                            >
+                              <option value="not_picked">Not Picked</option>
+                              <option value="scheduled">Scheduled</option>
+                              <option value="done">Done</option>
+                              <option value="rescheduled">Rescheduled</option>
+                            </select>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
