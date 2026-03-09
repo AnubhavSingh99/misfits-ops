@@ -914,7 +914,14 @@ function LeadRow({
                           {detail.questionnaire_data && Object.keys(detail.questionnaire_data).length > 0 ? (
                             Object.entries(detail.questionnaire_data).map(([key, value]) => (
                               <div key={key} className="flex">
-                                <span className="text-xs font-medium text-slate-500 w-40 flex-shrink-0">{key}</span>
+                                <span className="relative group text-xs font-medium text-slate-500 w-40 flex-shrink-0 cursor-help border-b border-dashed border-slate-300">
+                                  Q{key}
+                                  {detail.question_map?.[key] && (
+                                    <span className="absolute left-0 bottom-full mb-1 hidden group-hover:block bg-slate-800 text-white text-xs rounded px-2 py-1 whitespace-normal max-w-xs z-50 shadow-lg">
+                                      {detail.question_map[key]}
+                                    </span>
+                                  )}
+                                </span>
                                 <span className="text-sm text-slate-800">{String(value)}</span>
                               </div>
                             ))

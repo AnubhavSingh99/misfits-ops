@@ -107,7 +107,7 @@ router.get('/admin/all', async (req: Request, res: Response) => {
     const allowedSorts = ['created_at', 'updated_at', 'submitted_at', 'name', 'city', 'activity', 'status'];
     const sortCol = allowedSorts.includes(sort as string) ? sort : 'created_at';
     const sortOrder = order === 'asc' ? 'ASC' : 'DESC';
-    const sortPrefix = sortCol === 'name' ? 'COALESCE(ca.name, CONCAT(u.first_name, ' ', u.last_name))' : `ca.${sortCol}`;
+    const sortPrefix = sortCol === 'name' ? "COALESCE(ca.name, CONCAT(u.first_name, ' ', u.last_name))" : `ca.${sortCol}`;
 
     const pageNum = Math.max(1, parseInt(page as string, 10) || 1);
     const limitNum = Math.min(100, Math.max(1, parseInt(limit as string, 10) || 50));
@@ -393,7 +393,7 @@ router.get('/admin/:id', async (req: Request, res: Response) => {
     const { id } = req.params;
 
     const appResult = await queryProduction(
-      'SELECT ca.*, COALESCE(ca.name, CONCAT(u.first_name, ' ', u.last_name)) as name FROM club_application ca LEFT JOIN users u ON u.pk = ca.user_id WHERE ca.pk = $1', [id]
+      `SELECT ca.*, COALESCE(ca.name, CONCAT(u.first_name, ' ', u.last_name)) as name FROM club_application ca LEFT JOIN users u ON u.pk = ca.user_id WHERE ca.pk = $1`, [id]
     );
     if (appResult.rows.length === 0) {
       return res.status(404).json({ success: false, error: 'Application not found' });
@@ -417,16 +417,32 @@ router.get('/admin/:id', async (req: Request, res: Response) => {
     let pastApps: any[] = [];
     if (app.user_id) {
       const pastResult = await queryProduction(
-        'SELECT pk as id, status, city, activity, created_at, archived FROM club_application WHERE user_id = $1 AND pk != $2 ORDER BY created_at DESC',
+        'SELECT pk as id, status, city_name as city, activity_name as activity, created_at, archived FROM club_application WHERE user_id = $1 AND pk != $2 ORDER BY created_at DESC',
         [app.user_id, id]
       );
       pastApps = pastResult.rows;
+    }
+
+    // Question text map (question_id → question_text) for tooltip display
+    let questionMap: Record<string, string> = {};
+    if (app.questionnaire_data && typeof app.questionnaire_data === 'object') {
+      const qIds = Object.keys(app.questionnaire_data).filter(k => /^\d+$/.test(k));
+      if (qIds.length > 0) {
+        const qResult = await queryProduction(
+          `SELECT pk, question_text FROM club_questionnaire_config WHERE pk = ANY($1::int[])`,
+          [qIds.map(Number)]
+        );
+        for (const row of qResult.rows) {
+          questionMap[String(row.pk)] = row.question_text;
+        }
+      }
     }
 
     res.json({
       success: true,
       data: {
         ...app,
+        question_map: questionMap,
         timeline: mapAppRows(timeline.rows),
         activity_log: mapAppRows(activity.rows),
         past_applications: pastApps,
@@ -459,7 +475,7 @@ router.patch('/admin/:id/pick', async (req: Request, res: Response) => {
     }
 
     await queryProduction(
-      `UPDATE club_application SET status = 'UNDER_REVIEW', reviewed_by = $2, picked_at = NOW(), updated_at = NOW() WHERE pk = $1`,
+      `UPDATE club_application SET status = 'UNDER_REVIEW', reviewed_by_id = $2, picked_at = NOW(), updated_at = NOW() WHERE pk = $1`,
       [id, reviewed_by.trim()]
     );
 
@@ -529,7 +545,7 @@ router.patch('/admin/:id/review', async (req: Request, res: Response) => {
     }
     // Set reviewed_by + picked_at when coming from SUBMITTED
     if (reviewed_by?.trim()) {
-      updates.push(`reviewed_by = $${paramIdx++}`);
+      updates.push(`reviewed_by_id = $${paramIdx++}`);
       updateParams.push(reviewed_by.trim());
       updates.push('picked_at = NOW()');
     }
