@@ -15,6 +15,8 @@ function mapAppRow(row: any) {
   // Map production column names to ops frontend names
   if (row.split_snapshot !== undefined) row.split_percentage = row.split_snapshot;
   if (row.contract_pdf_url !== undefined) row.contract_url = row.contract_pdf_url;
+  if (row.city_name !== undefined) row.city = row.city_name;
+  if (row.activity_name !== undefined) row.activity = row.activity_name;
   return row;
 }
 function mapAppRows(rows: any[]) {
@@ -87,15 +89,15 @@ router.get('/admin/all', async (req: Request, res: Response) => {
       params.push(status);
     }
     if (city) {
-      conditions.push(`ca.city = $${paramIdx++}`);
+      conditions.push(`ca.city_name = $${paramIdx++}`);
       params.push(city);
     }
     if (activity) {
-      conditions.push(`ca.activity = $${paramIdx++}`);
+      conditions.push(`ca.activity_name = $${paramIdx++}`);
       params.push(activity);
     }
     if (search) {
-      conditions.push(`(ca.name ILIKE $${paramIdx} OR u.name ILIKE $${paramIdx} OR ca.city ILIKE $${paramIdx} OR ca.activity ILIKE $${paramIdx})`);
+      conditions.push(`(ca.name ILIKE $${paramIdx} OR CONCAT(u.first_name, ' ', u.last_name) ILIKE $${paramIdx} OR ca.city_name ILIKE $${paramIdx} OR ca.activity_name ILIKE $${paramIdx})`);
       params.push(`%${search}%`);
       paramIdx++;
     }
@@ -105,7 +107,7 @@ router.get('/admin/all', async (req: Request, res: Response) => {
     const allowedSorts = ['created_at', 'updated_at', 'submitted_at', 'name', 'city', 'activity', 'status'];
     const sortCol = allowedSorts.includes(sort as string) ? sort : 'created_at';
     const sortOrder = order === 'asc' ? 'ASC' : 'DESC';
-    const sortPrefix = sortCol === 'name' ? 'COALESCE(ca.name, u.name)' : `ca.${sortCol}`;
+    const sortPrefix = sortCol === 'name' ? 'COALESCE(ca.name, CONCAT(u.first_name, ' ', u.last_name))' : `ca.${sortCol}`;
 
     const pageNum = Math.max(1, parseInt(page as string, 10) || 1);
     const limitNum = Math.min(100, Math.max(1, parseInt(limit as string, 10) || 50));
@@ -117,7 +119,7 @@ router.get('/admin/all', async (req: Request, res: Response) => {
     const total = parseInt(countResult.rows[0].count, 10);
 
     const dataResult = await queryProduction(
-      `SELECT ca.*, COALESCE(ca.name, u.name) as name FROM club_application ca LEFT JOIN users u ON u.pk = ca.user_id ${where}
+      `SELECT ca.*, COALESCE(ca.name, CONCAT(u.first_name, ' ', u.last_name)) as name FROM club_application ca LEFT JOIN users u ON u.pk = ca.user_id ${where}
        ORDER BY ${sortPrefix} ${sortOrder}
        LIMIT $${paramIdx++} OFFSET $${paramIdx++}`,
       [...params, limitNum, offset]
@@ -365,7 +367,7 @@ router.delete('/admin/rating-dimensions/:id', async (req: Request, res: Response
 router.get('/admin/cities', async (req: Request, res: Response) => {
   try {
     const result = await queryProduction(
-      `SELECT DISTINCT city FROM club_application WHERE city IS NOT NULL AND archived = false ORDER BY city`
+      `SELECT DISTINCT city_name as city FROM club_application WHERE city_name IS NOT NULL AND archived = false ORDER BY city_name`
     );
     res.json({ success: true, data: result.rows.map((r: any) => r.city) });
   } catch (error: any) {
@@ -377,7 +379,7 @@ router.get('/admin/cities', async (req: Request, res: Response) => {
 router.get('/admin/activities', async (req: Request, res: Response) => {
   try {
     const result = await queryProduction(
-      `SELECT DISTINCT activity FROM club_application WHERE activity IS NOT NULL AND archived = false ORDER BY activity`
+      `SELECT DISTINCT activity_name as activity FROM club_application WHERE activity_name IS NOT NULL AND archived = false ORDER BY activity_name`
     );
     res.json({ success: true, data: result.rows.map((r: any) => r.activity) });
   } catch (error: any) {
@@ -391,7 +393,7 @@ router.get('/admin/:id', async (req: Request, res: Response) => {
     const { id } = req.params;
 
     const appResult = await queryProduction(
-      'SELECT ca.*, COALESCE(ca.name, u.name) as name FROM club_application ca LEFT JOIN users u ON u.pk = ca.user_id WHERE ca.pk = $1', [id]
+      'SELECT ca.*, COALESCE(ca.name, CONCAT(u.first_name, ' ', u.last_name)) as name FROM club_application ca LEFT JOIN users u ON u.pk = ca.user_id WHERE ca.pk = $1', [id]
     );
     if (appResult.rows.length === 0) {
       return res.status(404).json({ success: false, error: 'Application not found' });
