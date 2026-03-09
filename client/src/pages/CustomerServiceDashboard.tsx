@@ -1,2061 +1,1115 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Headphones,
-  Plus,
   Search,
   Clock,
   CheckCircle,
-  AlertTriangle,
-  MessageSquare,
-  Phone,
   RefreshCw,
   X,
-  ChevronDown,
-  ChevronRight,
-  FileText,
-  Play,
-  Timer,
-  Users,
-  Building2,
-  Smartphone,
-  User as UserIcon,
-  FolderOpen,
-  Inbox,
-  Archive,
-  Settings,
-  TrendingUp,
-  MoreVertical,
   Send,
-  PhoneOff,
   Pencil,
   Save,
-  Trash2,
-  Link,
-  Loader2
+  Loader2,
+  Inbox,
+  TrendingUp,
+  Paperclip,
+  FileText,
+  ChevronDown,
+  ArrowUp,
+  ArrowDown,
+  Minus,
+  AlertCircle,
+  ArrowLeft,
 } from 'lucide-react';
+import {
+  getAgentTickets,
+  getAgentStats,
+  getTicketDetail,
+  sendMessage,
+  updateTicketStatus,
+  updateTicketDetails,
+  updateTicketPriority,
+  resolveTicket,
+  acceptTicket,
+  markRead,
+  uploadFile,
+  uploadToS3,
+  getWSUrl,
+  getAgentEventsUrl,
+  type SupportTicket,
+  type SupportMessage,
+  type SupportStats,
+} from '../services/supportApi';
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5001';
+const STATUS_TABS = ['ALL', 'WAITING', 'OPEN', 'IN_PROGRESS', 'RESOLVED', 'CLOSED'] as const;
 
-// Types
-interface QueryType {
-  id: number;
-  stakeholder_type: string;
-  name: string;
-  parent_id: number | null;
-  default_sla_hours: number;
-}
+const STATUS_STYLES: Record<string, { bg: string; text: string; dot: string }> = {
+  WAITING: { bg: 'bg-purple-50', text: 'text-purple-700', dot: 'bg-purple-500' },
+  OPEN: { bg: 'bg-blue-50', text: 'text-blue-700', dot: 'bg-blue-500' },
+  IN_PROGRESS: { bg: 'bg-amber-50', text: 'text-amber-700', dot: 'bg-amber-500' },
+  RESOLVED: { bg: 'bg-emerald-50', text: 'text-emerald-700', dot: 'bg-emerald-500' },
+  CLOSED: { bg: 'bg-slate-100', text: 'text-slate-500', dot: 'bg-slate-400' },
+  AUTO_RESOLVED: { bg: 'bg-emerald-50', text: 'text-emerald-700', dot: 'bg-emerald-500' },
+};
 
-interface CSQuery {
-  id: number;
-  ticket_number: string;
-  stakeholder_type: string;
-  query_type_id: number;
-  query_subtype_id: number | null;
-  source: string;
-  user_id: number;
-  user_name: string;
-  user_contact: string;
-  user_email: string | null;
-  subject: string;
-  description: string;
-  priority: string;
-  status: string;
-  assigned_to: string | null;
-  sla_hours: number;
-  attachments: any[];
-  comments: any[];
-  resolution_notes: string | null;
-  created_at: string;
-  first_response_at: string | null;
-  resolved_at: string | null;
-  closed_at: string | null;
-  query_type_name: string;
-  query_subtype_name: string | null;
-  slack_channel: string | null;
-  slack_channel_name: string | null;
-  slack_sent_at: string | null;
-  has_contact_info: boolean;
-}
+const PRIORITY_CONFIG: Record<string, { icon: React.ElementType; color: string; label: string }> = {
+  URGENT: { icon: ArrowUp, color: 'text-red-600', label: 'Urgent' },
+  HIGH: { icon: ArrowUp, color: 'text-orange-500', label: 'High' },
+  MEDIUM: { icon: Minus, color: 'text-blue-500', label: 'Medium' },
+  LOW: { icon: ArrowDown, color: 'text-slate-400', label: 'Low' },
+};
 
-interface SlackChannel {
-  value: string;
-  label: string;
-  channel: string;
-}
-
-interface Stats {
-  total: number;
-  open: number;
-  in_progress: number;
-  pending: number;
-  resolved: number;
-  closed: number;
-  no_contact: number;
-  by_stakeholder: Record<string, number>;
-  by_priority: Record<string, number>;
-}
-
-interface PollingStatus {
-  active: boolean;
-  lastProcessedDate: string | null;
-  intervalMs: number;
-}
-
-interface Club {
-  id: number;
-  uuid: string;
-  name: string;
-  activity: string;
-}
-
-interface Host {
-  id: number;
-  uuid: string;
-  name: string;
-  phone: string;
-  email: string;
-  type: string;
-}
-
-// Helper functions
-function formatDate(dateStr: string | null): string {
-  if (!dateStr) return '-';
-  const date = new Date(dateStr);
-  return date.toLocaleDateString('en-IN', {
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit'
-  });
-}
-
-function calculateTAT(created: string, resolved: string | null): string {
-  const endDate = resolved ? new Date(resolved) : new Date();
-  const createdDate = new Date(created);
-  const diffHours = Math.floor((endDate.getTime() - createdDate.getTime()) / (1000 * 60 * 60));
-  if (diffHours < 24) return `${diffHours}h`;
-  return `${Math.floor(diffHours / 24)}d ${diffHours % 24}h`;
-}
-
-function calculateTATHours(created: string, resolved: string | null): number {
-  const endDate = resolved ? new Date(resolved) : new Date();
-  const createdDate = new Date(created);
-  return (endDate.getTime() - createdDate.getTime()) / (1000 * 60 * 60);
-}
-
-function getSLAStatus(created: string, slaHours: number, status: string): 'ok' | 'warning' | 'breach' {
-  // If resolved or closed, SLA doesn't apply
-  if (status === 'resolved' || status === 'resolution_communicated') return 'ok';
+function timeAgo(dateStr: string) {
+  const d = new Date(dateStr);
   const now = new Date();
-  const createdDate = new Date(created);
-  const elapsed = (now.getTime() - createdDate.getTime()) / (1000 * 60 * 60);
-  if (elapsed > slaHours) return 'breach';
-  if (elapsed > slaHours * 0.75) return 'warning';
-  return 'ok';
+  const diffMs = now.getTime() - d.getTime();
+  const diffMins = Math.floor(diffMs / 60000);
+  if (diffMins < 1) return 'just now';
+  if (diffMins < 60) return `${diffMins}m ago`;
+  const diffHours = Math.floor(diffMins / 60);
+  if (diffHours < 24) return `${diffHours}h ago`;
+  const diffDays = Math.floor(diffHours / 24);
+  if (diffDays < 7) return `${diffDays}d ago`;
+  return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' });
 }
 
-function formatTATDisplay(hours: number): string {
-  if (hours < 1) return '< 1h';
-  if (hours < 24) return `${Math.round(hours)}h`;
-  const days = Math.floor(hours / 24);
-  const remainingHours = Math.round(hours % 24);
-  return `${days}d ${remainingHours}h`;
+function formatFullDate(dateStr: string) {
+  return new Date(dateStr).toLocaleString('en-IN', {
+    day: '2-digit', month: 'short', year: 'numeric',
+    hour: '2-digit', minute: '2-digit',
+  });
 }
 
-const statusColors: Record<string, string> = {
-  created: 'bg-blue-100 text-blue-700 border-blue-200',
-  in_progress: 'bg-yellow-100 text-yellow-700 border-yellow-200',
-  ticket_communicated: 'bg-orange-100 text-orange-700 border-orange-200',
-  resolved: 'bg-green-100 text-green-700 border-green-200',
-  resolution_communicated: 'bg-gray-100 text-gray-600 border-gray-200'
-};
+function formatMsgTime(dateStr: string) {
+  return new Date(dateStr).toLocaleTimeString('en-IN', {
+    hour: '2-digit', minute: '2-digit',
+  });
+}
 
-const sourceIcons: Record<string, React.ReactNode> = {
-  app: <Smartphone className="h-4 w-4" />,
-  website: <Building2 className="h-4 w-4" />,
-  whatsapp: <MessageSquare className="h-4 w-4" />,
-  playstore: <Smartphone className="h-4 w-4" />,
-  appstore: <Smartphone className="h-4 w-4" />
-};
+function isImageMsg(msg: SupportMessage): boolean {
+  if (msg.message_type === 'IMAGE') return true;
+  if (msg.file_url && /\.(jpg|jpeg|png|gif|webp|bmp|svg)$/i.test(msg.file_url)) return true;
+  return false;
+}
 
-const stakeholderConfig: Record<string, { icon: React.ReactNode; color: string; bgColor: string; borderColor: string; label: string }> = {
-  user: {
-    icon: <UserIcon className="h-5 w-5" />,
-    color: 'text-indigo-700',
-    bgColor: 'bg-indigo-50',
-    borderColor: 'border-indigo-200',
-    label: 'Users'
-  },
-  leader: {
-    icon: <Users className="h-5 w-5" />,
-    color: 'text-purple-700',
-    bgColor: 'bg-purple-50',
-    borderColor: 'border-purple-200',
-    label: 'Leaders'
-  },
-  venue: {
-    icon: <Building2 className="h-5 w-5" />,
-    color: 'text-teal-700',
-    bgColor: 'bg-teal-50',
-    borderColor: 'border-teal-200',
-    label: 'Venues'
+// ==================== Status Badge ====================
+function StatusBadge({ status }: { status: string }) {
+  const s = STATUS_STYLES[status] || STATUS_STYLES.CLOSED;
+  return (
+    <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-semibold ${s.bg} ${s.text}`}>
+      <span className={`w-1.5 h-1.5 rounded-full ${s.dot}`} />
+      {status.replace('_', ' ')}
+    </span>
+  );
+}
+
+// ==================== Priority Icon ====================
+function PriorityBadge({ priority }: { priority: string }) {
+  const cfg = PRIORITY_CONFIG[priority] || PRIORITY_CONFIG.MEDIUM;
+  const Icon = cfg.icon;
+  return (
+    <span className={`inline-flex items-center gap-1 text-[11px] font-medium ${cfg.color}`}>
+      <Icon className="w-3.5 h-3.5" />
+      {cfg.label}
+    </span>
+  );
+}
+
+// ==================== Stats Cards ====================
+function StatsBar({ stats, loading }: { stats: SupportStats | null; loading: boolean }) {
+  if (loading || !stats) {
+    return (
+      <div className="grid grid-cols-5 gap-4 px-6 py-4">
+        {[1, 2, 3, 4, 5].map((i) => (
+          <div key={i} className="h-20 bg-white rounded-lg border border-slate-200 animate-pulse" />
+        ))}
+      </div>
+    );
   }
-};
-
-// Status options for dropdown - workflow: created → in_progress → ticket_communicated → resolved → resolution_communicated
-const statusOptions = [
-  { value: 'created', label: 'Created', color: 'text-blue-600' },
-  { value: 'in_progress', label: 'In Progress', color: 'text-yellow-600' },
-  { value: 'ticket_communicated', label: 'Ticket Communicated', color: 'text-orange-600' },
-  { value: 'resolved', label: 'Resolved', color: 'text-green-600' },
-  { value: 'resolution_communicated', label: 'Resolution Communicated', color: 'text-gray-600' }
-];
-
-// Slack channel options
-const slackChannelOptions: SlackChannel[] = [
-  { value: 'bugs', label: 'Tech/Bugs', channel: '#bugs' },
-  { value: 'marketing', label: 'Marketing', channel: '#marketing' },
-  { value: 'finance', label: 'Finance', channel: '#finance' },
-  { value: 'ops', label: 'Ops', channel: '#quality-ops-external' },
-  { value: 'safety', label: 'Safety', channel: '#safety-concerns' },
-  { value: 'random', label: 'General', channel: '#customer-support' }
-];
-
-// Ticket Row Component
-function TicketRow({
-  query,
-  onSelect,
-  onStatusUpdate,
-  onSendToSlack
-}: {
-  query: CSQuery;
-  onSelect: () => void;
-  onStatusUpdate: (id: number, status: string) => void;
-  onSendToSlack: (id: number, channelType: string) => void;
-}) {
-  const slaStatus = getSLAStatus(query.created_at, query.sla_hours, query.status);
-  const [sendingToSlack, setSendingToSlack] = useState(false);
-
-  const handleStatusChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    e.stopPropagation();
-    const newStatus = e.target.value;
-    if (newStatus && newStatus !== query.status) {
-      onStatusUpdate(query.id, newStatus);
-    }
-  };
-
-  const handleSlackSend = async (e: React.ChangeEvent<HTMLSelectElement>) => {
-    e.stopPropagation();
-    const channelType = e.target.value;
-    if (!channelType) return;
-
-    setSendingToSlack(true);
-    try {
-      await onSendToSlack(query.id, channelType);
-    } finally {
-      setSendingToSlack(false);
-      // Reset dropdown
-      e.target.value = '';
-    }
-  };
-
+  const cards = [
+    { label: 'Waiting', value: stats.waiting_count, icon: AlertCircle, color: 'text-purple-600', bg: 'bg-purple-50', border: 'border-purple-100' },
+    { label: 'Open', value: stats.open_count, icon: Inbox, color: 'text-blue-600', bg: 'bg-blue-50', border: 'border-blue-100' },
+    { label: 'In Progress', value: stats.in_progress_count, icon: Clock, color: 'text-amber-600', bg: 'bg-amber-50', border: 'border-amber-100' },
+    { label: 'Resolved', value: stats.resolved_count, icon: CheckCircle, color: 'text-emerald-600', bg: 'bg-emerald-50', border: 'border-emerald-100' },
+    { label: 'Avg Resolution', value: `${stats.avg_resolution_hours.toFixed(1)}h`, icon: TrendingUp, color: 'text-violet-600', bg: 'bg-violet-50', border: 'border-violet-100' },
+  ];
   return (
-    <tr
-      className="border-b hover:bg-gray-50 cursor-pointer transition-colors"
-      onClick={onSelect}
-    >
-      <td className="py-2.5 px-3">
-        <div className="flex items-center gap-2">
-          <span className="font-mono text-sm font-medium text-indigo-600">
-            {query.ticket_number}
-          </span>
-          {slaStatus === 'breach' && (
-            <AlertTriangle className="h-3.5 w-3.5 text-red-500" />
-          )}
-          {slaStatus === 'warning' && (
-            <Clock className="h-3.5 w-3.5 text-amber-500" />
-          )}
-          {query.slack_channel && (
-            <span className="px-1.5 py-0.5 bg-purple-100 text-purple-600 rounded text-[10px] font-medium" title={`Sent to ${query.slack_channel_name}`}>
-              {query.slack_channel_name}
-            </span>
-          )}
-        </div>
-      </td>
-      <td className="py-2.5 px-3">
-        <div className="flex items-center gap-1.5 text-gray-500">
-          {sourceIcons[query.source]}
-          <span className="text-xs">{query.source}</span>
-        </div>
-      </td>
-      <td className="py-2.5 px-3">
-        <div className="flex items-center gap-2">
+    <div className="grid grid-cols-5 gap-4 px-6 py-4">
+      {cards.map((c) => (
+        <div key={c.label} className={`flex items-center gap-3 p-4 rounded-lg border ${c.border} bg-white`}>
+          <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${c.bg}`}>
+            <c.icon className={`w-5 h-5 ${c.color}`} />
+          </div>
           <div>
-            <p className="text-sm font-medium text-gray-900 truncate max-w-[150px]">
-              {query.user_name || '-'}
-            </p>
-            <p className="text-xs text-gray-500">{query.user_contact || <span className="text-red-400">No contact</span>}</p>
+            <div className="text-2xl font-bold text-slate-800">{c.value}</div>
+            <div className="text-xs text-slate-500 font-medium">{c.label}</div>
           </div>
-          {!query.has_contact_info && (
-            <span className="p-1 bg-red-100 rounded" title="No contact info">
-              <PhoneOff className="h-3 w-3 text-red-500" />
-            </span>
-          )}
         </div>
-      </td>
-      <td className="py-2.5 px-3">
-        <p className="text-sm text-gray-700 truncate max-w-[250px]">
-          {query.query_type_name}
-          {query.query_subtype_name && ` > ${query.query_subtype_name}`}
-        </p>
-      </td>
-      <td className="py-2.5 px-3">
-        <span className={`px-2 py-0.5 rounded-full text-xs font-medium border ${statusColors[query.status]}`}>
-          {query.status.replace('_', ' ')}
-        </span>
-      </td>
-      <td className="py-2.5 px-3">
-        <span className={`text-sm font-medium ${
-          slaStatus === 'breach' ? 'text-red-600' :
-          slaStatus === 'warning' ? 'text-amber-600' : 'text-gray-600'
-        }`}>
-          {calculateTAT(query.created_at, query.resolved_at)}
-        </span>
-      </td>
-      <td className="py-2.5 px-3 text-right" onClick={e => e.stopPropagation()}>
-        <div className="flex items-center gap-1.5 justify-end">
-          {/* Send to Slack dropdown - always show to allow re-sending */}
-          <select
-            defaultValue=""
-            onChange={handleSlackSend}
-            disabled={sendingToSlack}
-            className={`text-xs px-1.5 py-1 border rounded cursor-pointer focus:outline-none focus:ring-1 focus:ring-purple-400 disabled:opacity-50 w-24 ${
-              query.slack_channel
-                ? 'bg-green-50 hover:bg-green-100 text-green-700'
-                : 'bg-purple-50 hover:bg-purple-100 text-purple-700'
-            }`}
-            title={query.slack_channel ? `Sent to ${query.slack_channel_name}. Click to resend.` : 'Send to Slack'}
-          >
-            <option value="" disabled>
-              {sendingToSlack ? '...' : query.slack_channel ? `✓ ${query.slack_channel_name}` : '📤 Slack'}
-            </option>
-            {slackChannelOptions.map(opt => (
-              <option key={opt.value} value={opt.value}>
-                {query.slack_channel === opt.value ? `↻ ${opt.label}` : opt.label}
-              </option>
-            ))}
-          </select>
-
-          {/* Status dropdown */}
-          <select
-            value={query.status}
-            onChange={handleStatusChange}
-            className="text-xs px-1.5 py-1 border rounded bg-white hover:bg-gray-50 cursor-pointer focus:outline-none focus:ring-1 focus:ring-indigo-400 w-28"
-          >
-            {statusOptions.map(opt => (
-              <option key={opt.value} value={opt.value}>
-                {opt.label}
-              </option>
-            ))}
-          </select>
-        </div>
-      </td>
-    </tr>
+      ))}
+    </div>
   );
 }
 
-// Collapsible Query Section Component
-function QuerySection({
-  title,
-  icon,
-  queries,
-  isOpen,
-  onToggle,
-  onSelectQuery,
-  onStatusUpdate,
-  onSendToSlack,
-  color
+// ==================== Inline Priority Dropdown ====================
+function InlinePriorityDropdown({
+  ticketId,
+  priority,
+  onPriorityChange,
 }: {
-  title: string;
-  icon: React.ReactNode;
-  queries: CSQuery[];
-  isOpen: boolean;
-  onToggle: () => void;
-  onSelectQuery: (q: CSQuery) => void;
-  onStatusUpdate: (id: number, status: string) => void;
-  onSendToSlack: (id: number, channelType: string) => void;
-  color: string;
+  ticketId: number;
+  priority: string;
+  onPriorityChange: (ticketId: number, priority: string) => void;
 }) {
+  const [open, setOpen] = useState(false);
+
   return (
-    <div className="border rounded-lg overflow-hidden">
+    <div className="relative">
       <button
-        onClick={onToggle}
-        className={`w-full flex items-center justify-between px-4 py-2.5 ${color} hover:opacity-90 transition-opacity`}
+        onClick={(e) => { e.stopPropagation(); setOpen(!open); }}
+        className="inline-flex items-center gap-1 cursor-pointer hover:opacity-80"
       >
-        <div className="flex items-center gap-2">
-          {isOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-          {icon}
-          <span className="font-medium">{title}</span>
-          <span className="px-2 py-0.5 bg-white/50 rounded-full text-xs font-semibold">
-            {queries.length}
-          </span>
-        </div>
+        <PriorityBadge priority={priority} />
+        <ChevronDown className="w-3 h-3 text-slate-400" />
       </button>
-
-      {isOpen && queries.length > 0 && (
-        <div className="overflow-x-auto">
-          <table className="w-full text-left">
-            <thead className="bg-gray-50 text-xs text-gray-500 uppercase">
-              <tr>
-                <th className="py-2 px-3 font-medium">Ticket</th>
-                <th className="py-2 px-3 font-medium">Source</th>
-                <th className="py-2 px-3 font-medium">User</th>
-                <th className="py-2 px-3 font-medium">Category</th>
-                <th className="py-2 px-3 font-medium">Status</th>
-                <th className="py-2 px-3 font-medium">TAT</th>
-                <th className="py-2 px-3 font-medium text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {queries.map(query => (
-                <TicketRow
-                  key={query.id}
-                  query={query}
-                  onSelect={() => onSelectQuery(query)}
-                  onStatusUpdate={onStatusUpdate}
-                  onSendToSlack={onSendToSlack}
-                />
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {isOpen && queries.length === 0 && (
-        <div className="py-8 text-center text-gray-400">
-          <Inbox className="h-8 w-8 mx-auto mb-2 opacity-50" />
-          <p className="text-sm">No queries</p>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// Stakeholder Section Component
-function StakeholderSection({
-  type,
-  queries,
-  expandedSections,
-  onToggleSection,
-  onSelectQuery,
-  onStatusUpdate,
-  onSendToSlack
-}: {
-  type: 'user' | 'leader' | 'venue';
-  queries: CSQuery[];
-  expandedSections: Record<string, boolean>;
-  onToggleSection: (key: string) => void;
-  onSelectQuery: (q: CSQuery) => void;
-  onStatusUpdate: (id: number, status: string) => void;
-  onSendToSlack: (id: number, channelType: string) => void;
-}) {
-  const config = stakeholderConfig[type];
-  const typeQueries = queries.filter(q => q.stakeholder_type === type);
-  // Open = created, in_progress, ticket_communicated, resolved (not yet communicated to user)
-  const openQueries = typeQueries.filter(q => ['created', 'in_progress', 'ticket_communicated', 'resolved'].includes(q.status));
-  // Closed = only resolution_communicated (final state - resolution communicated to user)
-  const closedQueries = typeQueries.filter(q => q.status === 'resolution_communicated');
-
-  const sectionKey = `${type}`;
-  const isExpanded = expandedSections[sectionKey] !== false;
-
-  return (
-    <div className={`rounded-xl border-2 ${config.borderColor} overflow-hidden`}>
-      <button
-        onClick={() => onToggleSection(sectionKey)}
-        className={`w-full flex items-center justify-between px-5 py-4 ${config.bgColor} hover:opacity-95 transition-all`}
-      >
-        <div className="flex items-center gap-3">
-          {isExpanded ? (
-            <ChevronDown className={`h-5 w-5 ${config.color}`} />
-          ) : (
-            <ChevronRight className={`h-5 w-5 ${config.color}`} />
-          )}
-          <div className={`p-2 rounded-lg bg-white shadow-sm ${config.color}`}>
-            {config.icon}
-          </div>
-          <div className="text-left">
-            <h3 className={`text-lg font-bold ${config.color}`}>{config.label}</h3>
-            <p className="text-xs text-gray-500">
-              {openQueries.length} open, {closedQueries.length} closed
-            </p>
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
-          <span className={`px-3 py-1 rounded-full text-sm font-bold ${config.bgColor} ${config.color} border ${config.borderColor}`}>
-            {typeQueries.length} total
-          </span>
-        </div>
-      </button>
-
-      {isExpanded && (
-        <div className="p-4 space-y-3 bg-white">
-          <QuerySection
-            title="Open Queries"
-            icon={<FolderOpen className="h-4 w-4" />}
-            queries={openQueries}
-            isOpen={expandedSections[`${type}-open`] !== false}
-            onToggle={() => onToggleSection(`${type}-open`)}
-            onSelectQuery={onSelectQuery}
-            onStatusUpdate={onStatusUpdate}
-            onSendToSlack={onSendToSlack}
-            color="bg-blue-50 text-blue-700"
-          />
-
-          <QuerySection
-            title="Closed Queries"
-            icon={<Archive className="h-4 w-4" />}
-            queries={closedQueries}
-            isOpen={expandedSections[`${type}-closed`] === true}
-            onToggle={() => onToggleSection(`${type}-closed`)}
-            onSelectQuery={onSelectQuery}
-            onStatusUpdate={onStatusUpdate}
-            onSendToSlack={onSendToSlack}
-            color="bg-gray-100 text-gray-600"
-          />
-        </div>
-      )}
-    </div>
-  );
-}
-
-// TAT Modal Component
-function TATModal({
-  queries,
-  onClose
-}: {
-  queries: CSQuery[];
-  onClose: () => void;
-}) {
-  const [dateRange, setDateRange] = useState({
-    from: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-    to: new Date().toISOString().split('T')[0]
-  });
-  const [selectedStakeholder, setSelectedStakeholder] = useState<string | null>(null);
-
-  const filteredQueries = useMemo(() => {
-    const fromDate = new Date(dateRange.from);
-    const toDate = new Date(dateRange.to);
-    toDate.setHours(23, 59, 59, 999);
-
-    return queries.filter(q => {
-      const created = new Date(q.created_at);
-      return created >= fromDate && created <= toDate;
-    });
-  }, [queries, dateRange]);
-
-  const calculateAvgTAT = (qs: CSQuery[]) => {
-    // TAT is calculated only when ticket is fully closed (resolution_communicated)
-    const closedQueries = qs.filter(q => q.closed_at);
-    if (closedQueries.length === 0) return null;
-    const totalHours = closedQueries.reduce((sum, q) => sum + calculateTATHours(q.created_at, q.closed_at), 0);
-    return totalHours / closedQueries.length;
-  };
-
-  const overallTAT = calculateAvgTAT(filteredQueries);
-  const userTAT = calculateAvgTAT(filteredQueries.filter(q => q.stakeholder_type === 'user'));
-  const leaderTAT = calculateAvgTAT(filteredQueries.filter(q => q.stakeholder_type === 'leader'));
-  const venueTAT = calculateAvgTAT(filteredQueries.filter(q => q.stakeholder_type === 'venue'));
-
-  const getStakeholderStats = (type: string) => {
-    const qs = filteredQueries.filter(q => q.stakeholder_type === type);
-    // Count as closed only when resolution_communicated (closed_at is set)
-    const closed = qs.filter(q => q.closed_at).length;
-    const total = qs.length;
-    return { resolved: closed, total, pending: total - closed };
-  };
-
-  const userStats = getStakeholderStats('user');
-  const leaderStats = getStakeholderStats('leader');
-  const venueStats = getStakeholderStats('venue');
-
-  // Get category-wise TAT breakdown for selected stakeholder
-  const getCategoryBreakdown = (stakeholderType: string) => {
-    const qs = filteredQueries.filter(q => q.stakeholder_type === stakeholderType);
-    const categoryMap = new Map<string, { total: number; closed: number; totalHours: number }>();
-
-    qs.forEach(q => {
-      const category = q.query_type_name || 'Other';
-      if (!categoryMap.has(category)) {
-        categoryMap.set(category, { total: 0, closed: 0, totalHours: 0 });
-      }
-      const cat = categoryMap.get(category)!;
-      cat.total++;
-      // TAT calculated only when resolution_communicated (closed_at is set)
-      if (q.closed_at) {
-        cat.closed++;
-        cat.totalHours += calculateTATHours(q.created_at, q.closed_at);
-      }
-    });
-
-    return Array.from(categoryMap.entries())
-      .map(([name, data]) => ({
-        name,
-        total: data.total,
-        resolved: data.closed,
-        avgTAT: data.closed > 0 ? data.totalHours / data.closed : null
-      }))
-      .sort((a, b) => b.total - a.total);
-  };
-
-  return (
-    <div className="fixed inset-0 z-50 overflow-y-auto">
-      <div className="fixed inset-0 bg-black/30 backdrop-blur-sm" onClick={onClose} />
-      <div className="flex min-h-full items-center justify-center p-4">
-        <div className="relative bg-white rounded-2xl shadow-xl w-full max-w-2xl p-6">
-          <button
-            onClick={onClose}
-            className="absolute top-4 right-4 p-1 hover:bg-gray-100 rounded-lg"
-          >
-            <X className="h-5 w-5 text-gray-500" />
-          </button>
-
-          <div className="flex items-center gap-3 mb-6">
-            <div className="p-2.5 bg-amber-100 rounded-xl">
-              <Timer className="h-6 w-6 text-amber-600" />
-            </div>
-            <div>
-              <h2 className="text-xl font-bold text-gray-900">Turn Around Time (TAT)</h2>
-              <p className="text-sm text-gray-500">Average resolution time by stakeholder</p>
-            </div>
-          </div>
-
-          {/* Date Range Filter */}
-          <div className="flex items-center gap-4 mb-6 p-4 bg-gray-50 rounded-xl">
-            <div className="flex items-center gap-2">
-              <label className="text-sm font-medium text-gray-700">From:</label>
-              <input
-                type="date"
-                value={dateRange.from}
-                onChange={e => setDateRange(prev => ({ ...prev, from: e.target.value }))}
-                className="px-3 py-1.5 border rounded-lg text-sm"
-              />
-            </div>
-            <div className="flex items-center gap-2">
-              <label className="text-sm font-medium text-gray-700">To:</label>
-              <input
-                type="date"
-                value={dateRange.to}
-                onChange={e => setDateRange(prev => ({ ...prev, to: e.target.value }))}
-                className="px-3 py-1.5 border rounded-lg text-sm"
-              />
-            </div>
-          </div>
-
-          {/* Overall TAT */}
-          <div className="mb-6 p-4 bg-gradient-to-r from-amber-50 to-orange-50 rounded-xl border border-amber-200">
-            <p className="text-sm text-amber-700 font-medium mb-1">Overall Average TAT</p>
-            <p className="text-3xl font-bold text-amber-700">
-              {overallTAT ? formatTATDisplay(overallTAT) : 'No resolved queries'}
-            </p>
-            <p className="text-xs text-amber-600 mt-1">
-              Based on {filteredQueries.filter(q => q.resolved_at).length} resolved queries
-            </p>
-          </div>
-
-          {/* Stakeholder Breakdown */}
-          <div className="grid grid-cols-3 gap-4">
-            {/* Users */}
-            <button
-              onClick={() => setSelectedStakeholder(selectedStakeholder === 'user' ? null : 'user')}
-              className={`p-4 rounded-xl border text-left transition-all ${
-                selectedStakeholder === 'user'
-                  ? 'bg-indigo-100 border-indigo-400 ring-2 ring-indigo-300'
-                  : 'bg-indigo-50 border-indigo-200 hover:border-indigo-300'
-              }`}
-            >
-              <div className="flex items-center gap-2 mb-2">
-                <UserIcon className="h-4 w-4 text-indigo-600" />
-                <span className="text-sm font-semibold text-indigo-700">Users</span>
-                <ChevronRight className={`h-3 w-3 text-indigo-400 ml-auto transition-transform ${selectedStakeholder === 'user' ? 'rotate-90' : ''}`} />
-              </div>
-              <p className="text-2xl font-bold text-indigo-700">
-                {userTAT ? formatTATDisplay(userTAT) : '-'}
-              </p>
-              <p className="text-xs text-indigo-600 mt-1">
-                {userStats.resolved}/{userStats.total} resolved
-              </p>
-              <div className="mt-2 pt-2 border-t border-indigo-200">
-                <p className="text-xs text-indigo-500">Avg Resolution Time</p>
-                <p className="text-sm font-semibold text-indigo-700">
-                  {userTAT ? formatTATDisplay(userTAT) : 'No data'}
-                </p>
-              </div>
-            </button>
-
-            {/* Leaders */}
-            <button
-              onClick={() => setSelectedStakeholder(selectedStakeholder === 'leader' ? null : 'leader')}
-              className={`p-4 rounded-xl border text-left transition-all ${
-                selectedStakeholder === 'leader'
-                  ? 'bg-purple-100 border-purple-400 ring-2 ring-purple-300'
-                  : 'bg-purple-50 border-purple-200 hover:border-purple-300'
-              }`}
-            >
-              <div className="flex items-center gap-2 mb-2">
-                <Users className="h-4 w-4 text-purple-600" />
-                <span className="text-sm font-semibold text-purple-700">Leaders</span>
-                <ChevronRight className={`h-3 w-3 text-purple-400 ml-auto transition-transform ${selectedStakeholder === 'leader' ? 'rotate-90' : ''}`} />
-              </div>
-              <p className="text-2xl font-bold text-purple-700">
-                {leaderTAT ? formatTATDisplay(leaderTAT) : '-'}
-              </p>
-              <p className="text-xs text-purple-600 mt-1">
-                {leaderStats.resolved}/{leaderStats.total} resolved
-              </p>
-              <div className="mt-2 pt-2 border-t border-purple-200">
-                <p className="text-xs text-purple-500">Avg Resolution Time</p>
-                <p className="text-sm font-semibold text-purple-700">
-                  {leaderTAT ? formatTATDisplay(leaderTAT) : 'No data'}
-                </p>
-              </div>
-            </button>
-
-            {/* Venues */}
-            <button
-              onClick={() => setSelectedStakeholder(selectedStakeholder === 'venue' ? null : 'venue')}
-              className={`p-4 rounded-xl border text-left transition-all ${
-                selectedStakeholder === 'venue'
-                  ? 'bg-teal-100 border-teal-400 ring-2 ring-teal-300'
-                  : 'bg-teal-50 border-teal-200 hover:border-teal-300'
-              }`}
-            >
-              <div className="flex items-center gap-2 mb-2">
-                <Building2 className="h-4 w-4 text-teal-600" />
-                <span className="text-sm font-semibold text-teal-700">Venues</span>
-                <ChevronRight className={`h-3 w-3 text-teal-400 ml-auto transition-transform ${selectedStakeholder === 'venue' ? 'rotate-90' : ''}`} />
-              </div>
-              <p className="text-2xl font-bold text-teal-700">
-                {venueTAT ? formatTATDisplay(venueTAT) : '-'}
-              </p>
-              <p className="text-xs text-teal-600 mt-1">
-                {venueStats.resolved}/{venueStats.total} resolved
-              </p>
-              <div className="mt-2 pt-2 border-t border-teal-200">
-                <p className="text-xs text-teal-500">Avg Resolution Time</p>
-                <p className="text-sm font-semibold text-teal-700">
-                  {venueTAT ? formatTATDisplay(venueTAT) : 'No data'}
-                </p>
-              </div>
-            </button>
-          </div>
-
-          {/* Category Breakdown - shows when stakeholder is selected */}
-          {selectedStakeholder && (
-            <div className="mt-4 p-4 bg-gray-50 rounded-xl border">
-              <h3 className="text-sm font-semibold text-gray-700 mb-3">
-                Category-wise TAT for {selectedStakeholder.charAt(0).toUpperCase() + selectedStakeholder.slice(1)}s
-              </h3>
-              <div className="max-h-48 overflow-y-auto">
-                <table className="w-full text-sm">
-                  <thead className="text-xs text-gray-500 uppercase bg-gray-100 sticky top-0">
-                    <tr>
-                      <th className="text-left py-2 px-3">Category</th>
-                      <th className="text-center py-2 px-3">Total</th>
-                      <th className="text-center py-2 px-3">Resolved</th>
-                      <th className="text-right py-2 px-3">Avg TAT</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {getCategoryBreakdown(selectedStakeholder).map((cat, idx) => (
-                      <tr key={idx} className="border-b border-gray-100">
-                        <td className="py-2 px-3 font-medium text-gray-700">{cat.name}</td>
-                        <td className="py-2 px-3 text-center text-gray-600">{cat.total}</td>
-                        <td className="py-2 px-3 text-center text-gray-600">{cat.resolved}</td>
-                        <td className="py-2 px-3 text-right font-semibold text-gray-700">
-                          {cat.avgTAT ? formatTATDisplay(cat.avgTAT) : '-'}
-                        </td>
-                      </tr>
-                    ))}
-                    {getCategoryBreakdown(selectedStakeholder).length === 0 && (
-                      <tr>
-                        <td colSpan={4} className="py-4 text-center text-gray-400">
-                          No data available
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// Add Category Modal Component
-function AddCategoryModal({
-  queryTypes,
-  onClose,
-  onSave
-}: {
-  queryTypes: QueryType[];
-  onClose: () => void;
-  onSave: () => void;
-}) {
-  const [form, setForm] = useState({
-    stakeholder_type: 'user',
-    name: '',
-    parent_id: '',
-    default_sla_hours: '24'
-  });
-  const [saving, setSaving] = useState(false);
-
-  const mainTypes = queryTypes.filter(t => t.stakeholder_type === form.stakeholder_type && t.parent_id === null);
-
-  const handleSave = async () => {
-    if (!form.name.trim()) return;
-
-    setSaving(true);
-    try {
-      const response = await fetch(`${API_BASE}/api/cs/query-types`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          stakeholder_type: form.stakeholder_type,
-          name: form.name.trim(),
-          parent_id: form.parent_id ? parseInt(form.parent_id) : null,
-          default_sla_hours: parseInt(form.default_sla_hours)
-        })
-      });
-
-      if (response.ok) {
-        onSave();
-        onClose();
-      }
-    } catch (error) {
-      console.error('Failed to save category:', error);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <div className="fixed inset-0 z-50 overflow-y-auto">
-      <div className="fixed inset-0 bg-black/30 backdrop-blur-sm" onClick={onClose} />
-      <div className="flex min-h-full items-center justify-center p-4">
-        <div className="relative bg-white rounded-2xl shadow-xl w-full max-w-md p-6">
-          <button
-            onClick={onClose}
-            className="absolute top-4 right-4 p-1 hover:bg-gray-100 rounded-lg"
-          >
-            <X className="h-5 w-5 text-gray-500" />
-          </button>
-
-          <div className="flex items-center gap-3 mb-6">
-            <div className="p-2.5 bg-green-100 rounded-xl">
-              <Plus className="h-5 w-5 text-green-600" />
-            </div>
-            <h2 className="text-xl font-bold text-gray-900">Add Category</h2>
-          </div>
-
-          <div className="space-y-4">
-            {/* Stakeholder Type */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Stakeholder Type</label>
-              <div className="flex gap-2">
-                {['user', 'leader', 'venue'].map(type => (
-                  <button
-                    key={type}
-                    onClick={() => setForm(f => ({ ...f, stakeholder_type: type, parent_id: '' }))}
-                    className={`flex-1 py-2 px-3 rounded-lg border text-sm font-medium transition-colors ${
-                      form.stakeholder_type === type
-                        ? 'bg-indigo-600 text-white border-indigo-600'
-                        : 'bg-white text-gray-700 hover:bg-gray-50'
-                    }`}
-                  >
-                    {type.charAt(0).toUpperCase() + type.slice(1)}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Parent Category (optional - for subcategory) */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Parent Category <span className="text-gray-400">(leave empty for main category)</span>
-              </label>
-              <select
-                value={form.parent_id}
-                onChange={e => setForm(f => ({ ...f, parent_id: e.target.value }))}
-                className="w-full px-3 py-2 border rounded-lg text-sm"
+      {open && (
+        <>
+          <div className="fixed inset-0 z-10" onClick={(e) => { e.stopPropagation(); setOpen(false); }} />
+          <div className="absolute top-full left-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-lg z-20 py-1 min-w-[120px]">
+            {['URGENT', 'HIGH', 'MEDIUM', 'LOW'].map((p) => (
+              <button
+                key={p}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onPriorityChange(ticketId, p);
+                  setOpen(false);
+                }}
+                className={`w-full text-left px-3 py-1.5 hover:bg-slate-50 ${p === priority ? 'bg-slate-50' : ''}`}
               >
-                <option value="">-- Main Category --</option>
-                {mainTypes.map(type => (
-                  <option key={type.id} value={type.id}>{type.name}</option>
-                ))}
-              </select>
-            </div>
-
-            {/* Name */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                {form.parent_id ? 'Subcategory Name' : 'Category Name'} *
-              </label>
-              <input
-                type="text"
-                value={form.name}
-                onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-                className="w-full px-3 py-2 border rounded-lg text-sm"
-                placeholder={form.parent_id ? 'e.g., Payment Failed' : 'e.g., Payment Issues'}
-              />
-            </div>
-
-            {/* SLA Hours */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Default SLA (hours)</label>
-              <input
-                type="number"
-                value={form.default_sla_hours}
-                onChange={e => setForm(f => ({ ...f, default_sla_hours: e.target.value }))}
-                className="w-full px-3 py-2 border rounded-lg text-sm"
-                min="1"
-              />
-            </div>
+                <PriorityBadge priority={p} />
+              </button>
+            ))}
           </div>
-
-          <div className="flex justify-end gap-3 mt-6">
-            <button
-              onClick={onClose}
-              className="px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={handleSave}
-              disabled={!form.name.trim() || saving}
-              className="px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 disabled:opacity-50"
-            >
-              {saving ? 'Saving...' : 'Save Category'}
-            </button>
-          </div>
-        </div>
-      </div>
+        </>
+      )}
     </div>
   );
 }
 
-// Main Dashboard Component
-export default function CustomerServiceDashboard() {
-  const [queries, setQueries] = useState<CSQuery[]>([]);
-  const [queryTypes, setQueryTypes] = useState<QueryType[]>([]);
-  const [stats, setStats] = useState<Stats | null>(null);
-  const [pollingStatus, setPollingStatus] = useState<PollingStatus | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [syncing, setSyncing] = useState(false);
+// ==================== Inline Status Dropdown ====================
+function InlineStatusDropdown({
+  ticketId,
+  status,
+  onStatusChange,
+}: {
+  ticketId: number;
+  status: string;
+  onStatusChange: (ticketId: number, status: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const isClosed = ['RESOLVED', 'CLOSED', 'AUTO_RESOLVED'].includes(status);
 
-  // UI State
-  const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
-    'user': false,
-    'user-open': true,
-    'user-closed': false,
-    'leader': false,
-    'leader-open': true,
-    'leader-closed': false,
-    'venue': false,
-    'venue-open': true,
-    'venue-closed': false,
-  });
-  const [searchQuery, setSearchQuery] = useState('');
-  const [selectedQuery, setSelectedQuery] = useState<CSQuery | null>(null);
-  const [showDetailModal, setShowDetailModal] = useState(false);
-  const [showCreateModal, setShowCreateModal] = useState(false);
-  const [showTATModal, setShowTATModal] = useState(false);
-  const [showAddCategoryModal, setShowAddCategoryModal] = useState(false);
-  const [createForm, setCreateForm] = useState({
-    stakeholder_type: 'user',
-    source: 'whatsapp',
-    query_type_id: '',
-    query_subtype_id: '',
-    user_name: '',
-    user_contact: '',
-    description: '',
-    club_id: '',
-    club_name: '',
-    attachments: [] as string[]
-  });
-  const [createError, setCreateError] = useState<string | null>(null);
-  const [attachmentUrl, setAttachmentUrl] = useState('');
-  const [clubs, setClubs] = useState<Club[]>([]);
-  const [hosts, setHosts] = useState<Host[]>([]);
+  return (
+    <div className="relative">
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          if (!isClosed) setOpen(!open);
+        }}
+        disabled={isClosed}
+        className={`inline-flex items-center gap-1 ${isClosed ? 'cursor-default' : 'cursor-pointer hover:opacity-80'}`}
+      >
+        <StatusBadge status={status} />
+        {!isClosed && <ChevronDown className="w-3 h-3 text-slate-400" />}
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-10" onClick={(e) => { e.stopPropagation(); setOpen(false); }} />
+          <div className="absolute top-full left-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-lg z-20 py-1 min-w-[140px]">
+            {['OPEN', 'IN_PROGRESS', 'RESOLVED', 'CLOSED'].map((s) => (
+              <button
+                key={s}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onStatusChange(ticketId, s);
+                  setOpen(false);
+                }}
+                className={`w-full text-left px-3 py-1.5 hover:bg-slate-50 ${s === status ? 'bg-slate-50' : ''}`}
+              >
+                <StatusBadge status={s} />
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
 
-  // Edit mode state for detail modal
-  const [isEditingDetails, setIsEditingDetails] = useState(false);
-  const [editedDescription, setEditedDescription] = useState('');
-  const [editedAttachments, setEditedAttachments] = useState<string[]>([]);
-  const [newAttachmentUrl, setNewAttachmentUrl] = useState('');
-  const [savingEdit, setSavingEdit] = useState(false);
-  const [clubSearch, setClubSearch] = useState('');
-  const [loadingClubs, setLoadingClubs] = useState(false);
-  const [loadingHosts, setLoadingHosts] = useState(false);
+// ==================== Ticket Table ====================
+function TicketTable({
+  tickets,
+  selectedId,
+  onSelect,
+  onStatusChange,
+  onPriorityChange,
+  loading,
+}: {
+  tickets: SupportTicket[];
+  selectedId: number | null;
+  onSelect: (id: number) => void;
+  onStatusChange: (ticketId: number, status: string) => void;
+  onPriorityChange: (ticketId: number, priority: string) => void;
+  loading: boolean;
+}) {
+  if (loading && tickets.length === 0) {
+    return (
+      <div className="flex items-center justify-center py-20">
+        <Loader2 className="w-6 h-6 text-slate-400 animate-spin" />
+      </div>
+    );
+  }
 
-  // Fetch data
-  const fetchData = useCallback(async () => {
-    try {
-      const [queriesRes, typesRes, statsRes, pollingRes] = await Promise.all([
-        fetch(`${API_BASE}/api/cs/queries?limit=500`),
-        fetch(`${API_BASE}/api/cs/query-types`),
-        fetch(`${API_BASE}/api/cs/stats`),
-        fetch(`${API_BASE}/api/cs/polling/status`)
-      ]);
+  if (tickets.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 text-slate-400">
+        <Inbox className="w-10 h-10 mb-3 opacity-50" />
+        <p className="text-sm font-medium">No tickets found</p>
+      </div>
+    );
+  }
 
-      const queriesData = await queriesRes.json();
-      const typesData = await typesRes.json();
-      const statsData = await statsRes.json();
-      const pollingData = await pollingRes.json();
+  return (
+    <div className="overflow-auto flex-1">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="bg-slate-50 border-b border-slate-200 text-left">
+            <th className="px-4 py-2.5 text-[11px] font-semibold text-slate-500 uppercase tracking-wider w-28">Key</th>
+            <th className="px-4 py-2.5 text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Subject</th>
+            <th className="px-4 py-2.5 text-[11px] font-semibold text-slate-500 uppercase tracking-wider w-36">Status</th>
+            <th className="px-4 py-2.5 text-[11px] font-semibold text-slate-500 uppercase tracking-wider w-24">Priority</th>
+            <th className="px-4 py-2.5 text-[11px] font-semibold text-slate-500 uppercase tracking-wider w-36">Category</th>
+            <th className="px-4 py-2.5 text-[11px] font-semibold text-slate-500 uppercase tracking-wider w-28">Updated</th>
+            <th className="px-4 py-2.5 text-[11px] font-semibold text-slate-500 uppercase tracking-wider w-28">Created</th>
+          </tr>
+        </thead>
+        <tbody>
+          {tickets.map((t) => (
+            <tr
+              key={t.id}
+              onClick={() => onSelect(t.id)}
+              className={`border-b border-slate-100 cursor-pointer transition-colors group ${
+                selectedId === t.id
+                  ? 'bg-indigo-50 hover:bg-indigo-50'
+                  : 'hover:bg-slate-50'
+              }`}
+            >
+              <td className="px-4 py-3">
+                <div className="flex items-center gap-2">
+                  <span className="font-mono text-xs text-slate-500 group-hover:text-indigo-600">{t.ticket_number}</span>
+                  {t.unread_count > 0 && (
+                    <span className="w-4.5 h-4.5 min-w-[18px] px-1 rounded-full bg-indigo-600 text-white text-[10px] font-bold flex items-center justify-center">
+                      {t.unread_count}
+                    </span>
+                  )}
+                </div>
+              </td>
+              <td className="px-4 py-3">
+                <p className="text-slate-800 font-medium truncate max-w-xs">{t.subject}</p>
+                {t.last_message && (
+                  <p className="text-xs text-slate-400 truncate max-w-xs mt-0.5">{t.last_message}</p>
+                )}
+              </td>
+              <td className="px-4 py-3">
+                <InlineStatusDropdown ticketId={t.id} status={t.status} onStatusChange={onStatusChange} />
+              </td>
+              <td className="px-4 py-3">
+                <InlinePriorityDropdown ticketId={t.id} priority={t.priority} onPriorityChange={onPriorityChange} />
+              </td>
+              <td className="px-4 py-3">
+                <span className="text-xs text-slate-500">{t.category_name || '—'}</span>
+              </td>
+              <td className="px-4 py-3">
+                <span className="text-xs text-slate-500">{timeAgo(t.updated_at)}</span>
+              </td>
+              <td className="px-4 py-3">
+                <span className="text-xs text-slate-500">{timeAgo(t.created_at)}</span>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
 
-      setQueries(queriesData.queries || []);
-      setQueryTypes(typesData || []);
-      setStats(statsData);
-      setPollingStatus(pollingData);
-    } catch (error) {
-      console.error('Failed to fetch data:', error);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+// ==================== Chat Panel ====================
+function ChatPanel({
+  ticketId,
+  messages,
+  onSend,
+  sending,
+  onFileUpload,
+  uploading,
+}: {
+  ticketId: number;
+  messages: SupportMessage[];
+  onSend: (content: string) => void;
+  sending: boolean;
+  onFileUpload: (file: File) => void;
+  uploading: boolean;
+}) {
+  const [input, setInput] = useState('');
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const endRef = useRef<HTMLDivElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    fetchData();
-    const interval = setInterval(fetchData, 30000);
-    return () => clearInterval(interval);
-  }, [fetchData]);
+    endRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
 
-  // Fetch clubs when search changes (debounced)
   useEffect(() => {
-    if (createForm.stakeholder_type !== 'leader') return;
+    setInput('');
+  }, [ticketId]);
 
-    const timer = setTimeout(async () => {
-      setLoadingClubs(true);
-      try {
-        const res = await fetch(`${API_BASE}/api/cs/clubs?search=${encodeURIComponent(clubSearch)}`);
-        const data = await res.json();
-        if (data.success) {
-          setClubs(data.clubs || []);
-        }
-      } catch (error) {
-        console.error('Failed to fetch clubs:', error);
-      } finally {
-        setLoadingClubs(false);
-      }
-    }, 300);
+  const handleSend = () => {
+    if (!input.trim() || sending) return;
+    onSend(input.trim());
+    setInput('');
+  };
 
-    return () => clearTimeout(timer);
-  }, [clubSearch, createForm.stakeholder_type]);
-
-  // Fetch hosts when club changes
-  useEffect(() => {
-    if (!createForm.club_id) {
-      setHosts([]);
+  const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = '';
+    if (file.size > 25 * 1024 * 1024) {
+      alert('File too large. Maximum size is 25MB.');
       return;
     }
-
-    const fetchHosts = async () => {
-      setLoadingHosts(true);
-      try {
-        const res = await fetch(`${API_BASE}/api/cs/clubs/${createForm.club_id}/hosts`);
-        const data = await res.json();
-        if (data.success) {
-          setHosts(data.hosts || []);
-        }
-      } catch (error) {
-        console.error('Failed to fetch hosts:', error);
-      } finally {
-        setLoadingHosts(false);
-      }
-    };
-
-    fetchHosts();
-  }, [createForm.club_id]);
-
-  // Toggle section
-  const toggleSection = (key: string) => {
-    setExpandedSections(prev => ({ ...prev, [key]: !prev[key] }));
+    onFileUpload(file);
   };
 
-  // Filter queries by search
-  const filteredQueries = queries.filter(q => {
-    if (!searchQuery) return true;
-    const search = searchQuery.toLowerCase();
+  return (
+    <div className="flex flex-col h-full">
+      <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-slate-50">
+        {messages.length === 0 && (
+          <div className="text-center text-slate-400 py-8">
+            <p className="text-sm">No messages yet</p>
+          </div>
+        )}
+        {messages.map((msg) => {
+          if (msg.message_type === 'FORM_DATA') {
+            return (
+              <div key={msg.id} className="flex justify-center">
+                <div className="bg-white border border-slate-200 rounded-xl p-3 max-w-sm text-center">
+                  <div className="text-[11px] font-semibold text-slate-500 mb-1">Ticket Created</div>
+                  {msg.content && <p className="text-sm text-slate-700">{msg.content}</p>}
+                  <p className="text-[10px] text-slate-400 mt-1">{formatMsgTime(msg.created_at)}</p>
+                </div>
+              </div>
+            );
+          }
+
+          const isUser = msg.sender_type === 'USER';
+          const isSystem = msg.sender_type === 'SYSTEM';
+
+          if (isSystem) {
+            return (
+              <div key={msg.id} className="flex justify-center">
+                <div className="bg-slate-200/60 rounded-full px-4 py-1.5">
+                  <p className="text-[11px] text-slate-500">{msg.content}</p>
+                </div>
+              </div>
+            );
+          }
+
+          return (
+            <div key={msg.id} className={`flex ${isUser ? 'justify-start' : 'justify-end'}`}>
+              <div
+                className={`max-w-[75%] rounded-2xl px-4 py-2.5 ${
+                  isUser
+                    ? 'bg-white border border-slate-200 rounded-bl-md'
+                    : 'bg-indigo-600 text-white rounded-br-md'
+                }`}
+              >
+                {isUser && msg.sender_name && (
+                  <p className="text-[11px] font-semibold text-indigo-600 mb-0.5">{msg.sender_name}</p>
+                )}
+                {isImageMsg(msg) && msg.file_url && (
+                  <img
+                    src={msg.file_url}
+                    alt="attachment"
+                    className="max-w-full rounded-lg mb-1 cursor-pointer max-h-48 object-cover"
+                    onClick={() => setPreviewUrl(msg.file_url!)}
+                  />
+                )}
+                {msg.file_url && !isImageMsg(msg) && (
+                  <a
+                    href={msg.file_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className={`flex items-center gap-2 px-3 py-2 rounded-lg mb-1 ${
+                      isUser ? 'bg-slate-50 text-slate-700' : 'bg-indigo-500 text-white'
+                    }`}
+                  >
+                    <FileText className="w-4 h-4" />
+                    <span className="text-sm truncate">{msg.content || msg.file_name || 'File'}</span>
+                  </a>
+                )}
+                {msg.content && !(isImageMsg(msg) && msg.file_url && !msg.content.trim()) && (
+                  <p className={`text-sm ${isUser ? 'text-slate-800' : 'text-white'}`}>{msg.content}</p>
+                )}
+                <p className={`text-[10px] mt-1 ${isUser ? 'text-slate-400' : 'text-indigo-200'}`}>
+                  {formatMsgTime(msg.created_at)}
+                  {!isUser && msg.sender_name && ` · ${msg.sender_name}`}
+                </p>
+              </div>
+            </div>
+          );
+        })}
+        <div ref={endRef} />
+      </div>
+
+      {/* Input bar */}
+      <div className="p-3 border-t border-slate-200 bg-white">
+        <div className="flex items-center gap-2">
+          <input
+            ref={fileRef}
+            type="file"
+            accept="image/*,video/*,application/pdf,.doc,.docx,.xls,.xlsx"
+            style={{ display: 'none' }}
+            onChange={handleFile}
+          />
+          <button
+            onClick={() => fileRef.current?.click()}
+            disabled={uploading}
+            className="p-2 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors"
+            title="Attach file"
+          >
+            {uploading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Paperclip className="w-5 h-5" />}
+          </button>
+          <input
+            type="text"
+            placeholder="Type a reply..."
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && handleSend()}
+            className="flex-1 px-4 py-2 text-sm rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+          />
+          <button
+            onClick={handleSend}
+            disabled={sending || !input.trim()}
+            className="p-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            <Send className="w-5 h-5" />
+          </button>
+        </div>
+      </div>
+
+      {/* Lightbox */}
+      {previewUrl && (
+        <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center" onClick={() => setPreviewUrl(null)}>
+          <button className="absolute top-4 right-4 p-2 rounded-full bg-white/10 text-white hover:bg-white/20" onClick={() => setPreviewUrl(null)}>
+            <X className="w-6 h-6" />
+          </button>
+          <img src={previewUrl} alt="preview" className="max-w-[90vw] max-h-[90vh] rounded-lg" onClick={(e) => e.stopPropagation()} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ==================== Ticket Detail Panel ====================
+function TicketDetailPanel({
+  ticket,
+  messages,
+  onBack,
+  onStatusChange,
+  onDetailsUpdate,
+  onResolve,
+  onSend,
+  sending,
+  onFileUpload,
+  uploading,
+  actionLoading,
+}: {
+  ticket: SupportTicket;
+  messages: SupportMessage[];
+  onBack: () => void;
+  onStatusChange: (status: string) => void;
+  onDetailsUpdate: (data: { subject?: string; description?: string }) => void;
+  onResolve: (note: string) => void;
+  onSend: (content: string) => void;
+  sending: boolean;
+  onFileUpload: (file: File) => void;
+  uploading: boolean;
+  actionLoading: boolean;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [editSubject, setEditSubject] = useState(ticket.subject);
+  const [editDesc, setEditDesc] = useState(ticket.description || '');
+  const [showResolve, setShowResolve] = useState(false);
+  const [resolveNote, setResolveNote] = useState('');
+  const [statusOpen, setStatusOpen] = useState(false);
+
+  useEffect(() => {
+    setEditSubject(ticket.subject);
+    setEditDesc(ticket.description || '');
+    setEditing(false);
+    setShowResolve(false);
+    setResolveNote('');
+  }, [ticket.id]);
+
+  const isClosed = ['RESOLVED', 'CLOSED', 'AUTO_RESOLVED'].includes(ticket.status);
+
+  return (
+    <div className="flex flex-col h-full">
+      {/* Detail header */}
+      <div className="flex items-center gap-3 px-4 py-3 border-b border-slate-200 bg-white">
+        <button
+          onClick={onBack}
+          className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors"
+        >
+          <ArrowLeft className="w-4 h-4" />
+        </button>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="font-mono text-xs text-slate-400">{ticket.ticket_number}</span>
+            <StatusBadge status={ticket.status} />
+            <PriorityBadge priority={ticket.priority} />
+          </div>
+          <h3 className="text-sm font-semibold text-slate-800 truncate mt-0.5">{ticket.subject}</h3>
+        </div>
+      </div>
+
+      {/* Split: Chat left, Details right */}
+      <div className="flex-1 flex overflow-hidden">
+        {/* Chat area */}
+        <div className="flex-1 flex flex-col min-w-0 border-r border-slate-200">
+          <ChatPanel
+            ticketId={ticket.id}
+            messages={messages}
+            onSend={onSend}
+            sending={sending}
+            onFileUpload={onFileUpload}
+            uploading={uploading}
+          />
+        </div>
+
+        {/* Details sidebar */}
+        <div className="w-72 bg-white flex flex-col overflow-y-auto flex-shrink-0">
+          <div className="p-4 space-y-4">
+            {/* Status */}
+            <div>
+              <label className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Status</label>
+              <div className="relative mt-1">
+                <button
+                  onClick={() => !isClosed && setStatusOpen(!statusOpen)}
+                  disabled={isClosed}
+                  className={`w-full flex items-center justify-between px-3 py-2 text-sm rounded-lg border border-slate-200 ${
+                    isClosed ? 'opacity-60 cursor-not-allowed' : 'hover:border-slate-300 cursor-pointer'
+                  }`}
+                >
+                  <StatusBadge status={ticket.status} />
+                  {!isClosed && <ChevronDown className="w-4 h-4 text-slate-400" />}
+                </button>
+                {statusOpen && (
+                  <>
+                    <div className="fixed inset-0 z-10" onClick={() => setStatusOpen(false)} />
+                    <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-lg z-20 py-1">
+                      {['OPEN', 'IN_PROGRESS', 'RESOLVED', 'CLOSED'].map((s) => (
+                        <button
+                          key={s}
+                          onClick={() => { onStatusChange(s); setStatusOpen(false); }}
+                          className="w-full text-left px-3 py-1.5 text-sm hover:bg-slate-50"
+                        >
+                          <StatusBadge status={s} />
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+
+            {/* Priority */}
+            <div>
+              <label className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Priority</label>
+              <div className="mt-1"><PriorityBadge priority={ticket.priority} /></div>
+            </div>
+
+            {/* Category */}
+            {ticket.category_name && (
+              <div>
+                <label className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Category</label>
+                <p className="text-sm text-slate-700 mt-1">{ticket.category_name}</p>
+              </div>
+            )}
+
+            {/* Subject & Description */}
+            <div>
+              <div className="flex items-center justify-between">
+                <label className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Subject</label>
+                {!isClosed && (
+                  <button
+                    onClick={() => {
+                      if (editing) {
+                        onDetailsUpdate({ subject: editSubject, description: editDesc });
+                        setEditing(false);
+                      } else {
+                        setEditing(true);
+                      }
+                    }}
+                    className="p-1 rounded text-slate-400 hover:text-indigo-600 hover:bg-indigo-50"
+                  >
+                    {editing ? <Save className="w-3.5 h-3.5" /> : <Pencil className="w-3.5 h-3.5" />}
+                  </button>
+                )}
+              </div>
+              {editing ? (
+                <input
+                  value={editSubject}
+                  onChange={(e) => setEditSubject(e.target.value)}
+                  className="w-full mt-1 px-2 py-1.5 text-sm rounded border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+              ) : (
+                <p className="text-sm text-slate-700 mt-1">{ticket.subject}</p>
+              )}
+            </div>
+
+            <div>
+              <label className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Description</label>
+              {editing ? (
+                <textarea
+                  value={editDesc}
+                  onChange={(e) => setEditDesc(e.target.value)}
+                  className="w-full mt-1 px-2 py-1.5 text-sm rounded border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 h-20 resize-none"
+                />
+              ) : (
+                <p className="text-sm text-slate-500 mt-1">{ticket.description || 'No description'}</p>
+              )}
+            </div>
+
+            {/* Dates */}
+            <div>
+              <label className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Created</label>
+              <p className="text-xs text-slate-600 mt-1">{formatFullDate(ticket.created_at)}</p>
+            </div>
+            <div>
+              <label className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Updated</label>
+              <p className="text-xs text-slate-600 mt-1">{formatFullDate(ticket.updated_at)}</p>
+            </div>
+
+            {/* Resolve */}
+            {!isClosed && (
+              <div className="pt-2">
+                {showResolve ? (
+                  <div className="space-y-2">
+                    <textarea
+                      placeholder="Resolution note..."
+                      value={resolveNote}
+                      onChange={(e) => setResolveNote(e.target.value)}
+                      className="w-full px-3 py-2 text-sm rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500 h-20 resize-none"
+                    />
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => { onResolve(resolveNote); setShowResolve(false); setResolveNote(''); }}
+                        disabled={actionLoading}
+                        className="flex-1 py-2 rounded-lg bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700 disabled:opacity-50"
+                      >
+                        {actionLoading ? 'Resolving...' : 'Confirm'}
+                      </button>
+                      <button
+                        onClick={() => setShowResolve(false)}
+                        className="px-3 py-2 rounded-lg border border-slate-200 text-sm text-slate-600 hover:bg-slate-50"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => setShowResolve(true)}
+                    className="w-full py-2 rounded-lg bg-emerald-50 text-emerald-700 text-sm font-semibold hover:bg-emerald-100 border border-emerald-200 transition-colors"
+                  >
+                    <CheckCircle className="w-4 h-4 inline mr-1.5" />
+                    Resolve Ticket
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ==================== Main Dashboard ====================
+export default function CustomerServiceDashboard() {
+  const [stats, setStats] = useState<SupportStats | null>(null);
+  const [tickets, setTickets] = useState<SupportTicket[]>([]);
+  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [selectedTicket, setSelectedTicket] = useState<SupportTicket | null>(null);
+  const [messages, setMessages] = useState<SupportMessage[]>([]);
+  const [statusFilter, setStatusFilter] = useState('ALL');
+  const [search, setSearch] = useState('');
+  const [loadingTickets, setLoadingTickets] = useState(false);
+  const [loadingStats, setLoadingStats] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [actionLoading, setActionLoading] = useState(false);
+
+  const [waitingTickets, setWaitingTickets] = useState<SupportTicket[]>([]);
+  const [acceptingId, setAcceptingId] = useState<number | null>(null);
+
+  const wsRef = useRef<WebSocket | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const refreshRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const sseRef = useRef<EventSource | null>(null);
+
+  const loadStats = useCallback(async () => {
+    setLoadingStats(true);
+    try { setStats(await getAgentStats()); } catch {}
+    setLoadingStats(false);
+  }, []);
+
+  const loadTickets = useCallback(async () => {
+    setLoadingTickets(true);
+    try {
+      const params: any = { limit: 100 };
+      if (statusFilter !== 'ALL') params.status = statusFilter;
+      const data = await getAgentTickets(params);
+      setTickets(data.tickets || []);
+    } catch {}
+    setLoadingTickets(false);
+  }, [statusFilter]);
+
+  const loadMessages = useCallback(async () => {
+    if (!selectedId) return;
+    try {
+      const data = await getTicketDetail(selectedId);
+      setMessages(data.messages || []);
+      setSelectedTicket(data.ticket);
+      markRead(selectedId).catch(() => {});
+    } catch {}
+  }, [selectedId]);
+
+  // Initial load
+  useEffect(() => { loadStats(); loadTickets(); }, [loadStats, loadTickets]);
+
+  // Auto-refresh every 30s
+  useEffect(() => {
+    refreshRef.current = setInterval(() => { loadTickets(); loadStats(); }, 30000);
+    return () => { if (refreshRef.current) clearInterval(refreshRef.current); };
+  }, [loadTickets, loadStats]);
+
+  // SSE for incoming requests
+  useEffect(() => {
+    const sse = new EventSource(getAgentEventsUrl());
+    sseRef.current = sse;
+
+    sse.addEventListener('waiting_list', (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        setWaitingTickets(data);
+      } catch {}
+    });
+
+    sse.addEventListener('new_request', () => {
+      // Play notification sound if available
+      try { new Audio('/notification.mp3').play().catch(() => {}); } catch {}
+    });
+
+    sse.addEventListener('request_accepted', () => {
+      loadTickets();
+      loadStats();
+    });
+
+    sse.onerror = () => {
+      // SSE will auto-reconnect
+    };
+
+    return () => { sse.close(); sseRef.current = null; };
+  }, []);
+
+  // Accept ticket handler
+  const handleAcceptTicket = async (ticketId: number) => {
+    setAcceptingId(ticketId);
+    try {
+      await acceptTicket(ticketId);
+      setWaitingTickets((prev) => prev.filter((t) => t.id !== ticketId));
+      await loadTickets();
+      loadStats();
+      setSelectedId(ticketId);
+    } catch (err: any) {
+      if (err?.status === 409) {
+        alert('This ticket was already accepted by another agent.');
+        setWaitingTickets((prev) => prev.filter((t) => t.id !== ticketId));
+      } else {
+        alert('Failed to accept ticket.');
+      }
+    }
+    setAcceptingId(null);
+  };
+
+  // Load messages on ticket select
+  useEffect(() => {
+    if (selectedId) { loadMessages(); } else { setMessages([]); setSelectedTicket(null); }
+  }, [selectedId, loadMessages]);
+
+  // WebSocket for selected ticket
+  useEffect(() => {
+    if (!selectedId) return;
+    let cancelled = false;
+    const startPolling = () => {
+      if (pollRef.current) return;
+      pollRef.current = setInterval(loadMessages, 10000);
+    };
+    (async () => {
+      try {
+        const wsUrl = await getWSUrl(selectedId);
+        if (cancelled) return;
+        const ws = new WebSocket(wsUrl);
+        wsRef.current = ws;
+        ws.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            if (data.type === 'message' && data.message) {
+              setMessages((prev) => [...prev, data.message]);
+              ws.send(JSON.stringify({ type: 'read' }));
+            }
+          } catch {}
+        };
+        ws.onerror = () => startPolling();
+        ws.onclose = () => startPolling();
+      } catch { startPolling(); }
+    })();
+    return () => {
+      cancelled = true;
+      wsRef.current?.close();
+      wsRef.current = null;
+      if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+    };
+  }, [selectedId]);
+
+  const handleSend = async (content: string) => {
+    if (!selectedId || sending) return;
+    setSending(true);
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'message', content }));
+      setSending(false);
+      return;
+    }
+    try {
+      const result = await sendMessage(selectedId, { content });
+      setMessages((prev) => [...prev, result.message]);
+    } catch {}
+    setSending(false);
+  };
+
+  const handleFileUpload = async (file: File) => {
+    if (!selectedId) return;
+    setUploading(true);
+    try {
+      const { fileId, uploadUrl } = await uploadFile(file.type);
+      await uploadToS3(uploadUrl, file);
+      const isImage = file.type.startsWith('image/');
+      const msgType = isImage ? 'IMAGE' : 'FILE';
+      const content = isImage ? '' : file.name;
+      if (wsRef.current?.readyState === WebSocket.OPEN) {
+        wsRef.current.send(JSON.stringify({ type: 'message', content, file_id: fileId, message_type: msgType }));
+      } else {
+        const result = await sendMessage(selectedId, { content, message_type: msgType, file_id: fileId });
+        setMessages((prev) => [...prev, result.message]);
+      }
+    } catch { alert('Failed to upload file.'); }
+    setUploading(false);
+  };
+
+  const handleStatusChange = async (status: string) => {
+    if (!selectedId) return;
+    setActionLoading(true);
+    try {
+      if (status === 'RESOLVED') { await resolveTicket(selectedId, ''); }
+      else { await updateTicketStatus(selectedId, status); }
+      await loadTickets(); await loadMessages(); loadStats();
+    } catch {}
+    setActionLoading(false);
+  };
+
+  const handleDetailsUpdate = async (data: { subject?: string; description?: string }) => {
+    if (!selectedId) return;
+    setActionLoading(true);
+    try { await updateTicketDetails(selectedId, data); await loadTickets(); await loadMessages(); } catch {}
+    setActionLoading(false);
+  };
+
+  const handleResolve = async (note: string) => {
+    if (!selectedId) return;
+    setActionLoading(true);
+    try { await resolveTicket(selectedId, note); await loadTickets(); await loadMessages(); loadStats(); } catch {}
+    setActionLoading(false);
+  };
+
+  // Table-level status change (by ticket id)
+  const handleTableStatusChange = async (ticketId: number, status: string) => {
+    try {
+      if (status === 'RESOLVED') { await resolveTicket(ticketId, ''); }
+      else { await updateTicketStatus(ticketId, status); }
+      await loadTickets(); loadStats();
+    } catch {}
+  };
+
+  // Table-level priority change (by ticket id)
+  const handleTablePriorityChange = async (ticketId: number, priority: string) => {
+    try {
+      await updateTicketPriority(ticketId, priority);
+      await loadTickets();
+    } catch {}
+  };
+
+  // Filter tickets by search
+  const filteredTickets = tickets.filter((t) => {
+    if (!search) return true;
+    const q = search.toLowerCase();
     return (
-      q.ticket_number.toLowerCase().includes(search) ||
-      q.user_name?.toLowerCase().includes(search) ||
-      q.user_contact?.toLowerCase().includes(search) ||
-      q.subject?.toLowerCase().includes(search) ||
-      q.description?.toLowerCase().includes(search)
+      t.ticket_number.toLowerCase().includes(q) ||
+      t.subject.toLowerCase().includes(q) ||
+      (t.category_name || '').toLowerCase().includes(q)
     );
   });
 
-  // Check if venue has any queries
-  const hasVenueQueries = queries.some(q => q.stakeholder_type === 'venue');
-
-  // Calculate overall TAT for display - only when resolution_communicated (closed_at is set)
-  const overallAvgTAT = useMemo(() => {
-    const closedQueries = queries.filter(q => q.closed_at);
-    if (closedQueries.length === 0) return null;
-    const totalHours = closedQueries.reduce((sum, q) => sum + calculateTATHours(q.created_at, q.closed_at), 0);
-    return totalHours / closedQueries.length;
-  }, [queries]);
-
-  // Sync now
-  const syncNow = async () => {
-    setSyncing(true);
-    try {
-      await fetch(`${API_BASE}/api/cs/polling/trigger`, { method: 'POST' });
-      await fetchData();
-    } catch (error) {
-      console.error('Sync failed:', error);
-    } finally {
-      setSyncing(false);
-    }
-  };
-
-  // Toggle polling
-  const togglePolling = async () => {
-    try {
-      const endpoint = pollingStatus?.active ? 'stop' : 'start';
-      await fetch(`${API_BASE}/api/cs/polling/${endpoint}`, { method: 'POST' });
-      const res = await fetch(`${API_BASE}/api/cs/polling/status`);
-      setPollingStatus(await res.json());
-    } catch (error) {
-      console.error('Toggle polling failed:', error);
-    }
-  };
-
-  // Update query status
-  const updateStatus = async (id: number, status: string) => {
-    try {
-      await fetch(`${API_BASE}/api/cs/queries/${id}/status`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status })
-      });
-      await fetchData();
-    } catch (error) {
-      console.error('Status update failed:', error);
-    }
-  };
-
-  // Save query details (description, attachments)
-  const saveQueryDetails = async () => {
-    if (!selectedQuery) return;
-    setSavingEdit(true);
-    try {
-      const response = await fetch(`${API_BASE}/api/cs/queries/${selectedQuery.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          description: editedDescription,
-          attachments: editedAttachments
-        })
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        // Update selected query with new data
-        setSelectedQuery(data.query);
-        setIsEditingDetails(false);
-        await fetchData();
-      } else {
-        alert('Failed to save changes');
-      }
-    } catch (error) {
-      console.error('Save failed:', error);
-      alert('Failed to save changes');
-    } finally {
-      setSavingEdit(false);
-    }
-  };
-
-  // Start editing details
-  const startEditingDetails = () => {
-    if (selectedQuery) {
-      setEditedDescription(selectedQuery.description || selectedQuery.subject || '');
-      setEditedAttachments(selectedQuery.attachments || []);
-      setNewAttachmentUrl('');
-      setIsEditingDetails(true);
-    }
-  };
-
-  // Cancel editing
-  const cancelEditingDetails = () => {
-    setIsEditingDetails(false);
-    setEditedDescription('');
-    setEditedAttachments([]);
-    setNewAttachmentUrl('');
-  };
-
-  // Add attachment URL
-  const addEditAttachment = () => {
-    if (newAttachmentUrl.trim()) {
-      setEditedAttachments([...editedAttachments, newAttachmentUrl.trim()]);
-      setNewAttachmentUrl('');
-    }
-  };
-
-  // Remove attachment
-  const removeEditAttachment = (index: number) => {
-    setEditedAttachments(editedAttachments.filter((_, i) => i !== index));
-  };
-
-  // Send ticket to Slack
-  const sendToSlack = async (id: number, channelType: string) => {
-    try {
-      const response = await fetch(`${API_BASE}/api/cs/slack/send/${id}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ channel_type: channelType })
-      });
-
-      const data = await response.json();
-
-      if (response.ok && data.success) {
-        await fetchData();
-      } else {
-        console.error('Failed to send to Slack:', data.error);
-        alert(data.error || 'Failed to send to Slack');
-      }
-    } catch (error) {
-      console.error('Send to Slack failed:', error);
-      alert('Failed to send to Slack');
-    }
-  };
-
-  // Get query types for create form
-  const getMainTypes = (stakeholder: string) =>
-    queryTypes.filter(t => t.stakeholder_type === stakeholder && t.parent_id === null);
-
-  const getSubTypes = (parentId: number) =>
-    queryTypes.filter(t => t.parent_id === parentId);
-
-  // Create query
-  const createQuery = async () => {
-    setCreateError(null);
-    try {
-      const response = await fetch(`${API_BASE}/api/cs/queries`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...createForm,
-          subject: createForm.description.slice(0, 100),
-          query_type_id: parseInt(createForm.query_type_id),
-          query_subtype_id: createForm.query_subtype_id ? parseInt(createForm.query_subtype_id) : null,
-          club_id: createForm.club_id ? parseInt(createForm.club_id) : null,
-          club_name: createForm.club_name || null,
-          attachments: createForm.attachments
-        })
-      });
-
-      if (response.ok) {
-        setShowCreateModal(false);
-        setCreateForm({
-          stakeholder_type: 'user',
-          source: 'whatsapp',
-          query_type_id: '',
-          query_subtype_id: '',
-          user_name: '',
-          user_contact: '',
-          description: '',
-          club_id: '',
-          club_name: '',
-          attachments: []
-        });
-        setAttachmentUrl('');
-        setClubSearch('');
-        setClubs([]);
-        setHosts([]);
-        await fetchData();
-      } else {
-        const data = await response.json().catch(() => null);
-        setCreateError(data?.error || `Failed to create query (${response.status})`);
-      }
-    } catch (error) {
-      console.error('Create query failed:', error);
-      setCreateError('Failed to connect to server. Please try again.');
-    }
-  };
-
-  if (loading) {
+  // If a ticket is selected, show the detail view
+  if (selectedId && selectedTicket) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <RefreshCw className="h-8 w-8 animate-spin text-indigo-600" />
+      <div className="h-[calc(100vh-3.5rem)] flex flex-col bg-slate-50">
+        <TicketDetailPanel
+          ticket={selectedTicket}
+          messages={messages}
+          onBack={() => setSelectedId(null)}
+          onStatusChange={handleStatusChange}
+          onDetailsUpdate={handleDetailsUpdate}
+          onResolve={handleResolve}
+          onSend={handleSend}
+          sending={sending}
+          onFileUpload={handleFileUpload}
+          uploading={uploading}
+          actionLoading={actionLoading}
+        />
       </div>
     );
   }
 
+  // Queue view (table)
   return (
-    <div className="min-h-screen bg-gray-50 p-6">
+    <div className="h-[calc(100vh-3.5rem)] flex flex-col bg-slate-50">
       {/* Header */}
-      <div className="flex items-center justify-between mb-6">
-        <div className="flex items-center gap-3">
-          <div className="p-2.5 bg-indigo-100 rounded-xl">
-            <Headphones className="h-6 w-6 text-indigo-600" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900">Customer Service</h1>
-            <p className="text-sm text-gray-500">Manage queries from users, leaders & venues</p>
-          </div>
+      <div className="flex items-center justify-between px-6 py-3 bg-white border-b border-slate-200">
+        <div className="flex items-center gap-2.5">
+          <Headphones className="w-5 h-5 text-indigo-600" />
+          <h1 className="text-base font-bold text-slate-800">Service Desk</h1>
         </div>
-
-        <div className="flex items-center gap-3">
-          {/* Search */}
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-            <input
-              type="text"
-              placeholder="Search tickets..."
-              value={searchQuery}
-              onChange={e => setSearchQuery(e.target.value)}
-              className="pl-9 pr-4 py-2 border rounded-lg text-sm w-64 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-            />
-          </div>
-
-          {/* Auto-sync toggle */}
-          <button
-            onClick={togglePolling}
-            className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-              pollingStatus?.active
-                ? 'bg-green-100 text-green-700'
-                : 'bg-gray-100 text-gray-600'
-            }`}
-          >
-            <div className={`w-2 h-2 rounded-full ${pollingStatus?.active ? 'bg-green-500 animate-pulse' : 'bg-gray-400'}`} />
-            Auto-sync {pollingStatus?.active ? 'ON' : 'OFF'}
-          </button>
-
-          {/* Sync Now */}
-          <button
-            onClick={syncNow}
-            disabled={syncing}
-            className="flex items-center gap-2 px-3 py-2 border rounded-lg text-sm font-medium hover:bg-gray-50 disabled:opacity-50"
-          >
-            <RefreshCw className={`h-4 w-4 ${syncing ? 'animate-spin' : ''}`} />
-            Sync Now
-          </button>
-
-          {/* New Query */}
-          <button
-            onClick={() => setShowCreateModal(true)}
-            className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700"
-          >
-            <Plus className="h-4 w-4" />
-            New Query
-          </button>
-        </div>
-      </div>
-
-      {/* Summary Stats */}
-      <div className="grid grid-cols-5 gap-4 mb-6">
-        <div className="bg-white rounded-xl p-4 border shadow-sm">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-gray-500">Total Queries</p>
-              <p className="text-2xl font-bold text-gray-900">{stats?.total || 0}</p>
-            </div>
-            <div className="p-3 bg-gray-100 rounded-lg">
-              <FileText className="h-5 w-5 text-gray-600" />
-            </div>
-          </div>
-        </div>
-        <div className="bg-white rounded-xl p-4 border shadow-sm">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-gray-500">Open</p>
-              <p className="text-2xl font-bold text-blue-600">{(stats?.open || 0) + (stats?.in_progress || 0) + (stats?.pending || 0) + (stats?.resolved || 0)}</p>
-            </div>
-            <div className="p-3 bg-blue-100 rounded-lg">
-              <Inbox className="h-5 w-5 text-blue-600" />
-            </div>
-          </div>
-        </div>
-        <div className="bg-white rounded-xl p-4 border shadow-sm">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-gray-500">Closed</p>
-              <p className="text-2xl font-bold text-green-600">{stats?.closed || 0}</p>
-            </div>
-            <div className="p-3 bg-green-100 rounded-lg">
-              <CheckCircle className="h-5 w-5 text-green-600" />
-            </div>
-          </div>
-        </div>
-        {/* TAT Card */}
         <button
-          onClick={() => setShowTATModal(true)}
-          className="bg-white rounded-xl p-4 border shadow-sm hover:border-amber-300 hover:shadow-md transition-all text-left"
+          onClick={() => { loadTickets(); loadStats(); }}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-600 hover:text-slate-800 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
         >
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-gray-500">Avg TAT</p>
-              <p className="text-2xl font-bold text-amber-600">
-                {overallAvgTAT ? formatTATDisplay(overallAvgTAT) : '-'}
-              </p>
-            </div>
-            <div className="p-3 bg-amber-100 rounded-lg">
-              <Timer className="h-5 w-5 text-amber-600" />
-            </div>
-          </div>
-          <p className="text-xs text-amber-600 mt-1 flex items-center gap-1">
-            <TrendingUp className="h-3 w-3" />
-            Click for details
-          </p>
+          <RefreshCw className={`w-3.5 h-3.5 ${loadingTickets ? 'animate-spin' : ''}`} />
+          Refresh
         </button>
-        {/* No Contact Card */}
-        <div className="bg-white rounded-xl p-4 border shadow-sm border-red-200">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-gray-500">No Contact</p>
-              <p className="text-2xl font-bold text-red-600">{stats?.no_contact || 0}</p>
-            </div>
-            <div className="p-3 bg-red-100 rounded-lg">
-              <PhoneOff className="h-5 w-5 text-red-600" />
-            </div>
-          </div>
-          <p className="text-xs text-red-500 mt-1">Missing phone/email</p>
-        </div>
       </div>
 
-      {/* Stakeholder Sections */}
-      <div className="space-y-4">
-        <StakeholderSection
-          type="user"
-          queries={filteredQueries}
-          expandedSections={expandedSections}
-          onToggleSection={toggleSection}
-          onSelectQuery={(q) => { setSelectedQuery(q); setShowDetailModal(true); }}
-          onStatusUpdate={updateStatus}
-          onSendToSlack={sendToSlack}
-        />
+      {/* Stats */}
+      <StatsBar stats={stats} loading={loadingStats} />
 
-        <StakeholderSection
-          type="leader"
-          queries={filteredQueries}
-          expandedSections={expandedSections}
-          onToggleSection={toggleSection}
-          onSelectQuery={(q) => { setSelectedQuery(q); setShowDetailModal(true); }}
-          onStatusUpdate={updateStatus}
-          onSendToSlack={sendToSlack}
-        />
-
-        {/* Only show Venues if there are venue queries */}
-        {hasVenueQueries && (
-          <StakeholderSection
-            type="venue"
-            queries={filteredQueries}
-            expandedSections={expandedSections}
-            onToggleSection={toggleSection}
-            onSelectQuery={(q) => { setSelectedQuery(q); setShowDetailModal(true); }}
-            onStatusUpdate={updateStatus}
-            onSendToSlack={sendToSlack}
-          />
-        )}
-      </div>
-
-      {/* Create Query Modal */}
-      {showCreateModal && (
-        <div className="fixed inset-0 z-50 overflow-y-auto">
-          <div className="fixed inset-0 bg-black/30 backdrop-blur-sm" onClick={() => { setShowCreateModal(false); setCreateError(null); }} />
-          <div className="flex min-h-full items-center justify-center p-4 relative z-10">
-            <div className="relative bg-white rounded-2xl shadow-xl w-full max-w-lg p-6">
-              <button
-                onClick={() => setShowCreateModal(false)}
-                className="absolute top-4 right-4 p-1 hover:bg-gray-100 rounded-lg"
-              >
-                <X className="h-5 w-5 text-gray-500" />
-              </button>
-              <h2 className="text-xl font-bold text-gray-900 mb-6">New Query</h2>
-
-              <div className="space-y-4">
-                {/* Stakeholder Type */}
-                <div className="flex gap-2">
-                  {['user', 'leader', 'venue'].map(type => (
-                    <button
-                      key={type}
-                      onClick={() => {
-                        setCreateForm(f => ({
-                          ...f,
-                          stakeholder_type: type,
-                          query_type_id: '',
-                          query_subtype_id: '',
-                          club_id: '',
-                          club_name: '',
-                          user_name: '',
-                          user_contact: ''
-                        }));
-                        setClubSearch('');
-                        setClubs([]);
-                        setHosts([]);
-                      }}
-                      className={`flex-1 py-2 px-3 rounded-lg border text-sm font-medium transition-colors ${
-                        createForm.stakeholder_type === type
-                          ? 'bg-indigo-600 text-white border-indigo-600'
-                          : 'bg-white text-gray-700 hover:bg-gray-50'
-                      }`}
-                    >
-                      {type.charAt(0).toUpperCase() + type.slice(1)}
-                    </button>
-                  ))}
-                </div>
-
-                {/* Source */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Source</label>
-                  <select
-                    value={createForm.source}
-                    onChange={e => setCreateForm(f => ({ ...f, source: e.target.value }))}
-                    className="w-full px-3 py-2 border rounded-lg text-sm"
-                  >
-                    <option value="whatsapp">WhatsApp</option>
-                    <option value="app">App</option>
-                    <option value="website">Website</option>
-                    <option value="playstore">Play Store</option>
-                    <option value="appstore">App Store</option>
-                  </select>
-                </div>
-
-                {/* Category with Add button */}
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="text-sm font-medium text-gray-700">Category *</label>
-                    <button
-                      onClick={() => setShowAddCategoryModal(true)}
-                      className="text-xs text-indigo-600 hover:text-indigo-800 flex items-center gap-1"
-                    >
-                      <Plus className="h-3 w-3" />
-                      Add Category
-                    </button>
-                  </div>
-                  <select
-                    value={createForm.query_type_id}
-                    onChange={e => setCreateForm(f => ({ ...f, query_type_id: e.target.value, query_subtype_id: '' }))}
-                    className="w-full px-3 py-2 border rounded-lg text-sm"
-                  >
-                    <option value="">Select Category</option>
-                    {getMainTypes(createForm.stakeholder_type).map(type => (
-                      <option key={type.id} value={type.id}>{type.name}</option>
-                    ))}
-                  </select>
-                </div>
-
-                {/* Subcategory */}
-                {createForm.query_type_id && getSubTypes(parseInt(createForm.query_type_id)).length > 0 && (
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Subcategory</label>
-                    <select
-                      value={createForm.query_subtype_id}
-                      onChange={e => setCreateForm(f => ({ ...f, query_subtype_id: e.target.value }))}
-                      className="w-full px-3 py-2 border rounded-lg text-sm"
-                    >
-                      <option value="">Select Subcategory (Optional)</option>
-                      {getSubTypes(parseInt(createForm.query_type_id)).map(type => (
-                        <option key={type.id} value={type.id}>{type.name}</option>
-                      ))}
-                    </select>
-                  </div>
-                )}
-
-                {/* Club Selection - Only for Leaders */}
-                {createForm.stakeholder_type === 'leader' && (
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Club Name</label>
-                    <div className="relative">
-                      <input
-                        type="text"
-                        value={clubSearch}
-                        onChange={e => {
-                          setClubSearch(e.target.value);
-                          setCreateForm(f => ({ ...f, club_id: '', club_name: '' }));
-                        }}
-                        className="w-full px-3 py-2 border rounded-lg text-sm"
-                        placeholder="Search for club..."
-                      />
-                      {loadingClubs && (
-                        <div className="absolute right-3 top-1/2 -translate-y-1/2">
-                          <RefreshCw className="h-4 w-4 animate-spin text-gray-400" />
-                        </div>
-                      )}
-                    </div>
-                    {clubs.length > 0 && !createForm.club_id && clubSearch && (
-                      <div className="mt-1 border rounded-lg max-h-40 overflow-y-auto bg-white shadow-lg">
-                        {clubs.map(club => (
-                          <button
-                            key={club.id}
-                            type="button"
-                            onClick={() => {
-                              setCreateForm(f => ({
-                                ...f,
-                                club_id: club.id.toString(),
-                                club_name: club.name
-                              }));
-                              setClubSearch(club.name);
-                            }}
-                            className="w-full text-left px-3 py-2 hover:bg-gray-50 text-sm border-b last:border-b-0"
-                          >
-                            <span className="font-medium">{club.name}</span>
-                            {club.activity && (
-                              <span className="text-gray-500 ml-2 text-xs">({club.activity})</span>
-                            )}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                    {createForm.club_name && (
-                      <p className="text-xs text-green-600 mt-1">Selected: {createForm.club_name}</p>
-                    )}
-                  </div>
-                )}
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>
-                    <input
-                      type="text"
-                      value={createForm.user_name}
-                      onChange={e => setCreateForm(f => ({ ...f, user_name: e.target.value }))}
-                      className="w-full px-3 py-2 border rounded-lg text-sm"
-                      placeholder="Name"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Phone *</label>
-                    <input
-                      type="text"
-                      value={createForm.user_contact}
-                      onChange={e => setCreateForm(f => ({ ...f, user_contact: e.target.value }))}
-                      className="w-full px-3 py-2 border rounded-lg text-sm"
-                      placeholder="Phone number"
-                    />
-                  </div>
-                </div>
-
-                {/* Description */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Description *</label>
-                  <textarea
-                    value={createForm.description}
-                    onChange={e => setCreateForm(f => ({ ...f, description: e.target.value }))}
-                    className="w-full px-3 py-2 border rounded-lg text-sm h-24 resize-none"
-                    placeholder="Describe the query..."
-                  />
-                </div>
-
-                {/* Attachments */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Attachments (Image, PDF, or Link)</label>
-                  <div className="flex gap-2">
-                    <input
-                      type="url"
-                      value={attachmentUrl}
-                      onChange={e => setAttachmentUrl(e.target.value)}
-                      className="flex-1 px-3 py-2 border rounded-lg text-sm"
-                      placeholder="Paste URL (image, PDF, or any link)..."
-                    />
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (attachmentUrl.trim()) {
-                          setCreateForm(f => ({ ...f, attachments: [...f.attachments, attachmentUrl.trim()] }));
-                          setAttachmentUrl('');
-                        }
-                      }}
-                      className="px-3 py-2 bg-gray-100 text-gray-700 rounded-lg text-sm hover:bg-gray-200"
-                    >
-                      Add
-                    </button>
-                  </div>
-                  {createForm.attachments.length > 0 && (
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      {createForm.attachments.map((url, idx) => {
-                        const isImage = /\.(jpg|jpeg|png|gif|webp|svg)$/i.test(url) || url.includes('image');
-                        const isPdf = /\.pdf$/i.test(url);
-
-                        return (
-                          <div key={idx} className="relative group">
-                            {isImage ? (
-                              <img src={url} alt={`Attachment ${idx + 1}`} className="h-16 w-16 object-cover rounded border" />
-                            ) : isPdf ? (
-                              <div className="h-16 w-16 flex items-center justify-center bg-red-50 border border-red-200 rounded">
-                                <FileText className="h-6 w-6 text-red-600" />
-                              </div>
-                            ) : (
-                              <div className="h-16 w-16 flex items-center justify-center bg-blue-50 border border-blue-200 rounded">
-                                <MessageSquare className="h-6 w-6 text-blue-600" />
-                              </div>
-                            )}
-                            <button
-                              type="button"
-                              onClick={() => setCreateForm(f => ({ ...f, attachments: f.attachments.filter((_, i) => i !== idx) }))}
-                              className="absolute -top-1 -right-1 bg-red-500 text-white rounded-full w-4 h-4 text-xs flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
-                            >
-                              ×
-                            </button>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {createError && (
-                <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
-                  {createError}
-                </div>
-              )}
-
-              <div className="flex justify-end gap-3 mt-6">
-                <button
-                  onClick={() => { setShowCreateModal(false); setCreateError(null); }}
-                  className="px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={createQuery}
-                  disabled={!createForm.query_type_id || !createForm.user_contact || !createForm.description}
-                  className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  Create Query
-                </button>
-              </div>
+      {/* Incoming Requests */}
+      {waitingTickets.length > 0 && (
+        <div className="px-6 pb-2">
+          <div className="bg-purple-50 border border-purple-200 rounded-lg p-4">
+            <div className="flex items-center gap-2 mb-3">
+              <AlertCircle className="w-4 h-4 text-purple-600" />
+              <h3 className="text-sm font-bold text-purple-800">
+                Incoming Requests ({waitingTickets.length})
+              </h3>
+              <span className="w-2 h-2 rounded-full bg-purple-500 animate-pulse" />
             </div>
-          </div>
-        </div>
-      )}
-
-      {/* Query Detail Modal */}
-      {showDetailModal && selectedQuery && (
-        <div className="fixed inset-0 z-50 overflow-y-auto">
-          <div className="fixed inset-0 bg-black/30 backdrop-blur-sm" onClick={() => { setShowDetailModal(false); cancelEditingDetails(); }} />
-          <div className="flex min-h-full items-center justify-center p-4">
-            <div className="relative bg-white rounded-2xl shadow-xl w-full max-w-2xl p-6 max-h-[90vh] overflow-y-auto">
-              <button
-                onClick={() => { setShowDetailModal(false); cancelEditingDetails(); }}
-                className="absolute top-4 right-4 p-1 hover:bg-gray-100 rounded-lg"
-              >
-                <X className="h-5 w-5 text-gray-500" />
-              </button>
-
-              {/* Header */}
-              <div className="flex items-start gap-4 mb-6">
-                <div className="p-3 bg-indigo-100 rounded-xl">
-                  <FileText className="h-6 w-6 text-indigo-600" />
-                </div>
-                <div className="flex-1">
-                  <div className="flex items-center gap-3 mb-1">
-                    <span className="font-mono text-lg font-bold text-indigo-600">
-                      {selectedQuery.ticket_number}
-                    </span>
-                    <span className={`px-2 py-0.5 rounded text-xs font-medium ${stakeholderConfig[selectedQuery.stakeholder_type]?.bgColor} ${stakeholderConfig[selectedQuery.stakeholder_type]?.color}`}>
-                      {selectedQuery.stakeholder_type}
-                    </span>
-                    <span className={`px-2 py-1 rounded-full text-xs font-medium border ${statusColors[selectedQuery.status]}`}>
-                      {selectedQuery.status.replace('_', ' ')}
-                    </span>
-                  </div>
-                  <p className="text-sm text-gray-500">Created {formatDate(selectedQuery.created_at)}</p>
-                </div>
-              </div>
-
-              {/* Details Grid */}
-              <div className="grid grid-cols-3 gap-4 mb-6">
-                <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
-                  <Phone className="h-5 w-5 text-gray-400" />
-                  <div>
-                    <p className="text-xs text-gray-500">Phone</p>
-                    <p className="font-medium">
-                      {selectedQuery.user_contact || <span className="text-red-500 text-sm">No contact</span>}
-                    </p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
-                  <UserIcon className="h-5 w-5 text-gray-400" />
-                  <div>
-                    <p className="text-xs text-gray-500">Name</p>
-                    <p className="font-medium text-sm truncate max-w-[150px]" title={selectedQuery.user_name || ''}>
-                      {selectedQuery.user_name || <span className="text-gray-400">N/A</span>}
-                    </p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
-                  <Timer className="h-5 w-5 text-gray-400" />
-                  <div>
-                    <p className="text-xs text-gray-500">TAT</p>
-                    <p className="font-medium">{calculateTAT(selectedQuery.created_at, selectedQuery.resolved_at)}</p>
-                  </div>
-                </div>
-              </div>
-
-              {/* No Contact Warning */}
-              {!selectedQuery.has_contact_info && (
-                <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg flex items-center gap-2">
-                  <PhoneOff className="h-5 w-5 text-red-500" />
-                  <p className="text-sm text-red-700">This ticket has no contact information - cannot reach the user</p>
-                </div>
-              )}
-
-              {/* Category */}
-              <div className="mb-4">
-                <p className="text-sm text-gray-500 mb-1">Category</p>
-                <p className="font-medium">
-                  {selectedQuery.query_type_name}
-                  {selectedQuery.query_subtype_name && ` > ${selectedQuery.query_subtype_name}`}
-                </p>
-              </div>
-
-              {/* Description */}
-              <div className="mb-6">
-                <div className="flex items-center justify-between mb-1">
-                  <p className="text-sm text-gray-500">Description</p>
-                  {!isEditingDetails && (
-                    <button
-                      onClick={startEditingDetails}
-                      className="flex items-center gap-1 text-xs text-indigo-600 hover:text-indigo-800"
-                    >
-                      <Pencil className="h-3 w-3" />
-                      Edit
-                    </button>
-                  )}
-                </div>
-                {isEditingDetails ? (
-                  <textarea
-                    value={editedDescription}
-                    onChange={(e) => setEditedDescription(e.target.value)}
-                    className="w-full p-4 bg-white border border-gray-300 rounded-lg text-gray-700 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                    rows={5}
-                    placeholder="Enter description..."
-                  />
-                ) : (
-                  <div className="p-4 bg-gray-50 rounded-lg">
-                    <p className="text-gray-700 whitespace-pre-wrap">
-                      {selectedQuery.description || selectedQuery.subject || 'No description provided'}
-                    </p>
-                  </div>
-                )}
-              </div>
-
-              {/* Attachments */}
-              <div className="mb-6">
-                <p className="text-sm text-gray-500 mb-2">
-                  Attachments ({isEditingDetails ? editedAttachments.length : (selectedQuery.attachments?.length || 0)})
-                </p>
-
-                {isEditingDetails ? (
-                  <div className="space-y-3">
-                    {/* Add new attachment */}
-                    <div className="flex gap-2">
-                      <input
-                        type="text"
-                        value={newAttachmentUrl}
-                        onChange={(e) => setNewAttachmentUrl(e.target.value)}
-                        placeholder="Paste image/file URL..."
-                        className="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                        onKeyDown={(e) => e.key === 'Enter' && addEditAttachment()}
-                      />
-                      <button
-                        onClick={addEditAttachment}
-                        disabled={!newAttachmentUrl.trim()}
-                        className="px-3 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        <Link className="h-4 w-4" />
-                      </button>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+              {waitingTickets.map((t) => (
+                <div key={t.id} className="bg-white rounded-lg border border-purple-100 p-3 flex items-center gap-3">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-xs text-slate-500">{t.ticket_number}</span>
+                      <PriorityBadge priority={t.priority} />
                     </div>
-
-                    {/* List of attachments */}
-                    {editedAttachments.length > 0 && (
-                      <div className="flex flex-wrap gap-2">
-                        {editedAttachments.map((url, idx) => (
-                          <div key={idx} className="flex items-center gap-2 px-3 py-2 bg-gray-100 rounded-lg text-sm">
-                            <span className="truncate max-w-[200px]">{url}</span>
-                            <button
-                              onClick={() => removeEditAttachment(idx)}
-                              className="text-red-500 hover:text-red-700"
-                            >
-                              <X className="h-4 w-4" />
-                            </button>
-                          </div>
-                        ))}
-                      </div>
+                    <p className="text-sm font-medium text-slate-800 truncate mt-0.5">
+                      {t.category_name || t.subject || 'Support Request'}
+                    </p>
+                    {t.user_note && (
+                      <p className="text-xs text-slate-500 truncate mt-0.5">{t.user_note}</p>
                     )}
-                  </div>
-                ) : (
-                  selectedQuery.attachments && selectedQuery.attachments.length > 0 ? (
-                    <div className="flex flex-wrap gap-3">
-                      {selectedQuery.attachments.map((url: string, idx: number) => {
-                        const isImage = /\.(jpg|jpeg|png|gif|webp|svg)$/i.test(url) || url.includes('image');
-                        const isPdf = /\.pdf$/i.test(url);
-
-                        if (isImage) {
-                          return (
-                            <a
-                              key={idx}
-                              href={url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="block"
-                            >
-                              <img
-                                src={url}
-                                alt={`Attachment ${idx + 1}`}
-                                className="h-24 w-24 object-cover rounded-lg border hover:border-indigo-400 transition-colors cursor-pointer"
-                              />
-                            </a>
-                          );
-                        }
-
-                        if (isPdf) {
-                          return (
-                            <a
-                              key={idx}
-                              href={url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="flex items-center gap-2 px-4 py-3 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100 transition-colors"
-                            >
-                              <FileText className="h-6 w-6 text-red-600" />
-                              <span className="text-sm text-red-700 font-medium">PDF {idx + 1}</span>
-                            </a>
-                          );
-                        }
-
-                        // Generic link
-                        return (
-                          <a
-                            key={idx}
-                            href={url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="flex items-center gap-2 px-4 py-3 bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100 transition-colors max-w-xs"
-                          >
-                            <MessageSquare className="h-5 w-5 text-blue-600 flex-shrink-0" />
-                            <span className="text-sm text-blue-700 truncate">{url.length > 40 ? url.slice(0, 40) + '...' : url}</span>
-                          </a>
-                        );
-                      })}
+                    <div className="flex items-center gap-2 mt-1">
+                      {t.user_name && <span className="text-xs text-slate-400">{t.user_name}</span>}
+                      <span className="text-xs text-slate-400">{timeAgo(t.created_at)}</span>
                     </div>
-                  ) : (
-                    <p className="text-sm text-gray-400">No attachments</p>
-                  )
-                )}
-              </div>
-
-              {/* Edit Save/Cancel Buttons */}
-              {isEditingDetails && (
-                <div className="flex gap-3 mb-6">
+                  </div>
                   <button
-                    onClick={saveQueryDetails}
-                    disabled={savingEdit}
-                    className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-indigo-600 text-white rounded-lg font-medium hover:bg-indigo-700 disabled:opacity-50"
+                    onClick={() => handleAcceptTicket(t.id)}
+                    disabled={acceptingId === t.id}
+                    className="px-4 py-2 rounded-lg bg-purple-600 text-white text-sm font-semibold hover:bg-purple-700 disabled:opacity-50 transition-colors whitespace-nowrap"
                   >
-                    {savingEdit ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
+                    {acceptingId === t.id ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
                     ) : (
-                      <Save className="h-4 w-4" />
+                      'Accept'
                     )}
-                    {savingEdit ? 'Saving...' : 'Save Changes'}
-                  </button>
-                  <button
-                    onClick={cancelEditingDetails}
-                    disabled={savingEdit}
-                    className="px-4 py-2.5 border border-gray-300 text-gray-700 rounded-lg font-medium hover:bg-gray-50 disabled:opacity-50"
-                  >
-                    Cancel
                   </button>
                 </div>
-              )}
-
-              {/* Timeline */}
-              <div className="mb-6">
-                <p className="text-sm text-gray-500 mb-2">Timeline</p>
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2 text-sm">
-                    <div className="w-2 h-2 bg-blue-500 rounded-full" />
-                    <span className="text-gray-600">Created: {formatDate(selectedQuery.created_at)}</span>
-                  </div>
-                  {selectedQuery.first_response_at && (
-                    <div className="flex items-center gap-2 text-sm">
-                      <div className="w-2 h-2 bg-yellow-500 rounded-full" />
-                      <span className="text-gray-600">First response: {formatDate(selectedQuery.first_response_at)}</span>
-                    </div>
-                  )}
-                  {selectedQuery.resolved_at && (
-                    <div className="flex items-center gap-2 text-sm">
-                      <div className="w-2 h-2 bg-green-500 rounded-full" />
-                      <span className="text-gray-600">Resolved: {formatDate(selectedQuery.resolved_at)}</span>
-                    </div>
-                  )}
-                  {selectedQuery.closed_at && (
-                    <div className="flex items-center gap-2 text-sm">
-                      <div className="w-2 h-2 bg-gray-500 rounded-full" />
-                      <span className="text-gray-600">Closed: {formatDate(selectedQuery.closed_at)}</span>
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Actions */}
-              {selectedQuery.status !== 'closed' && (
-                <div className="flex gap-3">
-                  {selectedQuery.status === 'open' && (
-                    <button
-                      onClick={() => { updateStatus(selectedQuery.id, 'in_progress'); setShowDetailModal(false); }}
-                      className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-indigo-600 text-white rounded-lg font-medium hover:bg-indigo-700"
-                    >
-                      <Play className="h-4 w-4" />
-                      Start Working
-                    </button>
-                  )}
-                  {selectedQuery.status === 'in_progress' && (
-                    <button
-                      onClick={() => { updateStatus(selectedQuery.id, 'resolved'); setShowDetailModal(false); }}
-                      className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-green-600 text-white rounded-lg font-medium hover:bg-green-700"
-                    >
-                      <CheckCircle className="h-4 w-4" />
-                      Mark Resolved
-                    </button>
-                  )}
-                  {selectedQuery.status === 'resolved' && (
-                    <button
-                      onClick={() => { updateStatus(selectedQuery.id, 'closed'); setShowDetailModal(false); }}
-                      className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-gray-600 text-white rounded-lg font-medium hover:bg-gray-700"
-                    >
-                      <Archive className="h-4 w-4" />
-                      Close Ticket
-                    </button>
-                  )}
-                </div>
-              )}
+              ))}
             </div>
           </div>
         </div>
       )}
 
-      {/* TAT Modal */}
-      {showTATModal && (
-        <TATModal queries={queries} onClose={() => setShowTATModal(false)} />
-      )}
+      {/* Toolbar: Search + Status filter */}
+      <div className="flex items-center gap-3 px-6 pb-3">
+        <div className="relative flex-1 max-w-md">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+          <input
+            type="text"
+            placeholder="Search tickets..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="w-full pl-9 pr-3 py-2 text-sm rounded-lg border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+          />
+        </div>
+        <div className="flex gap-1 bg-white border border-slate-200 rounded-lg p-0.5">
+          {STATUS_TABS.map((s) => (
+            <button
+              key={s}
+              onClick={() => setStatusFilter(s)}
+              className={`px-3 py-1.5 text-[11px] font-semibold rounded-md transition-colors ${
+                statusFilter === s
+                  ? 'bg-indigo-600 text-white shadow-sm'
+                  : 'text-slate-500 hover:text-slate-700 hover:bg-slate-50'
+              }`}
+            >
+              {s.replace('_', ' ')}
+            </button>
+          ))}
+        </div>
+        <span className="text-xs text-slate-400 font-medium">{filteredTickets.length} tickets</span>
+      </div>
 
-      {/* Add Category Modal */}
-      {showAddCategoryModal && (
-        <AddCategoryModal
-          queryTypes={queryTypes}
-          onClose={() => setShowAddCategoryModal(false)}
-          onSave={fetchData}
+      {/* Table */}
+      <div className="flex-1 mx-6 mb-4 bg-white rounded-lg border border-slate-200 overflow-hidden flex flex-col">
+        <TicketTable
+          tickets={filteredTickets}
+          selectedId={selectedId}
+          onSelect={setSelectedId}
+          onStatusChange={handleTableStatusChange}
+          onPriorityChange={handleTablePriorityChange}
+          loading={loadingTickets}
         />
-      )}
+      </div>
     </div>
   );
 }

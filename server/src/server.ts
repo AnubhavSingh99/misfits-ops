@@ -34,6 +34,7 @@ import sharkTankLeadsRoutes from './routes/sharkTankLeads';
 import sharkTankWebhookRoutes from './routes/sharkTankWebhook';
 import sharkTankPendingRepliesRoutes from './routes/sharkTankPendingReplies';
 import { addClient as addSharkTankSSEClient } from './services/sharkTank/sseManager';
+import supportProxyRoutes from './routes/supportProxy';
 import startYourClubRoutes from './routes/startYourClub';
 import { addClient as addStartClubSSEClient } from './services/startYourClub/sseManager';
 
@@ -154,6 +155,7 @@ app.use('/api/requirements', requirementsRoutes);
 app.use('/api/config', configRoutes);
 app.use('/api/feedback', feedbackRoutes);
 app.use('/api/cs', customerServiceRoutes);
+app.use('/api/support', supportProxyRoutes);
 app.use('/api/venue-repository', venueRepositoryRoutes);
 app.use('/api/shark-tank', sharkTankRoutes);
 app.use('/api/shark-tank/leads', sharkTankLeadsRoutes);
