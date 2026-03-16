@@ -3,10 +3,9 @@ import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
 import { queryProduction } from '../services/database';
-import { validateTransition } from '../services/startYourClub/stateMachine';
 import { broadcast } from '../services/startYourClub/sseManager';
+import { misfitsApi } from '../services/startYourClub/misfitsApi';
 import { logger } from '../utils/logger';
-import type { ClubApplicationStatus, ScreeningRatings, RejectionReason } from '../../../shared/types';
 
 // Map production column names to frontend-expected names
 function mapAppRow(row: any) {
@@ -17,6 +16,11 @@ function mapAppRow(row: any) {
   if (row.contract_pdf_url !== undefined) row.contract_url = row.contract_pdf_url;
   if (row.city_name !== undefined) row.city = row.city_name;
   if (row.activity_name !== undefined) row.activity = row.activity_name;
+  // Map milestone timestamps to booleans (DB stores _at timestamps, frontend expects booleans)
+  row.first_call_done = row.first_call_done_at != null;
+  row.venue_sorted = row.venue_sorted_at != null;
+  row.toolkit_shared = row.toolkit_shared_at != null;
+  row.marketing_launched = row.marketing_launched_at != null;
   return row;
 }
 function mapAppRows(rows: any[]) {
@@ -49,21 +53,6 @@ const contractUpload = multer({
 });
 
 const router = Router();
-
-// Helper: record a status event
-async function recordStatusEvent(
-  applicationId: string | number,
-  fromStatus: string | null,
-  toStatus: string,
-  actor: 'applicant' | 'admin' | 'system',
-  metadata: Record<string, any> = {}
-) {
-  await queryProduction(
-    `INSERT INTO club_application_status_event (application_id, from_status, to_status, actor, metadata)
-     VALUES ($1, $2, $3, $4, $5)`,
-    [applicationId, fromStatus, toStatus, actor, JSON.stringify(metadata)]
-  );
-}
 
 // GET /admin/all — List all applications (filterable, sortable, paginated)
 router.get('/admin/all', async (req: Request, res: Response) => {
@@ -104,7 +93,7 @@ router.get('/admin/all', async (req: Request, res: Response) => {
 
     const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
-    const allowedSorts = ['created_at', 'updated_at', 'submitted_at', 'name', 'city', 'activity', 'status'];
+    const allowedSorts = ['created_at', 'updated_at', 'submitted_at', 'name', 'city_name', 'activity_name', 'status'];
     const sortCol = allowedSorts.includes(sort as string) ? sort : 'created_at';
     const sortOrder = order === 'asc' ? 'ASC' : 'DESC';
     const sortPrefix = sortCol === 'name' ? "COALESCE(ca.name, CONCAT(u.first_name, ' ', u.last_name))" : `ca.${sortCol}`;
@@ -151,18 +140,18 @@ router.get('/admin/funnel', async (req: Request, res: Response) => {
     );
 
     const byCity = await queryProduction(
-      `SELECT city, COUNT(*)::int as count
+      `SELECT city_name as city, COUNT(*)::int as count
        FROM club_application
-       WHERE archived = false AND city IS NOT NULL
-       GROUP BY city
+       WHERE archived = false AND city_name IS NOT NULL
+       GROUP BY city_name
        ORDER BY count DESC`
     );
 
     const byActivity = await queryProduction(
-      `SELECT activity, COUNT(*)::int as count
+      `SELECT activity_name as activity, COUNT(*)::int as count
        FROM club_application
-       WHERE archived = false AND activity IS NOT NULL
-       GROUP BY activity
+       WHERE archived = false AND activity_name IS NOT NULL
+       GROUP BY activity_name
        ORDER BY count DESC`
     );
 
@@ -387,6 +376,71 @@ router.get('/admin/activities', async (req: Request, res: Response) => {
   }
 });
 
+// GET /admin/lookup-user — Look up a user by phone number
+// NOTE: Must be before /admin/:id to avoid Express matching "lookup-user" as an id
+router.get('/admin/lookup-user', async (req: Request, res: Response) => {
+  try {
+    const { phone } = req.query;
+    if (!phone || typeof phone !== 'string' || phone.trim().length < 10) {
+      return res.status(400).json({ success: false, error: 'Valid phone number is required' });
+    }
+
+    const result = await queryProduction(
+      `SELECT pk, first_name, last_name, phone FROM users WHERE phone = $1 AND is_deleted = false`,
+      [phone.trim()]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'User not found. Ask them to download the app and log in first.',
+      });
+    }
+
+    const user = result.rows[0];
+    res.json({
+      success: true,
+      data: {
+        user_id: user.pk,
+        first_name: user.first_name,
+        last_name: user.last_name || '',
+        phone: user.phone,
+      },
+    });
+  } catch (error: any) {
+    logger.error('Failed to look up user:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// POST /admin/create-lead — Create a manual lead from admin dashboard (proxied to Go backend)
+// NOTE: Must be before /admin/:id to avoid Express matching "create-lead" as an id
+router.post('/admin/create-lead', async (req: Request, res: Response) => {
+  try {
+    const { user_id, city_name, activity_name, name } = req.body;
+
+    if (!user_id) {
+      return res.status(400).json({ success: false, error: 'user_id is required' });
+    }
+
+    const apiRes = await misfitsApi('POST', '/start-your-club/admin/create-lead', {
+      user_id,
+      city_name: city_name || '',
+      activity_name: activity_name || '',
+      name: name || '',
+    });
+    if (!apiRes.ok) {
+      return res.status(apiRes.status).json({ success: false, error: apiRes.error || apiRes.data?.message });
+    }
+
+    broadcast({ type: 'app_created', data: apiRes.data });
+    res.status(201).json({ success: true, data: apiRes.data });
+  } catch (error: any) {
+    logger.error('Failed to create lead:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // GET /admin/:id — Full detail for one application
 router.get('/admin/:id', async (req: Request, res: Response) => {
   try {
@@ -464,6 +518,7 @@ router.patch('/admin/:id/pick', async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, error: 'reviewed_by (your name) is required' });
     }
 
+    // Read current state (dev user can SELECT)
     const appResult = await queryProduction('SELECT * FROM club_application WHERE pk = $1', [id]);
     if (appResult.rows.length === 0) {
       return res.status(404).json({ success: false, error: 'Application not found' });
@@ -474,12 +529,12 @@ router.patch('/admin/:id/pick', async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, error: `Can only pick from SUBMITTED status, current: ${app.status}` });
     }
 
-    await queryProduction(
-      `UPDATE club_application SET status = 'UNDER_REVIEW', picked_at = NOW(), updated_at = NOW() WHERE pk = $1`,
-      [id]
-    );
+    // Write via Go backend API (handles status change + status event recording)
+    const apiRes = await misfitsApi('PATCH', `/start-your-club/admin/${id}/status`, { status: 'UNDER_REVIEW' });
+    if (!apiRes.ok) {
+      return res.status(apiRes.status).json({ success: false, error: apiRes.error });
+    }
 
-    await recordStatusEvent(id, 'SUBMITTED', 'UNDER_REVIEW', 'admin', { reviewed_by: reviewed_by.trim() });
     broadcast('application_updated', { id, status: 'UNDER_REVIEW' });
     res.json({ success: true, data: { id, status: 'UNDER_REVIEW', reviewed_by: reviewed_by.trim() } });
   } catch (error: any) {
@@ -489,86 +544,40 @@ router.patch('/admin/:id/pick', async (req: Request, res: Response) => {
 });
 
 // PATCH /admin/:id/review — 3-outcome review (select-for-interview / reject / on-hold)
-// ALL actions require screening ratings. Also handles SUBMITTED directly (sets reviewed_by).
+// Proxied to Go backend which handles SUBMITTED→UNDER_REVIEW auto-transition, ratings, rejection, status events.
 router.patch('/admin/:id/review', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const { action, ratings, rejection_reason, rejection_note, reviewed_by } = req.body;
 
-    const appResult = await queryProduction('SELECT * FROM club_application WHERE pk = $1', [id]);
-    if (appResult.rows.length === 0) {
-      return res.status(404).json({ success: false, error: 'Application not found' });
-    }
-
-    const app = appResult.rows[0];
-    let toStatus: ClubApplicationStatus;
-
-    if (action === 'select_for_interview') {
-      toStatus = 'INTERVIEW_PENDING';
-    } else if (action === 'reject') {
-      toStatus = 'REJECTED';
-    } else if (action === 'on_hold') {
-      toStatus = 'ON_HOLD';
-    } else {
+    // Validate action locally for fast feedback
+    const validActions = ['select_for_interview', 'reject', 'on_hold'];
+    if (!validActions.includes(action)) {
       return res.status(400).json({ success: false, error: 'Invalid action. Must be select_for_interview, reject, or on_hold' });
     }
 
-    // If coming from SUBMITTED, require reviewed_by
-    if (app.status === 'SUBMITTED' && !reviewed_by?.trim()) {
-      return res.status(400).json({ success: false, error: 'Your name (reviewed_by) is required when reviewing from Submitted' });
-    }
+    // Map ops action names to Go backend action names
+    const actionMap: Record<string, string> = { 'select_for_interview': 'select_interview' };
+    const goAction = actionMap[action] || action;
 
-    const validation = validateTransition({
-      from: app.status,
-      to: toStatus,
-      actor: 'admin',
-      ratings: ratings as ScreeningRatings,
-      rejectionReason: rejection_reason as RejectionReason,
-    });
-
-    if (!validation.valid) {
-      return res.status(400).json({ success: false, error: validation.error });
-    }
-
-    // Build update
-    const updates: string[] = ['status = $2', 'updated_at = NOW()'];
-    const updateParams: any[] = [id, toStatus];
-    let paramIdx = 3;
-
-    if (ratings) {
-      updates.push(`screening_ratings = $${paramIdx++}`);
-      updateParams.push(JSON.stringify(ratings));
-    }
-    if (rejection_reason) {
-      updates.push(`rejection_reason = $${paramIdx++}`);
-      updateParams.push(rejection_reason);
-    }
-    // Set picked_at when coming from SUBMITTED
-    if (reviewed_by?.trim()) {
-      updates.push('picked_at = NOW()');
-    }
-    // Track which stage they were rejected from
-    if (toStatus === 'REJECTED') {
-      updates.push(`rejected_from_status = $${paramIdx++}`);
-      updateParams.push(app.status);
-    }
-    // Track interview start time
-    if (toStatus === 'INTERVIEW_PENDING') {
-      updates.push('interview_started_at = NOW()');
-    }
-
-    await queryProduction(
-      `UPDATE club_application SET ${updates.join(', ')} WHERE pk = $1`,
-      updateParams
-    );
-
-    await recordStatusEvent(id, app.status, toStatus, 'admin', {
-      action,
+    // Write via Go backend API
+    const apiRes = await misfitsApi('POST', `/start-your-club/admin/${id}/review`, {
+      action: goAction,
       ...(ratings && { ratings }),
-      ...(rejection_reason && { rejection_reason }),
-      ...(rejection_note && { rejection_note }),
-      ...(reviewed_by && { reviewed_by: reviewed_by.trim() }),
+      ...(rejection_reason && { reason: rejection_reason }),
     });
+
+    if (!apiRes.ok) {
+      return res.status(apiRes.status).json({ success: false, error: apiRes.error });
+    }
+
+    // Determine the resulting status for broadcast
+    const statusMap: Record<string, string> = {
+      'select_for_interview': 'INTERVIEW_PENDING',
+      'reject': 'REJECTED',
+      'on_hold': 'ON_HOLD',
+    };
+    const toStatus = statusMap[action] || 'UNDER_REVIEW';
 
     broadcast('application_updated', { id, status: toStatus });
     res.json({ success: true, data: { id, status: toStatus } });
@@ -578,59 +587,21 @@ router.patch('/admin/:id/review', async (req: Request, res: Response) => {
   }
 });
 
-// PATCH /admin/:id/status — General status transition
+// PATCH /admin/:id/status — General status transition (proxied to Go backend)
 router.patch('/admin/:id/status', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const { to_status, actor = 'admin', metadata = {} } = req.body;
+    const { to_status } = req.body;
 
-    const appResult = await queryProduction('SELECT * FROM club_application WHERE pk = $1', [id]);
-    if (appResult.rows.length === 0) {
-      return res.status(404).json({ success: false, error: 'Application not found' });
+    if (!to_status) {
+      return res.status(400).json({ success: false, error: 'to_status is required' });
     }
 
-    const app = appResult.rows[0];
-    const validation = validateTransition({
-      from: app.status,
-      to: to_status,
-      actor,
-      ratings: metadata.ratings,
-      interviewRatings: metadata.interview_ratings,
-      rejectionReason: metadata.rejection_reason,
-    });
-
-    if (!validation.valid) {
-      return res.status(400).json({ success: false, error: validation.error });
+    // Write via Go backend API
+    const apiRes = await misfitsApi('PATCH', `/start-your-club/admin/${id}/status`, { status: to_status });
+    if (!apiRes.ok) {
+      return res.status(apiRes.status).json({ success: false, error: apiRes.error || apiRes.data?.message });
     }
-
-    const updates: string[] = ['status = $2', 'updated_at = NOW()'];
-    const params: any[] = [id, to_status];
-    let paramIdx = 3;
-
-    // Set timestamps based on status
-    if (to_status === 'SUBMITTED') {
-      updates.push('submitted_at = NOW()');
-    } else if (to_status === 'SELECTED') {
-      updates.push('selected_at = NOW()');
-    } else if (to_status === 'CLUB_CREATED') {
-      updates.push('club_created_at = NOW()');
-    }
-
-    if (metadata.rejection_reason) {
-      updates.push(`rejection_reason = $${paramIdx++}`);
-      params.push(metadata.rejection_reason);
-    }
-    if (metadata.ratings) {
-      updates.push(`screening_ratings = $${paramIdx++}`);
-      params.push(JSON.stringify(metadata.ratings));
-    }
-    if (metadata.interview_ratings) {
-      updates.push(`interview_ratings = $${paramIdx++}`);
-      params.push(JSON.stringify(metadata.interview_ratings));
-    }
-
-    await queryProduction(`UPDATE club_application SET ${updates.join(', ')} WHERE pk = $1`, params);
-    await recordStatusEvent(id, app.status, to_status, actor, metadata);
 
     broadcast('application_updated', { id, status: to_status });
     res.json({ success: true, data: { id, status: to_status } });
@@ -640,50 +611,29 @@ router.patch('/admin/:id/status', async (req: Request, res: Response) => {
   }
 });
 
-// POST /admin/:id/select — Select applicant + assign split (requires interview_ratings)
+// POST /admin/:id/select — Select applicant + assign split (proxied to Go backend)
 router.post('/admin/:id/select', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const { split_percentage, interview_ratings } = req.body;
+    const { split_percentage } = req.body;
 
-    const appResult = await queryProduction('SELECT * FROM club_application WHERE pk = $1', [id]);
-    if (appResult.rows.length === 0) {
-      return res.status(404).json({ success: false, error: 'Application not found' });
+    // Validate split locally for fast feedback
+    const m = Number(split_percentage?.misfits ?? 70);
+    const l = Number(split_percentage?.leader ?? 30);
+    if (isNaN(m) || isNaN(l) || m + l !== 100) {
+      return res.status(400).json({ success: false, error: 'Split percentages must add up to 100' });
     }
 
-    const app = appResult.rows[0];
-    if (app.status !== 'INTERVIEW_DONE') {
-      return res.status(400).json({ success: false, error: 'Can only select from INTERVIEW_DONE status' });
-    }
-
-    // Validate split percentages add to 100
-    if (split_percentage) {
-      const m = Number(split_percentage.misfits);
-      const l = Number(split_percentage.leader);
-      if (isNaN(m) || isNaN(l) || m + l !== 100) {
-        return res.status(400).json({ success: false, error: 'Split percentages must add up to 100' });
-      }
-    }
-
-    // Validate interview ratings required
-    const validation = validateTransition({
-      from: 'INTERVIEW_DONE',
-      to: 'SELECTED',
-      actor: 'admin',
-      interviewRatings: interview_ratings,
+    // Write via Go backend API
+    const apiRes = await misfitsApi('POST', `/start-your-club/admin/${id}/select`, {
+      misfits_pct: m,
+      leader_pct: l,
     });
-    if (!validation.valid) {
-      return res.status(400).json({ success: false, error: validation.error });
+
+    if (!apiRes.ok) {
+      return res.status(apiRes.status).json({ success: false, error: apiRes.error || apiRes.data?.message });
     }
 
-    await queryProduction(
-      `UPDATE club_application
-       SET status = 'SELECTED', split_snapshot = $2, interview_ratings = $3, selected_at = NOW(), updated_at = NOW()
-       WHERE pk = $1`,
-      [id, JSON.stringify(split_percentage || { misfits: 70, leader: 30 }), JSON.stringify(interview_ratings)]
-    );
-
-    await recordStatusEvent(id, 'INTERVIEW_DONE', 'SELECTED', 'admin', { split_percentage, interview_ratings });
     broadcast('application_updated', { id, status: 'SELECTED' });
     res.json({ success: true, data: { id, status: 'SELECTED' } });
   } catch (error: any) {
@@ -692,119 +642,74 @@ router.post('/admin/:id/select', async (req: Request, res: Response) => {
   }
 });
 
-// PATCH /admin/:id/split — Update revenue split
+// PATCH /admin/:id/split — Update revenue split (proxied to Go backend)
 router.patch('/admin/:id/split', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const { misfits, leader } = req.body;
+    const { misfits_pct, leader_pct } = req.body;
 
-    if (misfits == null || leader == null || misfits + leader !== 100) {
-      return res.status(400).json({ success: false, error: 'Split must add up to 100%' });
+    const apiRes = await misfitsApi('PATCH', `/start-your-club/admin/${id}/split`, {
+      misfits_pct,
+      leader_pct,
+    });
+    if (!apiRes.ok) {
+      return res.status(apiRes.status).json({ success: false, error: apiRes.error || apiRes.data?.message });
     }
 
-    const appResult = await queryProduction('SELECT status FROM club_application WHERE pk = $1', [id]);
-    if (appResult.rows.length === 0) return res.status(404).json({ success: false, error: 'Application not found' });
-    if (!['SELECTED', 'CLUB_CREATED'].includes(appResult.rows[0].status)) {
-      return res.status(400).json({ success: false, error: 'Split can only be updated for selected/onboarded applications' });
-    }
-
-    await queryProduction(
-      `UPDATE club_application SET split_snapshot = $2, updated_at = NOW() WHERE pk = $1`,
-      [id, JSON.stringify({ misfits, leader })]
-    );
-
-    broadcast('application_updated', { id, type: 'split_updated' });
-    res.json({ success: true, data: { split_percentage: { misfits, leader } } });
+    broadcast({ type: 'app_updated', data: { id: Number(id), changes: { split: { misfits_pct, leader_pct } } } });
+    res.json({ success: true, data: apiRes.data });
   } catch (error: any) {
     logger.error('Failed to update split:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// PATCH /admin/:id/milestones — Toggle milestones
+// PATCH /admin/:id/milestones — Toggle milestones (proxied to Go backend)
+// Go handles milestone toggling + auto-transition to CLUB_CREATED when marketing_launched is set.
 router.patch('/admin/:id/milestones', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const { first_call_done, venue_sorted, toolkit_shared, marketing_launched, contract_url } = req.body;
+    const { first_call_done, venue_sorted, toolkit_shared, marketing_launched } = req.body;
 
-    const appResult = await queryProduction('SELECT * FROM club_application WHERE pk = $1', [id]);
-    if (appResult.rows.length === 0) {
-      return res.status(404).json({ success: false, error: 'Application not found' });
-    }
+    // Build Go API request body (only include defined fields)
+    const body: Record<string, any> = {};
+    if (first_call_done !== undefined) body.first_call_done = first_call_done;
+    if (venue_sorted !== undefined) body.venue_sorted = venue_sorted;
+    if (toolkit_shared !== undefined) body.toolkit_shared = toolkit_shared;
+    if (marketing_launched !== undefined) body.marketing_launched = marketing_launched;
 
-    const app = appResult.rows[0];
-    if (app.status !== 'SELECTED') {
-      return res.status(400).json({ success: false, error: 'Milestones can only be updated for SELECTED applications' });
-    }
-
-    const updates: string[] = ['updated_at = NOW()'];
-    const params: any[] = [id];
-    let paramIdx = 2;
-
-    if (first_call_done !== undefined) {
-      updates.push(`first_call_done = $${paramIdx++}`);
-      params.push(first_call_done);
-      if (first_call_done) updates.push('first_call_done_at = NOW()');
-      else updates.push('first_call_done_at = NULL');
-    }
-    if (venue_sorted !== undefined) {
-      updates.push(`venue_sorted = $${paramIdx++}`);
-      params.push(venue_sorted);
-      if (venue_sorted) updates.push('venue_sorted_at = NOW()');
-      else updates.push('venue_sorted_at = NULL');
-    }
-    if (toolkit_shared !== undefined) {
-      updates.push(`toolkit_shared = $${paramIdx++}`);
-      params.push(toolkit_shared);
-      if (toolkit_shared) updates.push('toolkit_shared_at = NOW()');
-      else updates.push('toolkit_shared_at = NULL');
-    }
-    if (contract_url !== undefined) {
-      updates.push(`contract_url = $${paramIdx++}`);
-      params.push(contract_url || null);
-    }
-    if (marketing_launched !== undefined) {
-      // Gate: marketing_launched can only be set to true if first_call_done AND venue_sorted AND split saved
-      if (marketing_launched === true) {
-        const fcDone = first_call_done !== undefined ? first_call_done : app.first_call_done;
-        const vsDone = venue_sorted !== undefined ? venue_sorted : app.venue_sorted;
-        if (!fcDone || !vsDone) {
-          return res.status(400).json({ success: false, error: 'First call and venue must be completed before marketing launch' });
-        }
-        if (!app.split_snapshot) {
-          return res.status(400).json({ success: false, error: 'Revenue split must be saved before marketing launch' });
-        }
-      }
-      updates.push(`marketing_launched = $${paramIdx++}`);
-      params.push(marketing_launched);
-      if (marketing_launched) updates.push('marketing_launched_at = NOW()');
-      else updates.push('marketing_launched_at = NULL');
+    // Write via Go backend API
+    const apiRes = await misfitsApi('PATCH', `/start-your-club/admin/${id}/milestones`, body);
+    if (!apiRes.ok) {
+      return res.status(apiRes.status).json({ success: false, error: apiRes.error || apiRes.data?.message });
     }
 
-    await queryProduction(`UPDATE club_application SET ${updates.join(', ')} WHERE pk = $1`, params);
+    // Check if Go auto-transitioned to CLUB_CREATED
+    const updatedApp = apiRes.data;
+    const newStatus = updatedApp?.status || 'SELECTED';
 
-    // If marketing_launched is true and all milestones done → auto-transition to CLUB_CREATED
-    const updatedResult = await queryProduction('SELECT * FROM club_application WHERE pk = $1', [id]);
-    const updated = updatedResult.rows[0];
-    if (updated.first_call_done && updated.venue_sorted && updated.marketing_launched) {
-      await queryProduction(
-        `UPDATE club_application SET status = 'CLUB_CREATED', club_created_at = NOW(), updated_at = NOW() WHERE pk = $1`,
-        [id]
-      );
-      await recordStatusEvent(id, 'SELECTED', 'CLUB_CREATED', 'admin', { trigger: 'all_milestones_complete' });
+    if (newStatus === 'CLUB_CREATED') {
       broadcast('application_updated', { id, status: 'CLUB_CREATED' });
       return res.json({ success: true, data: { id, status: 'CLUB_CREATED', milestones_complete: true } });
     }
 
-    broadcast('application_updated', { id, status: 'SELECTED' });
-    res.json({ success: true, data: { id, milestones: { first_call_done: updated.first_call_done, venue_sorted: updated.venue_sorted, toolkit_shared: updated.toolkit_shared, marketing_launched: updated.marketing_launched, contract_url: updated.contract_url } } });
+    broadcast('application_updated', { id, status: newStatus });
+    res.json({ success: true, data: {
+      id,
+      milestones: {
+        first_call_done: updatedApp?.first_call_done ?? false,
+        venue_sorted: updatedApp?.venue_sorted ?? false,
+        toolkit_shared: updatedApp?.toolkit_shared ?? false,
+        marketing_launched: updatedApp?.marketing_launched ?? false,
+      },
+    } });
   } catch (error: any) {
     logger.error('Failed to update milestones:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// POST /admin/:id/note — Add note
+// POST /admin/:id/note — Add note (proxied to Go backend activity endpoint)
 router.post('/admin/:id/note', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
@@ -814,85 +719,66 @@ router.post('/admin/:id/note', async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, error: 'Note content is required' });
     }
 
-    const result = await queryProduction(
-      `INSERT INTO club_application_activity (application_id, type, content, created_by)
-       VALUES ($1, 'note', $2, 0) RETURNING *`,
-      [id, content.trim()]
-    );
+    const apiRes = await misfitsApi('POST', `/start-your-club/admin/${id}/activity`, {
+      type: 'note',
+      content: content.trim(),
+    });
+
+    if (!apiRes.ok) {
+      return res.status(apiRes.status).json({ success: false, error: apiRes.error || apiRes.data?.message });
+    }
 
     broadcast('activity_added', { application_id: id, type: 'note' });
-    res.json({ success: true, data: mapAppRow(result.rows[0]) });
+    res.json({ success: true, data: apiRes.data });
   } catch (error: any) {
     logger.error('Failed to add note:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// POST /admin/:id/call-log — Log a call
+// POST /admin/:id/call-log — Log a call (proxied to Go backend activity endpoint)
 router.post('/admin/:id/call-log', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const { duration, outcome, notes } = req.body;
 
-    const result = await queryProduction(
-      `INSERT INTO club_application_activity (application_id, type, content, metadata, created_by)
-       VALUES ($1, 'call', $2, $3, 0) RETURNING *`,
-      [id, notes || '', JSON.stringify({ duration, outcome })]
-    );
+    const apiRes = await misfitsApi('POST', `/start-your-club/admin/${id}/activity`, {
+      type: 'call',
+      content: notes || '',
+      metadata: { duration, outcome },
+    });
+
+    if (!apiRes.ok) {
+      return res.status(apiRes.status).json({ success: false, error: apiRes.error || apiRes.data?.message });
+    }
 
     broadcast('activity_added', { application_id: id, type: 'call' });
-    res.json({ success: true, data: mapAppRow(result.rows[0]) });
+    res.json({ success: true, data: apiRes.data });
   } catch (error: any) {
     logger.error('Failed to log call:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// PATCH /admin/:id/reject — Blanket reject from any non-terminal status
+// PATCH /admin/:id/reject — Blanket reject from any non-terminal status (proxied to Go backend)
 router.patch('/admin/:id/reject', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const { rejection_reason, rejection_note, ratings, interview_ratings } = req.body;
+    const { rejection_reason } = req.body;
 
     if (!rejection_reason) {
       return res.status(400).json({ success: false, error: 'Rejection reason is required' });
     }
 
-    const appResult = await queryProduction('SELECT * FROM club_application WHERE pk = $1', [id]);
-    if (appResult.rows.length === 0) {
-      return res.status(404).json({ success: false, error: 'Application not found' });
-    }
-
-    const app = appResult.rows[0];
-    const validation = validateTransition({
-      from: app.status,
-      to: 'REJECTED',
-      actor: 'admin',
-      rejectionReason: rejection_reason,
-      ratings,
-      interviewRatings: interview_ratings,
+    // Write via Go backend API
+    const apiRes = await misfitsApi('PATCH', `/start-your-club/admin/${id}/reject`, {
+      reason: rejection_reason,
     });
 
-    if (!validation.valid) {
-      return res.status(400).json({ success: false, error: validation.error });
+    if (!apiRes.ok) {
+      return res.status(apiRes.status).json({ success: false, error: apiRes.error || apiRes.data?.message });
     }
 
-    const updates: string[] = ['status = $2', 'rejection_reason = $3', `rejected_from_status = $4`, 'updated_at = NOW()'];
-    const params: any[] = [id, 'REJECTED', rejection_reason, app.status];
-    let paramIdx = 5;
-
-    if (ratings) {
-      updates.push(`screening_ratings = $${paramIdx++}`);
-      params.push(JSON.stringify(ratings));
-    }
-    if (interview_ratings) {
-      updates.push(`interview_ratings = $${paramIdx++}`);
-      params.push(JSON.stringify(interview_ratings));
-    }
-
-    await queryProduction(`UPDATE club_application SET ${updates.join(', ')} WHERE pk = $1`, params);
-
-    await recordStatusEvent(id, app.status, 'REJECTED', 'admin', { rejection_reason, rejection_note, ratings, interview_ratings });
     broadcast('application_updated', { id, status: 'REJECTED' });
     res.json({ success: true, data: { id, status: 'REJECTED' } });
   } catch (error: any) {
@@ -901,7 +787,7 @@ router.patch('/admin/:id/reject', async (req: Request, res: Response) => {
   }
 });
 
-// POST /admin/bulk-archive — Archive multiple applications (ON_HOLD protected)
+// POST /admin/bulk-archive — Archive multiple applications (proxied to Go backend)
 router.post('/admin/bulk-archive', async (req: Request, res: Response) => {
   try {
     const { ids } = req.body;
@@ -910,29 +796,18 @@ router.post('/admin/bulk-archive', async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, error: 'No application IDs provided' });
     }
 
-    // Block archiving for high-investment statuses (Interview Phase + Selected + Onboarded)
-    const blockedStatuses = ['INTERVIEW_PENDING', 'INTERVIEW_SCHEDULED', 'INTERVIEW_DONE', 'SELECTED', 'CLUB_CREATED'];
-    const blockedCheck = await queryProduction(
-      `SELECT pk, status FROM club_application WHERE pk = ANY($1::bigint[]) AND status = ANY($2)`,
-      [ids, blockedStatuses]
-    );
+    // Write via Go backend API (Go handles ON_HOLD + pipeline stage protection)
+    const apiRes = await misfitsApi('POST', `/start-your-club/admin/bulk-archive`, {
+      application_ids: ids.map(Number),
+    });
 
-    if (blockedCheck.rows.length > 0) {
-      const details = blockedCheck.rows.map((r: any) => `${r.pk} (${r.status})`).join(', ');
-      return res.status(400).json({
-        success: false,
-        error: `Cannot archive applications in active pipeline stages: ${details}. Move to ON_HOLD first.`,
-        blocked_ids: blockedCheck.rows.map((r: any) => r.pk),
-      });
+    if (!apiRes.ok) {
+      return res.status(apiRes.status).json({ success: false, error: apiRes.error || apiRes.data?.message });
     }
 
-    const result = await queryProduction(
-      `UPDATE club_application SET archived = true, updated_at = NOW() WHERE pk = ANY($1::bigint[]) RETURNING pk as id`,
-      [ids]
-    );
-
-    broadcast('applications_archived', { ids: result.rows.map((r: any) => r.id) });
-    res.json({ success: true, data: { archived_count: result.rowCount } });
+    const archived = apiRes.data?.archived || 0;
+    broadcast('applications_archived', { ids });
+    res.json({ success: true, data: { archived_count: archived, skipped: apiRes.data?.skipped } });
   } catch (error: any) {
     logger.error('Failed to bulk archive:', error);
     res.status(500).json({ success: false, error: error.message });
@@ -941,33 +816,26 @@ router.post('/admin/bulk-archive', async (req: Request, res: Response) => {
 
 
 // POST /admin/:id/upload-contract — Upload unsigned contract
+// Saves file to disk, then tells Go backend the URL
 router.post('/admin/:id/upload-contract', contractUpload.single('contract'), async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const file = req.file;
-
-    if (!file) {
+    if (!req.file) {
       return res.status(400).json({ success: false, error: 'No file uploaded' });
     }
 
-    // Validate application exists and is SELECTED
-    const appResult = await queryProduction('SELECT status FROM club_application WHERE pk = $1', [id]);
-    if (appResult.rows.length === 0) {
-      return res.status(404).json({ success: false, error: 'Application not found' });
+    const contractUrl = `/api/start-club/contracts/${req.file.filename}`;
+
+    // Update URL in DB via Go backend
+    const apiRes = await misfitsApi('PATCH', `/start-your-club/admin/${id}/contract`, {
+      contract_pdf_url: contractUrl,
+    });
+    if (!apiRes.ok) {
+      return res.status(apiRes.status).json({ success: false, error: apiRes.error || apiRes.data?.message });
     }
-    if (appResult.rows[0].status !== 'SELECTED') {
-      return res.status(409).json({ success: false, error: 'Contracts can only be uploaded for SELECTED applications' });
-    }
 
-    const contractUrl = `/api/start-club/contracts/${file.filename}`;
-
-    await queryProduction(
-      `UPDATE club_application SET contract_pdf_url = $2, contract_uploaded_at = NOW(), updated_at = NOW() WHERE pk = $1`,
-      [id, contractUrl]
-    );
-
-    broadcast('application_updated', { id, type: 'contract_uploaded' });
-    res.json({ success: true, data: { contract_url: contractUrl, filename: file.originalname } });
+    broadcast({ type: 'app_updated', data: { id: Number(id), changes: { contract_url: contractUrl } } });
+    res.json({ success: true, data: { contract_url: contractUrl, ...apiRes.data } });
   } catch (error: any) {
     logger.error('Failed to upload contract:', error);
     res.status(500).json({ success: false, error: error.message });
@@ -975,24 +843,26 @@ router.post('/admin/:id/upload-contract', contractUpload.single('contract'), asy
 });
 
 // POST /admin/:id/upload-signed-contract — Upload signed contract
+// Saves file to disk, then tells Go backend the URL
 router.post('/admin/:id/upload-signed-contract', contractUpload.single('contract'), async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const file = req.file;
-
-    if (!file) {
+    if (!req.file) {
       return res.status(400).json({ success: false, error: 'No file uploaded' });
     }
 
-    const signedUrl = `/api/start-club/contracts/${file.filename}`;
+    const contractUrl = `/api/start-club/contracts/${req.file.filename}`;
 
-    await queryProduction(
-      `UPDATE club_application SET signed_contract_url = $2, signed_contract_uploaded_at = NOW(), updated_at = NOW() WHERE pk = $1`,
-      [id, signedUrl]
-    );
+    // Update URL in DB via Go backend
+    const apiRes = await misfitsApi('PATCH', `/start-your-club/admin/${id}/contract`, {
+      signed_contract_url: contractUrl,
+    });
+    if (!apiRes.ok) {
+      return res.status(apiRes.status).json({ success: false, error: apiRes.error || apiRes.data?.message });
+    }
 
-    broadcast('application_updated', { id, type: 'signed_contract_uploaded' });
-    res.json({ success: true, data: { signed_contract_url: signedUrl } });
+    broadcast({ type: 'app_updated', data: { id: Number(id), changes: { signed_contract_url: contractUrl } } });
+    res.json({ success: true, data: { signed_contract_url: contractUrl, ...apiRes.data } });
   } catch (error: any) {
     logger.error('Failed to upload signed contract:', error);
     res.status(500).json({ success: false, error: error.message });
@@ -1017,195 +887,37 @@ router.get('/contracts/:filename', (req: Request, res: Response) => {
 //  MANUAL LEAD CREATION
 // ══════════════════════════════════════════
 
-// GET /admin/lookup-user — Look up a user by phone number
-router.get('/admin/lookup-user', async (req: Request, res: Response) => {
-  try {
-    const { phone } = req.query;
-    if (!phone || typeof phone !== 'string' || phone.trim().length < 10) {
-      return res.status(400).json({ success: false, error: 'Valid phone number is required' });
-    }
-
-    const result = await queryProduction(
-      `SELECT pk, first_name, last_name, phone FROM users WHERE phone = $1 AND is_deleted = false`,
-      [phone.trim()]
-    );
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({
-        success: false,
-        error: 'User not found. Ask them to download the app and log in first.',
-      });
-    }
-
-    const user = result.rows[0];
-    res.json({
-      success: true,
-      data: {
-        user_id: user.pk,
-        first_name: user.first_name,
-        last_name: user.last_name || '',
-        phone: user.phone,
-      },
-    });
-  } catch (error: any) {
-    logger.error('Failed to look up user:', error);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// POST /admin/create-lead — Create a manual lead from admin dashboard
-router.post('/admin/create-lead', async (req: Request, res: Response) => {
-  try {
-    const { phone, first_name, last_name, city, activity, target_status } = req.body;
-
-    // Validate required fields
-    if (!phone?.trim() || !first_name?.trim() || !city?.trim() || !activity?.trim() || !target_status) {
-      return res.status(400).json({
-        success: false,
-        error: 'Phone, first name, city, activity, and target status are required',
-      });
-    }
-
-    // Validate target_status
-    const allowedStatuses = ['SUBMITTED', 'UNDER_REVIEW', 'INTERVIEW_PENDING', 'INTERVIEW_SCHEDULED', 'INTERVIEW_DONE', 'SELECTED'];
-    if (!allowedStatuses.includes(target_status)) {
-      return res.status(400).json({
-        success: false,
-        error: `Target status must be one of: ${allowedStatuses.join(', ')}`,
-      });
-    }
-
-    // Look up user by phone
-    const userResult = await queryProduction(
-      `SELECT pk FROM users WHERE phone = $1 AND is_deleted = false`,
-      [phone.trim()]
-    );
-    if (userResult.rows.length === 0) {
-      return res.status(404).json({
-        success: false,
-        error: 'User not found. Ask them to download the app and log in first.',
-      });
-    }
-    const userId = userResult.rows[0].pk;
-
-    // Check for existing active application
-    const existingResult = await queryProduction(
-      `SELECT pk FROM club_application WHERE user_id = $1 AND archived = false LIMIT 1`,
-      [userId]
-    );
-    if (existingResult.rows.length > 0) {
-      return res.status(409).json({
-        success: false,
-        error: 'User already has an active application',
-        existing_id: existingResult.rows[0].pk,
-      });
-    }
-
-    // Build the INSERT with status-dependent timestamps
-    const name = `${first_name.trim()} ${(last_name || '').trim()}`.trim();
-
-    // Determine which timestamps to set based on target status
-    const statusOrder = ['SUBMITTED', 'UNDER_REVIEW', 'INTERVIEW_PENDING', 'INTERVIEW_SCHEDULED', 'INTERVIEW_DONE', 'SELECTED'];
-    const targetIdx = statusOrder.indexOf(target_status);
-
-    const extraCols: string[] = [];
-    const extraVals: string[] = [];
-    const extraParams: any[] = [];
-    let paramIdx = 7; // first 6 params are: user_id, name, city, activity, status, source
-
-    // Always set submitted_at for admin-created leads
-    extraCols.push('submitted_at');
-    extraVals.push('NOW()');
-
-    if (targetIdx >= 1) { // UNDER_REVIEW or beyond
-      extraCols.push('picked_at');
-      extraVals.push('NOW()');
-    }
-    if (targetIdx >= 2) { // INTERVIEW_PENDING or beyond
-      extraCols.push('interview_started_at');
-      extraVals.push('NOW()');
-    }
-
-    const insertResult = await queryProduction(
-      `INSERT INTO club_application (
-        user_id, name, city, activity, status, source,
-        admin_created, admin_created_by,
-        ${extraCols.join(', ')},
-        created_at, updated_at
-      ) VALUES (
-        $1, $2, $3, $4, $5, $6,
-        true, 'admin',
-        ${extraVals.join(', ')},
-        NOW(), NOW()
-      ) RETURNING *`,
-      [userId, name, city.trim(), activity.trim(), target_status, 'admin']
-    );
-
-    const created = mapAppRow(insertResult.rows[0]);
-
-    // Record status event
-    await recordStatusEvent(created.id, null, target_status, 'admin', {
-      admin_created: true,
-      first_name: first_name.trim(),
-      last_name: (last_name || '').trim(),
-    });
-
-    broadcast('application_updated', { id: created.id, status: target_status });
-
-    res.json({ success: true, data: created });
-  } catch (error: any) {
-    logger.error('Failed to create lead:', error);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
 
 // ══════════════════════════════════════════
 //  RESCHEDULE
 // ══════════════════════════════════════════
 
 // PATCH /admin/:id/reschedule — Move INTERVIEW_SCHEDULED back to INTERVIEW_PENDING
+// Uses Go generic status endpoint for the transition. Note: calendly fields are not cleared
+// by the Go status handler, but the status change is correctly recorded.
 router.patch('/admin/:id/reschedule', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
 
-    // Fetch application
-    const appResult = await queryProduction(
-      `SELECT * FROM club_application WHERE pk = $1`,
-      [id]
-    );
+    // Read current state to validate
+    const appResult = await queryProduction('SELECT status FROM club_application WHERE pk = $1', [id]);
     if (appResult.rows.length === 0) {
       return res.status(404).json({ success: false, error: 'Application not found' });
     }
-
-    const app = appResult.rows[0];
-    if (app.status !== 'INTERVIEW_SCHEDULED') {
+    if (appResult.rows[0].status !== 'INTERVIEW_SCHEDULED') {
       return res.status(400).json({
         success: false,
-        error: `Can only reschedule from INTERVIEW_SCHEDULED, current status: ${app.status}`,
+        error: `Can only reschedule from INTERVIEW_SCHEDULED, current status: ${appResult.rows[0].status}`,
       });
     }
 
-    // Clear calendly fields and transition status
-    await queryProduction(
-      `UPDATE club_application
-       SET status = 'INTERVIEW_PENDING',
-           calendly_event_uri = NULL,
-           calendly_invitee_uri = NULL,
-           interview_scheduled_at = NULL,
-           calendly_meet_link = NULL,
-           updated_at = NOW()
-       WHERE pk = $1`,
-      [id]
-    );
-
-    // Record status event
-    await recordStatusEvent(id, 'INTERVIEW_SCHEDULED', 'INTERVIEW_PENDING', 'admin', {
-      reason: 'reschedule',
-      previous_scheduled_at: app.interview_scheduled_at,
-    });
+    // Write via Go backend API
+    const apiRes = await misfitsApi('PATCH', `/start-your-club/admin/${id}/status`, { status: 'INTERVIEW_PENDING' });
+    if (!apiRes.ok) {
+      return res.status(apiRes.status).json({ success: false, error: apiRes.error || apiRes.data?.message });
+    }
 
     broadcast('application_updated', { id, status: 'INTERVIEW_PENDING' });
-
     res.json({ success: true, data: { id, status: 'INTERVIEW_PENDING' } });
   } catch (error: any) {
     logger.error('Failed to reschedule:', error);

@@ -339,6 +339,7 @@ function RatingDisplay({ ratings, label, dims }: { ratings: Record<string, numbe
 function LeadRow({
   app, isExpanded, onToggle, sectionId,
   onRefresh, screeningDims, interviewDims,
+  isSelected, onSelect,
 }: {
   app: Application;
   isExpanded: boolean;
@@ -347,6 +348,8 @@ function LeadRow({
   onRefresh: () => void;
   screeningDims: RatingDimension[];
   interviewDims: RatingDimension[];
+  isSelected?: boolean;
+  onSelect?: (id: string, selected: boolean) => void;
 }) {
   const [detail, setDetail] = useState<DetailData | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -535,6 +538,12 @@ function LeadRow({
           isExpanded ? 'bg-indigo-50/40' : 'hover:bg-slate-50/80'
         }`}
       >
+        {onSelect && (
+          <td className="pl-4 pr-1 py-3" onClick={e => e.stopPropagation()}>
+            <input type="checkbox" checked={isSelected || false} onChange={e => onSelect(app.id, e.target.checked)}
+              className="rounded border-slate-300 text-indigo-600 h-3.5 w-3.5 cursor-pointer" />
+          </td>
+        )}
         <td className="px-4 py-3">
           <div className="font-medium text-slate-800">
             {app.name || 'Anonymous'}
@@ -720,7 +729,7 @@ function LeadRow({
                               if (m + l !== 100) return alert('Must add up to 100%');
                               const res = await fetch(`${API_BASE}/admin/${app.id}/split`, {
                                 method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ misfits: m, leader: l }),
+                                body: JSON.stringify({ misfits_pct: m, leader_pct: l }),
                               });
                               const data = await res.json();
                               if (data.success) refetchDetail();
@@ -913,16 +922,11 @@ function LeadRow({
                         <div className="space-y-2.5">
                           {detail.questionnaire_data && Object.keys(detail.questionnaire_data).length > 0 ? (
                             Object.entries(detail.questionnaire_data).map(([key, value]) => (
-                              <div key={key} className="flex">
-                                <span className="relative group text-xs font-medium text-slate-500 w-40 flex-shrink-0 cursor-help border-b border-dashed border-slate-300">
-                                  Q{key}
-                                  {detail.question_map?.[key] && (
-                                    <span className="absolute left-0 bottom-full mb-1 hidden group-hover:block bg-slate-800 text-white text-xs rounded px-2 py-1 whitespace-normal max-w-xs z-50 shadow-lg">
-                                      {detail.question_map[key]}
-                                    </span>
-                                  )}
-                                </span>
-                                <span className="text-sm text-slate-800">{String(value)}</span>
+                              <div key={key} className="mb-3">
+                                <p className="text-xs font-medium text-slate-400 mb-0.5">
+                                  {detail.question_map?.[key] || `Question ${key}`}
+                                </p>
+                                <p className="text-sm text-slate-800">{String(value)}</p>
                               </div>
                             ))
                           ) : (
@@ -1134,29 +1138,61 @@ function LeadRow({
 
                       {/* Interview actions */}
                       {detail.status === 'INTERVIEW_PENDING' && (
-                        <button onClick={() => handleStatusTransition('INTERVIEW_SCHEDULED')} className="w-full py-2 text-xs font-medium text-indigo-600 bg-indigo-50 border border-indigo-200 rounded-lg hover:bg-indigo-100">
-                          Mark Interview Scheduled
-                        </button>
+                        <div className="space-y-2">
+                          <button onClick={() => handleStatusTransition('INTERVIEW_SCHEDULED')} className="w-full py-2 text-xs font-medium text-indigo-600 bg-indigo-50 border border-indigo-200 rounded-lg hover:bg-indigo-100">
+                            Mark Interview Scheduled
+                          </button>
+                          {!showRejectForm ? (
+                            <button onClick={() => setShowRejectForm(true)} className="w-full py-2 text-xs font-medium text-red-600 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100">Reject</button>
+                          ) : (
+                            <div className="p-3 bg-red-50 rounded-lg border border-red-200">
+                              <select value={rejectionReason} onChange={e => setRejectionReason(e.target.value)} className="w-full mb-2 px-2 py-1.5 text-xs border border-red-200 rounded-lg bg-white">
+                                <option value="">Select reason...</option>
+                                {REJECTION_REASONS.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
+                              </select>
+                              <div className="flex gap-2">
+                                <button onClick={handleReject} disabled={!rejectionReason} className="flex-1 py-1.5 text-xs font-medium text-white bg-red-600 rounded-lg disabled:opacity-50">Confirm</button>
+                                <button onClick={() => { setShowRejectForm(false); setRejectionReason(''); }} className="px-3 py-1.5 text-xs text-slate-600 bg-white border rounded-lg">Cancel</button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
                       )}
                       {detail.status === 'INTERVIEW_SCHEDULED' && (
-                        <div className="flex gap-2">
-                          <button onClick={() => handleStatusTransition('INTERVIEW_DONE')} className="flex-1 py-2 text-xs font-medium text-purple-600 bg-purple-50 border border-purple-200 rounded-lg hover:bg-purple-100">
-                            Mark Interview Done
-                          </button>
-                          <button
-                            onClick={async () => {
-                              if (!confirm('Reschedule this interview? The lead will be moved back to Interview Pending.')) return;
-                              const res = await fetch(`${API_BASE}/admin/${app.id}/reschedule`, {
-                                method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-                              });
-                              const data = await res.json();
-                              if (data.success) { refetchDetail(); onRefresh(); }
-                              else alert(data.error);
-                            }}
-                            className="px-3 py-2 text-xs font-medium text-amber-600 bg-amber-50 border border-amber-200 rounded-lg hover:bg-amber-100 flex items-center gap-1"
-                          >
-                            <RotateCcw className="h-3 w-3" /> Reschedule
-                          </button>
+                        <div className="space-y-2">
+                          <div className="flex gap-2">
+                            <button onClick={() => handleStatusTransition('INTERVIEW_DONE')} className="flex-1 py-2 text-xs font-medium text-purple-600 bg-purple-50 border border-purple-200 rounded-lg hover:bg-purple-100">
+                              Mark Interview Done
+                            </button>
+                            <button
+                              onClick={async () => {
+                                if (!confirm('Reschedule this interview? The lead will be moved back to Interview Pending.')) return;
+                                const res = await fetch(`${API_BASE}/admin/${app.id}/reschedule`, {
+                                  method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+                                });
+                                const data = await res.json();
+                                if (data.success) { refetchDetail(); onRefresh(); }
+                                else alert(data.error);
+                              }}
+                              className="px-3 py-2 text-xs font-medium text-amber-600 bg-amber-50 border border-amber-200 rounded-lg hover:bg-amber-100 flex items-center gap-1"
+                            >
+                              <RotateCcw className="h-3 w-3" /> Reschedule
+                            </button>
+                          </div>
+                          {!showRejectForm ? (
+                            <button onClick={() => setShowRejectForm(true)} className="w-full py-2 text-xs font-medium text-red-600 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100">Reject</button>
+                          ) : (
+                            <div className="p-3 bg-red-50 rounded-lg border border-red-200">
+                              <select value={rejectionReason} onChange={e => setRejectionReason(e.target.value)} className="w-full mb-2 px-2 py-1.5 text-xs border border-red-200 rounded-lg bg-white">
+                                <option value="">Select reason...</option>
+                                {REJECTION_REASONS.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
+                              </select>
+                              <div className="flex gap-2">
+                                <button onClick={handleReject} disabled={!rejectionReason} className="flex-1 py-1.5 text-xs font-medium text-white bg-red-600 rounded-lg disabled:opacity-50">Confirm</button>
+                                <button onClick={() => { setShowRejectForm(false); setRejectionReason(''); }} className="px-3 py-1.5 text-xs text-slate-600 bg-white border rounded-lg">Cancel</button>
+                              </div>
+                            </div>
+                          )}
                         </div>
                       )}
 
@@ -1631,7 +1667,7 @@ function AddLeadModal({
   onCreated: () => void;
 }) {
   const [phone, setPhone] = useState('');
-  const [lookupResult, setLookupResult] = useState<{ pk: number; first_name: string; last_name: string } | null>(null);
+  const [lookupResult, setLookupResult] = useState<{ user_id: number; first_name: string; last_name: string } | null>(null);
   const [lookupError, setLookupError] = useState('');
   const [lookupLoading, setLookupLoading] = useState(false);
   const [city, setCity] = useState('');
@@ -1668,12 +1704,10 @@ function AddLeadModal({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          phone: phone.replace(/\D/g, ''),
-          first_name: lookupResult.first_name,
-          last_name: lookupResult.last_name,
-          city,
-          activity,
-          target_status: targetStatus,
+          user_id: lookupResult.user_id,
+          city_name: city,
+          activity_name: activity,
+          name: `${lookupResult.first_name} ${lookupResult.last_name}`.trim(),
         }),
       });
       const data = await res.json();
@@ -2159,7 +2193,7 @@ export default function StartYourClub() {
   useEffect(() => { fetchApplications(); fetchAnalytics(); fetchFilterOptions(); fetchRatingDimensions(); }, []);
   useEffect(() => { fetchApplications(); }, [fetchApplications]);
 
-  // SSE
+  // SSE (admin actions) + polling every 30s (new user submissions)
   useEffect(() => {
     const url = import.meta.env.VITE_API_URL
       ? `${import.meta.env.VITE_API_URL}/api/start-club/events`
@@ -2167,7 +2201,8 @@ export default function StartYourClub() {
     const es = new EventSource(url);
     es.addEventListener('application_updated', () => { fetchApplications(); fetchAnalytics(); });
     es.addEventListener('activity_added', () => {});
-    return () => es.close();
+    const poll = setInterval(() => { fetchApplications(); fetchAnalytics(); }, 30000);
+    return () => { es.close(); clearInterval(poll); };
   }, [fetchApplications, fetchAnalytics]);
 
   const handleRefresh = () => { fetchApplications(); fetchAnalytics(); fetchFilterOptions(); };
@@ -2577,6 +2612,16 @@ export default function StartYourClub() {
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-slate-50/80 border-b border-slate-200">
+                <th className="pl-4 pr-1 py-3 w-8">
+                  <input type="checkbox"
+                    checked={selectedIds.size > 0 && sectionApps.every(a => selectedIds.has(a.id))}
+                    onChange={e => {
+                      if (e.target.checked) setSelectedIds(new Set(sectionApps.map(a => a.id)));
+                      else setSelectedIds(new Set());
+                    }}
+                    className="rounded border-slate-300 text-indigo-600 h-3.5 w-3.5 cursor-pointer"
+                  />
+                </th>
                 <th className="px-4 py-3 text-left font-semibold text-slate-600 cursor-pointer hover:text-slate-800" onClick={() => handleSort('name')}>
                   <div className="flex items-center gap-1">Name {sortField === 'name' && (sortDir === 'asc' ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />)}</div>
                 </th>
@@ -2675,6 +2720,12 @@ export default function StartYourClub() {
                               onRefresh={handleRefresh}
                               screeningDims={screeningDims}
                               interviewDims={interviewDims}
+                              isSelected={selectedIds.has(app.id)}
+                              onSelect={(id, checked) => setSelectedIds(prev => {
+                                const next = new Set(prev);
+                                if (checked) next.add(id); else next.delete(id);
+                                return next;
+                              })}
                             />
                           ))}
                         </React.Fragment>
