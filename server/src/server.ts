@@ -37,6 +37,7 @@ import sharkTankPendingRepliesRoutes from './routes/sharkTankPendingReplies';
 import { addClient as addSharkTankSSEClient } from './services/sharkTank/sseManager';
 import supportProxyRoutes from './routes/supportProxy';
 import startYourClubRoutes from './routes/startYourClub';
+import venueLeadsRoutes from './routes/venueLeads';
 import { addClient as addStartClubSSEClient } from './services/startYourClub/sseManager';
 
 // Import services
@@ -163,6 +164,7 @@ app.use('/api/shark-tank/leads', sharkTankLeadsRoutes);
 app.use('/api/shark-tank/webhook', sharkTankWebhookRoutes);
 app.use('/api/shark-tank/pending-replies', sharkTankPendingRepliesRoutes);
 app.use('/api/start-club', startYourClubRoutes);
+app.use('/api/venue-leads', venueLeadsRoutes);
 // SSE endpoint for Shark Tank CRM real-time updates
 app.get('/api/shark-tank/events', (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');

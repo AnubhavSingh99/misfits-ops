@@ -35,6 +35,7 @@ import { TIME_OF_DAY_OPTIONS, CAPACITY_BUCKET_OPTIONS } from '../../../shared/ty
 import { getTeamForClub, TEAMS, TEAM_KEYS, type TeamKey } from '../../../shared/teamConfig';
 import { MultiSelectDropdown } from '../components/ui/MultiSelectDropdown';
 import { VenueRepository } from '../components/VenueRepository';
+import { VenueLeads } from '../components/VenueLeads';
 
 const API_BASE = import.meta.env.VITE_API_URL
   ? `${import.meta.env.VITE_API_URL}/api`
@@ -2125,6 +2126,11 @@ export default function VenueRequirementsDashboard() {
         {/* Venue Repository - Collapsible Section */}
         <div className="mt-6">
           <VenueRepository />
+        </div>
+
+        {/* Venue Leads - Collapsible Section */}
+        <div className="mt-6">
+          <VenueLeads />
         </div>
       </div>
 
