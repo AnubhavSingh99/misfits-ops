@@ -385,9 +385,13 @@ router.get('/admin/lookup-user', async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, error: 'Valid phone number is required' });
     }
 
+    // Auto-prepend 91 country code if not present (DB stores phones as 91XXXXXXXXXX)
+    let normalizedPhone = phone.trim().replace(/\D/g, '');
+    if (normalizedPhone.length === 10) normalizedPhone = `91${normalizedPhone}`;
+
     const result = await queryProduction(
       `SELECT pk, first_name, last_name, phone FROM users WHERE phone = $1 AND is_deleted = false`,
-      [phone.trim()]
+      [normalizedPhone]
     );
 
     if (result.rows.length === 0) {
@@ -824,7 +828,9 @@ router.post('/admin/:id/upload-contract', contractUpload.single('contract'), asy
       return res.status(400).json({ success: false, error: 'No file uploaded' });
     }
 
-    const contractUrl = `/api/start-club/contracts/${req.file.filename}`;
+    // Store full URL so user-facing frontend (different domain) can access the file
+    const opsBaseUrl = process.env.OPS_BASE_URL || 'https://operations.misfits.net.in';
+    const contractUrl = `${opsBaseUrl}/api/start-club/contracts/${req.file.filename}`;
 
     // Update URL in DB via Go backend
     const apiRes = await misfitsApi('PATCH', `/start-your-club/admin/${id}/contract`, {
@@ -851,7 +857,8 @@ router.post('/admin/:id/upload-signed-contract', contractUpload.single('contract
       return res.status(400).json({ success: false, error: 'No file uploaded' });
     }
 
-    const contractUrl = `/api/start-club/contracts/${req.file.filename}`;
+    const opsBaseUrl = process.env.OPS_BASE_URL || 'https://operations.misfits.net.in';
+    const contractUrl = `${opsBaseUrl}/api/start-club/contracts/${req.file.filename}`;
 
     // Update URL in DB via Go backend
     const apiRes = await misfitsApi('PATCH', `/start-your-club/admin/${id}/contract`, {
@@ -892,27 +899,13 @@ router.get('/contracts/:filename', (req: Request, res: Response) => {
 //  RESCHEDULE
 // ══════════════════════════════════════════
 
-// PATCH /admin/:id/reschedule — Move INTERVIEW_SCHEDULED back to INTERVIEW_PENDING
-// Uses Go generic status endpoint for the transition. Note: calendly fields are not cleared
-// by the Go status handler, but the status change is correctly recorded.
+// PATCH /admin/:id/reschedule — Move INTERVIEW_SCHEDULED back to INTERVIEW_PENDING + clear Calendly data
 router.patch('/admin/:id/reschedule', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
 
-    // Read current state to validate
-    const appResult = await queryProduction('SELECT status FROM club_application WHERE pk = $1', [id]);
-    if (appResult.rows.length === 0) {
-      return res.status(404).json({ success: false, error: 'Application not found' });
-    }
-    if (appResult.rows[0].status !== 'INTERVIEW_SCHEDULED') {
-      return res.status(400).json({
-        success: false,
-        error: `Can only reschedule from INTERVIEW_SCHEDULED, current status: ${appResult.rows[0].status}`,
-      });
-    }
-
-    // Write via Go backend API
-    const apiRes = await misfitsApi('PATCH', `/start-your-club/admin/${id}/status`, { status: 'INTERVIEW_PENDING' });
+    // Use Go reschedule endpoint which transitions status AND clears calendly fields
+    const apiRes = await misfitsApi('PATCH', `/start-your-club/admin/${id}/reschedule`, {});
     if (!apiRes.ok) {
       return res.status(apiRes.status).json({ success: false, error: apiRes.error || apiRes.data?.message });
     }
