@@ -102,7 +102,7 @@ router.get('/admin/all', async (req: Request, res: Response) => {
       params.push(activity);
     }
     if (search) {
-      conditions.push(`(ca.name ILIKE $${paramIdx} OR u.name ILIKE $${paramIdx} OR ca.city ILIKE $${paramIdx} OR ca.activity ILIKE $${paramIdx})`);
+      conditions.push(`(ca.name ILIKE $${paramIdx} OR CONCAT(u.first_name, ' ', u.last_name) ILIKE $${paramIdx} OR ca.city ILIKE $${paramIdx} OR ca.activity ILIKE $${paramIdx})`);
       params.push(`%${search}%`);
       paramIdx++;
     }
@@ -112,7 +112,7 @@ router.get('/admin/all', async (req: Request, res: Response) => {
     const allowedSorts = ['created_at', 'updated_at', 'submitted_at', 'name', 'city', 'activity', 'status'];
     const sortCol = allowedSorts.includes(sort as string) ? sort : 'created_at';
     const sortOrder = order === 'asc' ? 'ASC' : 'DESC';
-    const sortPrefix = sortCol === 'name' ? 'COALESCE(ca.name, u.name)' : `ca.${sortCol}`;
+    const sortPrefix = sortCol === 'name' ? "COALESCE(ca.name, CONCAT(u.first_name, ' ', u.last_name))" : `ca.${sortCol}`;
 
     const pageNum = Math.max(1, parseInt(page as string, 10) || 1);
     const limitNum = Math.min(500, Math.max(1, parseInt(limit as string, 10) || 50));
@@ -124,7 +124,7 @@ router.get('/admin/all', async (req: Request, res: Response) => {
     const total = parseInt(countResult.rows[0].count, 10);
 
     const dataResult = await queryProduction(
-      `SELECT ca.*, COALESCE(ca.name, u.name) as name FROM club_application ca LEFT JOIN users u ON u.pk = ca.user_id ${where}
+      `SELECT ca.*, COALESCE(ca.name, CONCAT(u.first_name, ' ', u.last_name)) as name FROM club_application ca LEFT JOIN users u ON u.pk = ca.user_id ${where}
        ORDER BY ${sortPrefix} ${sortOrder}
        LIMIT $${paramIdx++} OFFSET $${paramIdx++}`,
       [...params, limitNum, offset]
@@ -398,7 +398,7 @@ router.get('/admin/:id', async (req: Request, res: Response) => {
     const { id } = req.params;
 
     const appResult = await queryProduction(
-      'SELECT ca.*, COALESCE(ca.name, u.name) as name FROM club_application ca LEFT JOIN users u ON u.pk = ca.user_id WHERE ca.pk = $1', [id]
+      "SELECT ca.*, COALESCE(ca.name, CONCAT(u.first_name, ' ', u.last_name)) as name FROM club_application ca LEFT JOIN users u ON u.pk = ca.user_id WHERE ca.pk = $1", [id]
     );
     if (appResult.rows.length === 0) {
       return res.status(404).json({ success: false, error: 'Application not found' });

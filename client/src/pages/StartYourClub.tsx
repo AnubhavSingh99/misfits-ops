@@ -2052,6 +2052,14 @@ export default function StartYourClub() {
 
   // Active section tab
   const [activeSection, setActiveSection] = useState('followup');
+  const tabsSectionRef = useRef<HTMLDivElement>(null);
+  const scrollToTabs = (section: string) => {
+    setActiveSection(section);
+    setStatusFilter('');
+    setSubsectionFilter('');
+    setMarketingFilter(false);
+    setTimeout(() => tabsSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
+  };
 
   // Sort
   const [sortField, setSortField] = useState('created_at');
@@ -2297,26 +2305,26 @@ export default function StartYourClub() {
       {/* ──── Funnel Summary Cards ──── */}
       {f && (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-5">
-          <div className="bg-orange-50 border border-orange-200 rounded-xl p-4 cursor-pointer hover:border-orange-400 transition-colors" onClick={() => { setActiveSection('followup'); setStatusFilter(''); setSubsectionFilter(''); setMarketingFilter(false); }}>
+          <div className="bg-orange-50 border border-orange-200 rounded-xl p-4 cursor-pointer hover:border-orange-400 transition-colors" onClick={() => scrollToTabs('followup')}>
             <div className="text-2xl font-bold text-orange-700">{f.active_journey + f.abandoned}</div>
             <div className="text-xs font-medium text-orange-600 mt-1">Follow Up</div>
             {f.active_journey > 0 && <div className="text-[10px] text-blue-500">{f.active_journey} active, {f.abandoned} abandoned</div>}
           </div>
-          <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 cursor-pointer hover:border-emerald-400 transition-colors" onClick={() => { setActiveSection('submitted'); setStatusFilter(''); setSubsectionFilter(''); setMarketingFilter(false); }}>
+          <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 cursor-pointer hover:border-emerald-400 transition-colors" onClick={() => scrollToTabs('submitted')}>
             <div className="text-2xl font-bold text-emerald-700">{f.submitted + f.under_review}</div>
             <div className="text-xs font-medium text-emerald-600 mt-1">Submitted</div>
             <div className="text-[10px] text-emerald-500">{f.submitted} new, {f.under_review} reviewing</div>
           </div>
-          <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-4 cursor-pointer hover:border-indigo-400 transition-colors" onClick={() => { setActiveSection('interview'); setStatusFilter(''); setSubsectionFilter(''); setMarketingFilter(false); }}>
+          <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-4 cursor-pointer hover:border-indigo-400 transition-colors" onClick={() => scrollToTabs('interview')}>
             <div className="text-2xl font-bold text-indigo-700">{f.interview_phase}</div>
             <div className="text-xs font-medium text-indigo-600 mt-1">Interview Phase</div>
           </div>
-          <div className="bg-purple-50 border border-purple-200 rounded-xl p-4 cursor-pointer hover:border-purple-400 transition-colors" onClick={() => { setActiveSection('selected'); setStatusFilter(''); setSubsectionFilter(''); setMarketingFilter(false); }}>
+          <div className="bg-purple-50 border border-purple-200 rounded-xl p-4 cursor-pointer hover:border-purple-400 transition-colors" onClick={() => scrollToTabs('selected')}>
             <div className="text-2xl font-bold text-purple-700">{f.selected + f.onboarded}</div>
             <div className="text-xs font-medium text-purple-600 mt-1">Selected</div>
             {f.onboarded > 0 && <div className="text-[10px] text-green-600">{f.onboarded} onboarded</div>}
           </div>
-          <div className="bg-red-50 border border-red-200 rounded-xl p-4 cursor-pointer hover:border-red-400 transition-colors" onClick={() => { setActiveSection('dropped'); setStatusFilter(''); setSubsectionFilter(''); setMarketingFilter(false); }}>
+          <div className="bg-red-50 border border-red-200 rounded-xl p-4 cursor-pointer hover:border-red-400 transition-colors" onClick={() => scrollToTabs('dropped')}>
             <div className="text-2xl font-bold text-red-700">{f.not_interested + f.on_hold + f.rejected}</div>
             <div className="text-xs font-medium text-red-600 mt-1">Dropped / On Hold / Not Interested</div>
             <div className="text-[10px] text-red-500">{f.rejected} rejected, {f.on_hold} on hold, {f.not_interested} not interested</div>
@@ -2548,7 +2556,7 @@ export default function StartYourClub() {
         </div>
 
         {/* 5 Section Tabs */}
-        <div className="flex border-b border-slate-200">
+        <div ref={tabsSectionRef} className="flex border-b border-slate-200">
           {SECTIONS.map(sec => {
             const count = getSectionCount(sec.id, sec.statuses);
             const isActive = activeSection === sec.id;
