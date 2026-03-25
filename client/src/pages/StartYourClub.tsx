@@ -2230,6 +2230,24 @@ export default function StartYourClub() {
 
   // Count per section from loaded applications (reflects filters including marketing)
   const getSectionCount = (sectionId: string, statuses: string[]) => {
+    // Use analytics funnel data for accurate global counts (not limited by pagination/filters)
+    const f = analytics?.funnel;
+    if (f) {
+      switch (sectionId) {
+        case 'followup': return (f.active_journey || 0) + (f.abandoned || 0);
+        case 'submitted': return (f.submitted || 0) + (f.under_review || 0);
+        case 'interview': return f.interview_phase || 0;
+        case 'selected': {
+          if (marketingFilter) {
+            // For marketing filter, fall back to loaded applications count
+            return applications.filter(a => a.status === 'SELECTED' && a.first_call_done && a.venue_sorted && !a.marketing_launched).length;
+          }
+          return (f.selected || 0) + (f.onboarded || 0);
+        }
+        case 'dropped': return (f.not_interested || 0) + (f.on_hold || 0) + (f.rejected || 0);
+      }
+    }
+    // Fallback to loaded applications if analytics not available
     let filtered = applications.filter(a => statuses.includes(a.status));
     if (marketingFilter && sectionId === 'selected') {
       filtered = filtered.filter(a => a.status === 'SELECTED' && a.first_call_done && a.venue_sorted && !a.marketing_launched);
