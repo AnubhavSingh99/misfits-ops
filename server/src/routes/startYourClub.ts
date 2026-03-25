@@ -13,6 +13,9 @@ function mapAppRow(row: any) {
   if (!row) return row;
   if (row.pk != null) row.id = row.pk;
   // Map production column names to ops frontend names
+  if (row.city_name !== undefined && row.city === undefined) row.city = row.city_name;
+  if (row.activity_name !== undefined && row.activity === undefined) row.activity = row.activity_name;
+  if (row.club_name !== undefined && row.club === undefined) row.club = row.club_name;
   if (row.split_snapshot !== undefined) row.split_percentage = row.split_snapshot;
   if (row.contract_pdf_url !== undefined) row.contract_url = row.contract_pdf_url;
   return row;
@@ -94,15 +97,15 @@ router.get('/admin/all', async (req: Request, res: Response) => {
       params.push(status);
     }
     if (city) {
-      conditions.push(`ca.city = $${paramIdx++}`);
+      conditions.push(`ca.city_name = $${paramIdx++}`);
       params.push(city);
     }
     if (activity) {
-      conditions.push(`ca.activity = $${paramIdx++}`);
+      conditions.push(`ca.activity_name = $${paramIdx++}`);
       params.push(activity);
     }
     if (search) {
-      conditions.push(`(ca.name ILIKE $${paramIdx} OR CONCAT(u.first_name, ' ', u.last_name) ILIKE $${paramIdx} OR ca.city ILIKE $${paramIdx} OR ca.activity ILIKE $${paramIdx})`);
+      conditions.push(`(ca.name ILIKE $${paramIdx} OR CONCAT(u.first_name, ' ', u.last_name) ILIKE $${paramIdx} OR ca.city_name ILIKE $${paramIdx} OR ca.activity_name ILIKE $${paramIdx})`);
       params.push(`%${search}%`);
       paramIdx++;
     }
@@ -422,7 +425,7 @@ router.get('/admin/:id', async (req: Request, res: Response) => {
     let pastApps: any[] = [];
     if (app.user_id) {
       const pastResult = await queryProduction(
-        'SELECT pk as id, status, city, activity, created_at, archived FROM club_application WHERE user_id = $1 AND pk != $2 ORDER BY created_at DESC',
+        'SELECT pk as id, status, city_name as city, activity_name as activity, created_at, archived FROM club_application WHERE user_id = $1 AND pk != $2 ORDER BY created_at DESC',
         [app.user_id, id]
       );
       pastApps = pastResult.rows;
