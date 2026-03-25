@@ -127,7 +127,7 @@ router.get('/admin/all', async (req: Request, res: Response) => {
     const total = parseInt(countResult.rows[0].count, 10);
 
     const dataResult = await queryProduction(
-      `SELECT ca.*, COALESCE(ca.name, CONCAT(u.first_name, ' ', u.last_name)) as name FROM club_application ca LEFT JOIN users u ON u.pk = ca.user_id ${where}
+      `SELECT ca.*, COALESCE(ca.name, CONCAT(u.first_name, ' ', u.last_name)) as name, u.phone as user_phone FROM club_application ca LEFT JOIN users u ON u.pk = ca.user_id ${where}
        ORDER BY ${sortPrefix} ${sortOrder}
        LIMIT $${paramIdx++} OFFSET $${paramIdx++}`,
       [...params, limitNum, offset]
@@ -401,7 +401,7 @@ router.get('/admin/:id', async (req: Request, res: Response) => {
     const { id } = req.params;
 
     const appResult = await queryProduction(
-      "SELECT ca.*, COALESCE(ca.name, CONCAT(u.first_name, ' ', u.last_name)) as name FROM club_application ca LEFT JOIN users u ON u.pk = ca.user_id WHERE ca.pk = $1", [id]
+      "SELECT ca.*, COALESCE(ca.name, CONCAT(u.first_name, ' ', u.last_name)) as name, u.phone as user_phone FROM club_application ca LEFT JOIN users u ON u.pk = ca.user_id WHERE ca.pk = $1", [id]
     );
     if (appResult.rows.length === 0) {
       return res.status(404).json({ success: false, error: 'Application not found' });
