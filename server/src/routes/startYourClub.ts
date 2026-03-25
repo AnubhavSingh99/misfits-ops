@@ -15,6 +15,11 @@ function mapAppRow(row: any) {
   if (row.city_name !== undefined && row.city === undefined) row.city = row.city_name;
   if (row.activity_name !== undefined && row.activity === undefined) row.activity = row.activity_name;
   if (row.club_name !== undefined && row.club === undefined) row.club = row.club_name;
+  // Map timestamp columns to boolean flags for frontend compatibility
+  if (row.first_call_done === undefined) row.first_call_done = !!row.first_call_done_at;
+  if (row.venue_sorted === undefined) row.venue_sorted = !!row.venue_sorted_at;
+  if (row.toolkit_shared === undefined) row.toolkit_shared = !!row.toolkit_shared_at;
+  if (row.marketing_launched === undefined) row.marketing_launched = !!row.marketing_launched_at;
   if (row.split_snapshot !== undefined) row.split_percentage = row.split_snapshot;
   if (row.contract_pdf_url !== undefined) row.contract_url = row.contract_pdf_url;
   if (row.city_name !== undefined) row.city = row.city_name;
@@ -478,8 +483,8 @@ router.patch('/admin/:id/pick', async (req: Request, res: Response) => {
     }
 
     await queryProduction(
-      `UPDATE club_application SET status = 'UNDER_REVIEW', reviewed_by = $2, picked_at = NOW(), updated_at = NOW() WHERE pk = $1`,
-      [id, reviewed_by.trim()]
+      `UPDATE club_application SET status = 'UNDER_REVIEW', picked_at = NOW(), updated_at = NOW() WHERE pk = $1`,
+      [id]
     );
 
     await recordStatusEvent(id, 'SUBMITTED', 'UNDER_REVIEW', 'admin', { reviewed_by: reviewed_by.trim() });
@@ -546,10 +551,8 @@ router.patch('/admin/:id/review', async (req: Request, res: Response) => {
       updates.push(`rejection_reason = $${paramIdx++}`);
       updateParams.push(rejection_reason);
     }
-    // Set reviewed_by + picked_at when coming from SUBMITTED
+    // Set picked_at when coming from SUBMITTED (reviewer name tracked in status event)
     if (reviewed_by?.trim()) {
-      updates.push(`reviewed_by = $${paramIdx++}`);
-      updateParams.push(reviewed_by.trim());
       updates.push('picked_at = NOW()');
     }
     // Track which stage they were rejected from
@@ -747,20 +750,14 @@ router.patch('/admin/:id/milestones', async (req: Request, res: Response) => {
     let paramIdx = 2;
 
     if (first_call_done !== undefined) {
-      updates.push(`first_call_done = $${paramIdx++}`);
-      params.push(first_call_done);
       if (first_call_done) updates.push('first_call_done_at = NOW()');
       else updates.push('first_call_done_at = NULL');
     }
     if (venue_sorted !== undefined) {
-      updates.push(`venue_sorted = $${paramIdx++}`);
-      params.push(venue_sorted);
       if (venue_sorted) updates.push('venue_sorted_at = NOW()');
       else updates.push('venue_sorted_at = NULL');
     }
     if (toolkit_shared !== undefined) {
-      updates.push(`toolkit_shared = $${paramIdx++}`);
-      params.push(toolkit_shared);
       if (toolkit_shared) updates.push('toolkit_shared_at = NOW()');
       else updates.push('toolkit_shared_at = NULL');
     }
@@ -771,8 +768,8 @@ router.patch('/admin/:id/milestones', async (req: Request, res: Response) => {
     if (marketing_launched !== undefined) {
       // Gate: marketing_launched can only be set to true if first_call_done AND venue_sorted AND split saved
       if (marketing_launched === true) {
-        const fcDone = first_call_done !== undefined ? first_call_done : app.first_call_done;
-        const vsDone = venue_sorted !== undefined ? venue_sorted : app.venue_sorted;
+        const fcDone = first_call_done !== undefined ? first_call_done : !!app.first_call_done_at;
+        const vsDone = venue_sorted !== undefined ? venue_sorted : !!app.venue_sorted_at;
         if (!fcDone || !vsDone) {
           return res.status(400).json({ success: false, error: 'First call and venue must be completed before marketing launch' });
         }
@@ -780,8 +777,6 @@ router.patch('/admin/:id/milestones', async (req: Request, res: Response) => {
           return res.status(400).json({ success: false, error: 'Revenue split must be saved before marketing launch' });
         }
       }
-      updates.push(`marketing_launched = $${paramIdx++}`);
-      params.push(marketing_launched);
       if (marketing_launched) updates.push('marketing_launched_at = NOW()');
       else updates.push('marketing_launched_at = NULL');
     }
