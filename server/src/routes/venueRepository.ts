@@ -232,7 +232,7 @@ async function buildFilterClauses(query: Record<string, any>, startIndex: number
   const params: any[] = [];
   let idx = startIndex;
 
-  const { status, statuses, area_id, search, city_names, area_names, activities, capacity_categories, not_transferred } = query;
+  const { status, statuses, area_id, search, city_names, area_names, activities, capacity_categories, not_transferred, onboarded_filter, bau_unpicked, sourced_by_team } = query;
 
   if (statuses) {
     const statusList = (statuses as string).split(',').filter(s => VALID_STATUSES.includes(s));
@@ -314,6 +314,26 @@ async function buildFilterClauses(query: Record<string, any>, startIndex: number
     clauses.push(`vr.status = 'onboarded'`);
   }
 
+  // Onboarded status split filter
+  if (onboarded_filter === 'transferred') {
+    clauses.push(`vr.status = 'onboarded'`);
+    clauses.push(`vr.transferred_to_vms = true`);
+  } else if (onboarded_filter === 'not_transferred') {
+    clauses.push(`vr.status = 'onboarded'`);
+    clauses.push(`(vr.transferred_to_vms IS NULL OR vr.transferred_to_vms = false)`);
+  }
+
+  // BAU workqueue filter — all venues BAU hasn't picked up yet
+  if (bau_unpicked === 'true') {
+    clauses.push(`(vr.bau_picked IS NULL OR vr.bau_picked = false)`);
+  }
+
+  // Sourced by team filter
+  if (sourced_by_team) {
+    clauses.push(`COALESCE(vr.sourced_by_team, 'bau') = $${idx++}`);
+    params.push(sourced_by_team);
+  }
+
   return { clauses, params, nextIndex: idx };
 }
 
@@ -354,11 +374,56 @@ router.get('/', async (req: Request, res: Response) => {
       }
     }
 
-    // Enrich venues with area/city names (use custom values if no area_id)
+    // Compute transfer readiness for each venue
+    const computeCompleteness = (v: any) => {
+      // Required fields for VMS transfer
+      const requiredFields = [
+        { name: 'Area', filled: !!(v.area_id || v.custom_area) },
+        { name: 'Google Maps URL', filled: !!v.url },
+        { name: 'Contact Name', filled: !!v.contact_name },
+        { name: 'Contact Phone', filled: !!v.contact_phone },
+        { name: 'Venue Category', filled: !!v.venue_info?.venue_category },
+        { name: 'Capacity', filled: !!v.venue_info?.capacity_category }
+      ];
+      // Optional fields (nice to have)
+      const optionalFields = [
+        { name: 'Seating', filled: !!v.venue_info?.seating_category },
+        { name: 'Amenities', filled: !!(v.venue_info?.amenities && v.venue_info.amenities.length > 0) },
+        { name: 'Schedules', filled: !!(v.venue_info?.preferred_schedules && v.venue_info.preferred_schedules.length > 0) },
+        { name: 'Address', filled: !!v.venue_info?.full_address }
+      ];
+      const requiredFilled = requiredFields.filter(f => f.filled).length;
+      const requiredMissing = requiredFields.filter(f => !f.filled).map(f => f.name);
+      const optionalFilled = optionalFields.filter(f => f.filled).length;
+      const allFilled = requiredFilled + optionalFilled;
+      const allTotal = requiredFields.length + optionalFields.length;
+
+      // Transfer readiness status
+      let status: 'ready' | 'almost' | 'incomplete' | 'not_started';
+      let label: string;
+      if (requiredMissing.length === 0) {
+        status = 'ready';
+        label = 'Transfer ready';
+      } else if (requiredFilled >= 4) {
+        status = 'almost';
+        label = `${requiredMissing.length} field${requiredMissing.length > 1 ? 's' : ''} missing`;
+      } else if (requiredFilled >= 1) {
+        status = 'incomplete';
+        label = `${requiredMissing.length} fields missing`;
+      } else {
+        status = 'not_started';
+        label = 'Not started';
+      }
+
+      return { status, label, missing: requiredMissing, filled: allFilled, total: allTotal };
+    };
+
+    // Enrich venues with area/city names and completeness
     const venues = result.rows.map(venue => ({
       ...venue,
       area_name: venue.area_id ? areaMap.get(venue.area_id)?.area_name : venue.custom_area || null,
-      city_name: venue.area_id ? areaMap.get(venue.area_id)?.city_name : venue.custom_city || null
+      city_name: venue.area_id ? areaMap.get(venue.area_id)?.city_name : venue.custom_city || null,
+      completeness: computeCompleteness(venue)
     }));
 
     // Get total count with same filters
@@ -458,7 +523,10 @@ router.post('/', async (req: Request, res: Response) => {
       contact_name,
       contact_phone,
       contacted_by,
-      notes
+      notes,
+      available_since,
+      added_by,
+      sourced_by_team
     } = req.body;
 
     if (!name) {
@@ -488,8 +556,9 @@ router.post('/', async (req: Request, res: Response) => {
     const query = `
       INSERT INTO venue_repository (
         name, url, area_id, custom_city, custom_area, venue_info, status,
-        contact_name, contact_phone, contacted_by, notes
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        contact_name, contact_phone, contacted_by, notes,
+        available_since, added_by, sourced_by_team
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
       RETURNING *
     `;
 
@@ -504,7 +573,10 @@ router.post('/', async (req: Request, res: Response) => {
       contact_name || null,
       contact_phone || null,
       contacted_by || null,
-      notes || null
+      notes || null,
+      available_since || null,
+      added_by || null,
+      sourced_by_team || 'bau'
     ]);
 
     logger.info(`Created venue in repository: ${name}${custom_city ? ` (custom city: ${custom_city})` : ''}`);
@@ -560,7 +632,8 @@ router.patch('/:id', async (req: Request, res: Response) => {
       'name', 'url', 'area_id', 'custom_city', 'custom_area', 'venue_info', 'status',
       'contact_name', 'contact_phone', 'contacted_by', 'closed_by',
       'rejection_reason', 'notes', 'vms_location_id',
-      'transferred_to_vms', 'transferred_at', 'venue_manager_phone'
+      'transferred_to_vms', 'transferred_at', 'venue_manager_phone',
+      'available_since', 'added_by', 'sourced_by_team', 'bau_picked', 'bau_picked_at'
     ];
 
     const setClauses: string[] = [];
@@ -597,6 +670,27 @@ router.patch('/:id', async (req: Request, res: Response) => {
   } catch (error) {
     logger.error('Error updating venue:', error);
     res.status(500).json({ error: 'Failed to update venue' });
+  }
+});
+
+/**
+ * PATCH /api/venue-repository/:id/bau-pick
+ * Mark a venue as picked up by BAU team
+ */
+router.patch('/:id/bau-pick', async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const result = await queryLocal(
+      `UPDATE venue_repository SET bau_picked = true, bau_picked_at = CURRENT_TIMESTAMP WHERE id = $1 RETURNING *`,
+      [id]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Venue not found' });
+    }
+    res.json({ success: true, venue: result.rows[0] });
+  } catch (error) {
+    logger.error('Error picking up venue:', error);
+    res.status(500).json({ error: 'Failed to pick up venue' });
   }
 });
 
@@ -1132,7 +1226,10 @@ router.get('/stats/summary', async (req: Request, res: Response) => {
     const query = `
       SELECT
         status,
-        COUNT(*) as count
+        COUNT(*) as count,
+        COUNT(*) FILTER (WHERE status = 'onboarded' AND transferred_to_vms = true) as onboarded_transferred,
+        COUNT(*) FILTER (WHERE status = 'onboarded' AND (transferred_to_vms IS NULL OR transferred_to_vms = false)) as onboarded_not_transferred,
+        COUNT(*) FILTER (WHERE (bau_picked IS NULL OR bau_picked = false)) as bau_unpicked
       FROM venue_repository
       GROUP BY status
     `;
@@ -1145,13 +1242,21 @@ router.get('/stats/summary', async (req: Request, res: Response) => {
       negotiating: 0,
       rejected: 0,
       onboarded: 0,
+      onboarded_transferred: 0,
+      onboarded_not_transferred: 0,
       inactive: 0,
-      total: 0
+      total: 0,
+      bau_unpicked: 0
     };
 
     for (const row of result.rows) {
       stats[row.status] = parseInt(row.count);
       stats.total += parseInt(row.count);
+      if (row.status === 'onboarded') {
+        stats.onboarded_transferred += parseInt(row.onboarded_transferred);
+        stats.onboarded_not_transferred += parseInt(row.onboarded_not_transferred);
+      }
+      stats.bau_unpicked += parseInt(row.bau_unpicked);
     }
 
     res.json({ success: true, stats });

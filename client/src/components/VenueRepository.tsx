@@ -68,6 +68,12 @@ interface Venue {
   transferred_to_vms?: boolean;
   transferred_at?: string;
   venue_manager_phone?: string;
+  available_since?: string;
+  added_by?: string;
+  sourced_by_team?: 'bau' | 'supply';
+  bau_picked?: boolean;
+  bau_picked_at?: string;
+  completeness?: { status: 'ready' | 'almost' | 'incomplete' | 'not_started'; label: string; missing: string[]; filled: number; total: number };
   created_at: string;
   updated_at: string;
 }
@@ -94,8 +100,11 @@ interface Stats {
   negotiating: number;
   rejected: number;
   onboarded: number;
+  onboarded_transferred: number;
+  onboarded_not_transferred: number;
   inactive: number;
   total: number;
+  bau_unpicked: number;
 }
 
 interface FilterOption {
@@ -194,8 +203,16 @@ export function VenueRepository() {
   const [activeStatusFilters, setActiveStatusFilters] = useState<string[]>(
     ['new', 'contacted', 'interested', 'negotiating', 'rejected']
   );
-  const [showOnboarded, setShowOnboarded] = useState(false);
+  const [showOnboardedTransferred, setShowOnboardedTransferred] = useState(false);
+  const [showOnboardedNotTransferred, setShowOnboardedNotTransferred] = useState(false);
   const [showInactive, setShowInactive] = useState(false);
+
+  // Expandable detail view
+  const [expandedVenueId, setExpandedVenueId] = useState<number | null>(null);
+
+  // BAU workqueue and sourced-by filters
+  const [showBauUnpicked, setShowBauUnpicked] = useState(false);
+  const [sourcedByFilter, setSourcedByFilter] = useState<'bau' | 'supply' | null>(null);
 
   // Hierarchy order state (like requirements page)
   type HierarchyLevel = 'city' | 'area';
@@ -212,7 +229,9 @@ export function VenueRepository() {
   const [transferModal, setTransferModal] = useState<{
     venue: Venue;
     managerPhone: string;
+    originalPhone: string;
     transferring: boolean;
+    showPhoneConfirm: boolean;
   } | null>(null);
 
   // VMS sync state
@@ -336,7 +355,7 @@ export function VenueRepository() {
     if (isExpanded) {
       fetchVenues();
     }
-  }, [filter.cities, filter.areas, filter.activities, filter.capacities, filter.notTransferred, activeStatusFilters, showOnboarded, showInactive]);
+  }, [filter.cities, filter.areas, filter.activities, filter.capacities, filter.notTransferred, activeStatusFilters, showOnboardedTransferred, showOnboardedNotTransferred, showInactive, showBauUnpicked, sourcedByFilter]);
 
   // Cascading: clear orphaned area selections when city changes
   useEffect(() => {
@@ -392,11 +411,17 @@ export function VenueRepository() {
       // Build combined statuses from multi-select + toggle buttons
       const combinedStatuses = [
         ...activeStatusFilters,
-        ...(showOnboarded ? ['onboarded'] : []),
+        ...((showOnboardedTransferred || showOnboardedNotTransferred) ? ['onboarded'] : []),
         ...(showInactive ? ['inactive'] : [])
       ];
       if (combinedStatuses.length > 0) {
         params.append('statuses', combinedStatuses.join(','));
+      }
+      // Split onboarded filter
+      if (showOnboardedTransferred && !showOnboardedNotTransferred) {
+        params.append('onboarded_filter', 'transferred');
+      } else if (showOnboardedNotTransferred && !showOnboardedTransferred) {
+        params.append('onboarded_filter', 'not_transferred');
       }
       if (filter.search) params.append('search', filter.search);
 
@@ -428,6 +453,12 @@ export function VenueRepository() {
 
       if (filter.notTransferred) {
         params.append('not_transferred', 'true');
+      }
+      if (showBauUnpicked) {
+        params.append('bau_unpicked', 'true');
+      }
+      if (sourcedByFilter) {
+        params.append('sourced_by_team', sourcedByFilter);
       }
 
       params.append('limit', '10000');
@@ -502,6 +533,12 @@ export function VenueRepository() {
   // Transfer venue to VMS (or just update venue manager phone if already transferred)
   const handleTransferToVms = async () => {
     if (!transferModal) return;
+    // If phone was changed and confirmation not yet shown, show confirmation first
+    if (transferModal.managerPhone && transferModal.originalPhone &&
+        transferModal.managerPhone !== transferModal.originalPhone && !transferModal.showPhoneConfirm) {
+      setTransferModal(prev => prev ? { ...prev, showPhoneConfirm: true } : null);
+      return;
+    }
     setTransferModal(prev => prev ? { ...prev, transferring: true } : null);
     try {
       const alreadyTransferred = transferModal.venue.transferred_to_vms;
@@ -592,10 +629,14 @@ export function VenueRepository() {
           fetchVenues();
           fetchStats();
           // Show transfer modal
+          const v = data.venue || { ...currentVenue, status: 'onboarded' };
+          const phone = v.contact_phone || '';
           setTransferModal({
-            venue: data.venue || { ...currentVenue, status: 'onboarded' },
-            managerPhone: '',
-            transferring: false
+            venue: v,
+            managerPhone: phone,
+            originalPhone: phone,
+            transferring: false,
+            showPhoneConfirm: false
           });
         }
       } catch (error) {
@@ -660,15 +701,52 @@ export function VenueRepository() {
   };
 
   const renderVenueRow = (venue: Venue, indented = false) => (
-    <tr key={venue.id} className="hover:bg-gray-50">
+    <React.Fragment key={venue.id}>
+    <tr className={`hover:bg-gray-50 ${!venue.bau_picked ? 'border-l-4 border-l-red-400' : ''}`}>
       <td className={`px-4 py-3 break-words ${indented ? 'pl-12' : ''}`}>
         <div className="flex items-start gap-2 flex-wrap">
-          <span className="font-medium text-gray-900 text-sm">{venue.name}</span>
+          <span
+            className="font-medium text-gray-900 text-sm cursor-pointer hover:text-indigo-600 hover:underline"
+            onClick={() => setExpandedVenueId(expandedVenueId === venue.id ? null : venue.id)}
+          >
+            {venue.name}
+          </span>
           {venue.transferred_to_vms && (
             <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-green-100 text-green-700 border border-green-200" title={`Transferred to VMS${venue.vms_location_id ? ` (ID: ${venue.vms_location_id})` : ''}`}>
               <Check className="h-2.5 w-2.5" />
               VMS
             </span>
+          )}
+          {/* Transfer readiness indicator */}
+          {venue.completeness && (
+            <div className="inline-flex items-center gap-1.5 group/ready relative" title={venue.completeness.missing.length > 0 ? `Missing: ${venue.completeness.missing.join(', ')}` : 'All required fields filled'}>
+              {/* Progress bar */}
+              <div className="w-12 h-1.5 rounded-full bg-gray-200 overflow-hidden">
+                <div className={`h-full rounded-full transition-all ${
+                  venue.completeness.status === 'ready' ? 'bg-green-500' :
+                  venue.completeness.status === 'almost' ? 'bg-amber-400' :
+                  venue.completeness.status === 'incomplete' ? 'bg-red-400' : 'bg-gray-300'
+                }`} style={{ width: `${Math.round((venue.completeness.filled / venue.completeness.total) * 100)}%` }} />
+              </div>
+              <span className={`text-[10px] font-medium whitespace-nowrap ${
+                venue.completeness.status === 'ready' ? 'text-green-600' :
+                venue.completeness.status === 'almost' ? 'text-amber-600' :
+                venue.completeness.status === 'incomplete' ? 'text-red-500' : 'text-gray-400'
+              }`}>
+                {venue.completeness.label}
+              </span>
+              {/* Tooltip with missing fields */}
+              {venue.completeness.missing.length > 0 && (
+                <div className="absolute left-0 top-full mt-1 z-50 hidden group-hover/ready:block">
+                  <div className="bg-gray-900 text-white text-[11px] rounded-lg px-3 py-2 shadow-lg whitespace-nowrap">
+                    <div className="font-medium mb-1">Missing for transfer:</div>
+                    {venue.completeness.missing.map(m => (
+                      <div key={m} className="text-red-300">• {m}</div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
           )}
         </div>
         {venue.url && (
@@ -710,12 +788,31 @@ export function VenueRepository() {
       </td>
       <td className="px-4 py-3">
         <div className="flex items-center gap-2">
+          {/* BAU pick-up button */}
+          {!venue.bau_picked && (
+            <button
+              onClick={async () => {
+                try {
+                  const res = await fetch(`${API_BASE}/venue-repository/${venue.id}/bau-pick`, { method: 'PATCH' });
+                  const data = await res.json();
+                  if (data.success) { fetchVenues(); fetchStats(); }
+                } catch (err) { console.error('Error picking venue:', err); }
+              }}
+              className="p-1.5 text-red-500 hover:text-green-600 hover:bg-green-50 rounded transition-colors"
+              title="Pick up (BAU)"
+            >
+              <Check className="h-4 w-4" />
+            </button>
+          )}
           <button onClick={() => openEditModal(venue)} className="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition-colors" title="Edit">
             <Edit3 className="h-4 w-4" />
           </button>
           {venue.status === 'onboarded' && !venue.transferred_to_vms && (
             <button
-              onClick={() => setTransferModal({ venue, managerPhone: venue.venue_manager_phone || '', transferring: false })}
+              onClick={() => {
+                const phone = venue.contact_phone || venue.venue_manager_phone || '';
+                setTransferModal({ venue, managerPhone: phone, originalPhone: phone, transferring: false, showPhoneConfirm: false });
+              }}
               className="px-2 py-1 text-xs font-medium text-green-700 bg-green-50 hover:bg-green-100 border border-green-200 rounded transition-colors flex items-center gap-1"
               title="Transfer to VMS"
             >
@@ -731,6 +828,51 @@ export function VenueRepository() {
         </div>
       </td>
     </tr>
+    {/* Expandable detail panel */}
+    {expandedVenueId === venue.id && (
+      <tr>
+        <td colSpan={7} className="bg-gray-50 px-6 py-4 border-b border-gray-200">
+          <div className="grid grid-cols-3 gap-4 text-sm">
+            <div>
+              <div className="font-medium text-gray-500 text-xs uppercase mb-2">Venue Details</div>
+              <div className="space-y-1.5">
+                <div><span className="text-gray-500">Name:</span> <span className="text-gray-900">{venue.name}</span></div>
+                <div><span className="text-gray-500">Area:</span> <span className={venue.area_name ? 'text-gray-900' : 'text-red-400 italic'}>{venue.area_name || venue.city_name || 'Not filled'}</span></div>
+                <div><span className="text-gray-500">Maps URL:</span> {venue.url ? <a href={venue.url} target="_blank" rel="noopener noreferrer" className="text-indigo-600 hover:underline">View</a> : <span className="text-red-400 italic">Not filled</span>}</div>
+                <div><span className="text-gray-500">Address:</span> <span className={venue.venue_info?.full_address ? 'text-gray-900' : 'text-red-400 italic'}>{venue.venue_info?.full_address || 'Not filled'}</span></div>
+                {venue.available_since && <div><span className="text-gray-500">Available since:</span> <span className="text-gray-900">{new Date(venue.available_since).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span></div>}
+                {venue.added_by && <div><span className="text-gray-500">Added by:</span> <span className="text-gray-900">{venue.added_by}</span></div>}
+                {venue.sourced_by_team && <div><span className="text-gray-500">Sourced by:</span> <span className={`font-medium ${venue.sourced_by_team === 'supply' ? 'text-orange-600' : 'text-gray-600'}`}>{venue.sourced_by_team === 'supply' ? 'Supply' : 'BAU'}</span></div>}
+              </div>
+            </div>
+            <div>
+              <div className="font-medium text-gray-500 text-xs uppercase mb-2">Contact & Category</div>
+              <div className="space-y-1.5">
+                <div><span className="text-gray-500">Contact:</span> <span className={venue.contact_name ? 'text-gray-900' : 'text-red-400 italic'}>{venue.contact_name || 'Not filled'}</span></div>
+                <div><span className="text-gray-500">Phone:</span> <span className={venue.contact_phone ? 'text-gray-900' : 'text-red-400 italic'}>{venue.contact_phone || 'Not filled'}</span></div>
+                <div><span className="text-gray-500">Category:</span> <span className={venue.venue_info?.venue_category ? 'text-gray-900' : 'text-red-400 italic'}>{venue.venue_info?.venue_category || 'Not filled'}</span></div>
+                <div><span className="text-gray-500">Capacity:</span> <span className={venue.venue_info?.capacity_category ? 'text-gray-900' : 'text-red-400 italic'}>{venue.venue_info?.capacity_category ? (CAPACITY_LABELS[venue.venue_info.capacity_category] || venue.venue_info.capacity_category) : 'Not filled'}</span></div>
+                <div><span className="text-gray-500">Seating:</span> <span className={venue.venue_info?.seating_category ? 'text-gray-900' : 'text-red-400 italic'}>{venue.venue_info?.seating_category || 'Not filled'}</span></div>
+              </div>
+            </div>
+            <div>
+              <div className="font-medium text-gray-500 text-xs uppercase mb-2">More Info</div>
+              <div className="space-y-1.5">
+                <div><span className="text-gray-500">Amenities:</span> <span className={venue.venue_info?.amenities?.length ? 'text-gray-900' : 'text-red-400 italic'}>{venue.venue_info?.amenities?.join(', ') || 'Not filled'}</span></div>
+                <div><span className="text-gray-500">Schedules:</span> <span className={venue.venue_info?.preferred_schedules?.length ? 'text-gray-900' : 'text-red-400 italic'}>{venue.venue_info?.preferred_schedules?.length ? `${venue.venue_info.preferred_schedules.length} schedules` : 'Not filled'}</span></div>
+                {venue.notes && <div><span className="text-gray-500">Notes:</span> <span className="text-gray-900">{venue.notes}</span></div>}
+                <div className="pt-2">
+                  <button onClick={() => openEditModal(venue)} className="px-3 py-1.5 text-xs font-medium text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-lg transition-colors flex items-center gap-1">
+                    <Edit3 className="h-3 w-3" /> Edit Venue
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </td>
+      </tr>
+    )}
+    </React.Fragment>
   );
 
   return (
@@ -795,25 +937,47 @@ export function VenueRepository() {
             />
             {/* Divider */}
             <div className="h-6 w-px bg-gray-200" />
-            {/* Onboarded toggle */}
+            {/* Onboarded - Transferred toggle */}
             <button
               onClick={() => {
-                const turningOn = !showOnboarded;
-                setShowOnboarded(turningOn);
+                const turningOn = !showOnboardedTransferred;
+                setShowOnboardedTransferred(turningOn);
                 if (turningOn) {
                   setActiveStatusFilters([]);
                   setShowInactive(false);
-                } else if (!showInactive) {
+                } else if (!showOnboardedNotTransferred && !showInactive) {
                   setActiveStatusFilters(['new', 'contacted', 'interested', 'negotiating', 'rejected']);
                 }
               }}
               className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border transition-all ${
-                showOnboarded
+                showOnboardedTransferred
                   ? 'bg-green-50 text-green-700 border-green-300'
                   : 'bg-white text-gray-500 border-gray-200 hover:border-gray-300'
               }`}
             >
-              Onboarded ({stats?.onboarded || 0})
+              <CheckCircle2 className="h-3 w-3" />
+              Onboarded - Transferred ({stats?.onboarded_transferred || 0})
+            </button>
+            {/* Onboarded - Not Transferred toggle */}
+            <button
+              onClick={() => {
+                const turningOn = !showOnboardedNotTransferred;
+                setShowOnboardedNotTransferred(turningOn);
+                if (turningOn) {
+                  setActiveStatusFilters([]);
+                  setShowInactive(false);
+                } else if (!showOnboardedTransferred && !showInactive) {
+                  setActiveStatusFilters(['new', 'contacted', 'interested', 'negotiating', 'rejected']);
+                }
+              }}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border transition-all ${
+                showOnboardedNotTransferred
+                  ? 'bg-orange-50 text-orange-700 border-orange-300'
+                  : 'bg-white text-gray-500 border-gray-200 hover:border-gray-300'
+              }`}
+            >
+              <Clock className="h-3 w-3" />
+              Onboarded - Not Transferred ({stats?.onboarded_not_transferred || 0})
             </button>
             {/* Inactive toggle */}
             <button
@@ -822,8 +986,9 @@ export function VenueRepository() {
                 setShowInactive(turningOn);
                 if (turningOn) {
                   setActiveStatusFilters([]);
-                  setShowOnboarded(false);
-                } else if (!showOnboarded) {
+                  setShowOnboardedTransferred(false);
+                  setShowOnboardedNotTransferred(false);
+                } else if (!showOnboardedTransferred && !showOnboardedNotTransferred) {
                   setActiveStatusFilters(['new', 'contacted', 'interested', 'negotiating', 'rejected']);
                 }
               }}
@@ -869,21 +1034,51 @@ export function VenueRepository() {
               compact
             />
             <div className="h-6 w-px bg-gray-200" />
+            <div className="h-6 w-px bg-gray-200" />
+
+            {/* BAU Workqueue toggle */}
             <button
-              onClick={() => setFilter(f => ({ ...f, notTransferred: !f.notTransferred }))}
+              onClick={() => setShowBauUnpicked(prev => !prev)}
               className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border transition-all ${
-                filter.notTransferred
-                  ? 'bg-orange-50 text-orange-700 border-orange-300'
+                showBauUnpicked
+                  ? 'bg-red-50 text-red-700 border-red-300'
                   : 'bg-white text-gray-500 border-gray-200 hover:border-gray-300'
               }`}
             >
-              <Upload className="h-3.5 w-3.5" />
-              Not transferred
+              BAU Workqueue ({stats?.bau_unpicked || 0})
             </button>
 
-            {(filter.cities.length > 0 || filter.areas.length > 0 || filter.activities.length > 0 || filter.capacities.length > 0 || filter.notTransferred) && (
+            {/* Sourced by filter */}
+            <div className="flex items-center gap-1">
               <button
-                onClick={() => setFilter(f => ({ ...f, cities: [], areas: [], activities: [], capacities: [], notTransferred: false }))}
+                onClick={() => setSourcedByFilter(prev => prev === 'bau' ? null : 'bau')}
+                className={`px-2.5 py-1 text-[10px] font-medium rounded-full transition-all ${
+                  sourcedByFilter === 'bau'
+                    ? 'bg-gray-700 text-white'
+                    : 'bg-white text-gray-500 border border-gray-200 hover:border-gray-300'
+                }`}
+              >
+                BAU sourced
+              </button>
+              <button
+                onClick={() => setSourcedByFilter(prev => prev === 'supply' ? null : 'supply')}
+                className={`px-2.5 py-1 text-[10px] font-medium rounded-full transition-all ${
+                  sourcedByFilter === 'supply'
+                    ? 'bg-orange-500 text-white'
+                    : 'bg-white text-gray-500 border border-gray-200 hover:border-gray-300'
+                }`}
+              >
+                Supply sourced
+              </button>
+            </div>
+
+            {(filter.cities.length > 0 || filter.areas.length > 0 || filter.activities.length > 0 || filter.capacities.length > 0 || filter.notTransferred || showBauUnpicked || sourcedByFilter) && (
+              <button
+                onClick={() => {
+                  setFilter(f => ({ ...f, cities: [], areas: [], activities: [], capacities: [], notTransferred: false }));
+                  setShowBauUnpicked(false);
+                  setSourcedByFilter(null);
+                }}
                 className="px-2 py-1 text-xs font-medium text-gray-500 hover:text-red-600 hover:bg-red-50 rounded transition-colors"
               >
                 Clear filters
@@ -1168,18 +1363,47 @@ export function VenueRepository() {
               {/* Venue Manager Phone */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Venue Manager Phone <span className="text-gray-400">(optional)</span>
+                  Venue Manager Phone {transferModal.originalPhone && <span className="text-gray-400">(pre-filled from contact)</span>}
                 </label>
                 <input
                   type="tel"
                   value={transferModal.managerPhone}
-                  onChange={(e) => setTransferModal(prev => prev ? { ...prev, managerPhone: e.target.value } : null)}
+                  onChange={(e) => setTransferModal(prev => prev ? { ...prev, managerPhone: e.target.value, showPhoneConfirm: false } : null)}
                   placeholder="e.g., 9876543210"
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
                   disabled={transferModal.transferring}
                 />
                 <p className="text-xs text-gray-400 mt-1">If provided, this person will be assigned as venue manager in VMS</p>
               </div>
+
+              {/* Phone change confirmation */}
+              {transferModal.showPhoneConfirm && (
+                <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+                  <div className="flex items-start gap-2">
+                    <AlertCircle className="h-4 w-4 text-amber-500 mt-0.5 flex-shrink-0" />
+                    <div>
+                      <p className="text-sm font-medium text-amber-700">POC number changed</p>
+                      <p className="text-xs text-amber-600 mt-1">
+                        You changed the POC number from <strong>{transferModal.originalPhone}</strong> to <strong>{transferModal.managerPhone}</strong>. Are you sure? This number is used for all venue communication.
+                      </p>
+                      <div className="flex gap-2 mt-2">
+                        <button
+                          onClick={() => handleTransferToVms()}
+                          className="px-3 py-1 text-xs font-medium text-white bg-amber-600 rounded-lg hover:bg-amber-700"
+                        >
+                          Yes, use new number
+                        </button>
+                        <button
+                          onClick={() => setTransferModal(prev => prev ? { ...prev, managerPhone: prev.originalPhone, showPhoneConfirm: false } : null)}
+                          className="px-3 py-1 text-xs font-medium text-amber-700 bg-white border border-amber-300 rounded-lg hover:bg-amber-50"
+                        >
+                          Revert
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className="flex gap-3 px-6 py-4 border-t border-gray-200 bg-gray-50">
@@ -1234,6 +1458,9 @@ function VenueModal({ venue, options, onClose, onSave }: VenueModalProps) {
     contact_phone: venue?.contact_phone || '',
     contacted_by: venue?.contacted_by || '',
     notes: venue?.notes || '',
+    available_since: venue?.available_since || '',
+    added_by: venue?.added_by || '',
+    sourced_by_team: venue?.sourced_by_team || 'bau',
     venue_info: {
       venue_category: venue?.venue_info?.venue_category || '',
       seating_category: venue?.venue_info?.seating_category || '',
@@ -1781,6 +2008,60 @@ function VenueModal({ venue, options, onClose, onSave }: VenueModalProps) {
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 placeholder="Who reached out to this venue?"
               />
+            </div>
+          </div>
+
+          {/* Attribution & Availability */}
+          <div className="space-y-4">
+            <h4 className="text-sm font-semibold text-gray-700 uppercase tracking-wider">Attribution & Availability</h4>
+            <div className="grid grid-cols-3 gap-4">
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Available From</label>
+                <input
+                  type="date"
+                  value={formData.available_since}
+                  onChange={(e) => setFormData(f => ({ ...f, available_since: e.target.value }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm"
+                />
+                <p className="text-[10px] text-gray-400 mt-0.5">When can this venue host meetups?</p>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Added By</label>
+                <input
+                  type="text"
+                  value={formData.added_by}
+                  onChange={(e) => setFormData(f => ({ ...f, added_by: e.target.value }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm"
+                  placeholder="Your name"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Sourced By</label>
+                <div className="flex gap-2 mt-1">
+                  <button
+                    type="button"
+                    onClick={() => setFormData(f => ({ ...f, sourced_by_team: 'bau' }))}
+                    className={`flex-1 px-3 py-2 text-sm font-medium rounded-lg border transition-all ${
+                      formData.sourced_by_team === 'bau'
+                        ? 'bg-gray-700 text-white border-gray-700'
+                        : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'
+                    }`}
+                  >
+                    BAU
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setFormData(f => ({ ...f, sourced_by_team: 'supply' }))}
+                    className={`flex-1 px-3 py-2 text-sm font-medium rounded-lg border transition-all ${
+                      formData.sourced_by_team === 'supply'
+                        ? 'bg-orange-500 text-white border-orange-500'
+                        : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'
+                    }`}
+                  >
+                    Supply
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
 

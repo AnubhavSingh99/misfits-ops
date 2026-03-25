@@ -895,6 +895,12 @@ router.get('/venues', async (req: Request, res: Response) => {
       query += ` AND vr.status = $${paramIndex++}`;
       params.push(status);
     }
+    // Venue platform team filter (BAU/Supply)
+    const venue_platform_team = req.query.venue_platform_team;
+    if (venue_platform_team) {
+      query += ` AND COALESCE(vr.venue_platform_team, 'bau') = $${paramIndex++}`;
+      params.push(venue_platform_team);
+    }
     if (search) {
       query += ` AND (vr.name ILIKE $${paramIndex} OR vr.description ILIKE $${paramIndex})`;
       params.push(`%${search}%`);
@@ -1003,7 +1009,7 @@ const PRIORITY_CONFIG: Record<string, { label: string; icon: string }> = {
 // GET /api/requirements/venues/hierarchy - Get hierarchy for dashboard
 router.get('/venues/hierarchy', async (req: Request, res: Response) => {
   try {
-    const { team, status, activity_ids, city_ids, area_ids, club_ids, teams } = req.query;
+    const { team, status, activity_ids, city_ids, area_ids, club_ids, teams, venue_platform_team: vpt_filter } = req.query;
 
     let whereClause = '1=1';
     const params: any[] = [];
@@ -1055,7 +1061,6 @@ router.get('/venues/hierarchy', async (req: Request, res: Response) => {
       whereClause += ` AND status = $${paramIndex++}`;
       params.push(status);
     }
-
     // Get hierarchy order from query params (comma-separated, e.g., "activity,city,area" or "city,activity")
     // Now supports "priority" as a hierarchy level
     const validLevels = ['activity', 'city', 'area', 'priority'];
@@ -1071,9 +1076,14 @@ router.get('/venues/hierarchy', async (req: Request, res: Response) => {
         EXTRACT(DAY FROM (CURRENT_TIMESTAMP - vr.created_at))::integer as age_days
       FROM venue_requirements vr
       LEFT JOIN dim_day_types dt ON vr.day_type_id = dt.id
-      WHERE ${whereClause.replace(/activity_id/g, 'vr.activity_id').replace(/city_id/g, 'vr.city_id').replace(/area_id/g, 'vr.area_id').replace(/club_name/g, 'vr.club_name').replace(/club_id/g, 'vr.club_id').replace(/team/g, 'vr.team').replace(/status/g, 'vr.status')}
+      WHERE ${whereClause.replace(/activity_id/g, 'vr.activity_id').replace(/city_id/g, 'vr.city_id').replace(/area_id/g, 'vr.area_id').replace(/club_name/g, 'vr.club_name').replace(/club_id/g, 'vr.club_id').replace(/\bteam\b/g, 'vr.team').replace(/\bstatus\b/g, 'vr.status')}
+      ${vpt_filter ? `AND COALESCE(vr.venue_platform_team, 'bau') = $${paramIndex}` : ''}
       ORDER BY vr.activity_name, vr.city_name, vr.area_name, vr.name
     `;
+    if (vpt_filter) {
+      params.push(vpt_filter);
+      paramIndex++;
+    }
 
     const result = await queryLocal(query, params);
 
@@ -1156,6 +1166,9 @@ router.get('/venues/hierarchy', async (req: Request, res: Response) => {
             },
             growth_effort_count: 0,
             platform_effort_count: 0,
+            // Venue platform team counts (BAU/Supply)
+            bau_count: 0,
+            supply_count: 0,
             // Priority tracking for this node
             max_priority_order: 999,  // Will track highest priority (lowest number)
             max_priority_level: 'normal',
@@ -1188,6 +1201,10 @@ router.get('/venues/hierarchy', async (req: Request, res: Response) => {
         }
         if (reqData.growth_team_effort) node.growth_effort_count++;
         if (reqData.platform_team_effort) node.platform_effort_count++;
+        // Track BAU/Supply counts
+        const vpt = reqData.venue_platform_team || 'bau';
+        if (vpt === 'supply') node.supply_count++;
+        else node.bau_count++;
 
         // Track the highest priority (lowest order number) requirement in this node
         const reqPriorityOrder = PRIORITY_ORDER[reqData.priority_level] || 3;
@@ -1297,6 +1314,9 @@ router.get('/venues/hierarchy', async (req: Request, res: Response) => {
       leader_approval: requirements.filter((r: any) => r.status === 'leader_approval').length,
       done: requirements.filter((r: any) => r.status === 'done').length,
       deprioritised: requirements.filter((r: any) => r.status === 'deprioritised').length,
+      // Venue platform team counts
+      bau_count: requirements.filter((r: any) => (r.venue_platform_team || 'bau') === 'bau').length,
+      supply_count: requirements.filter((r: any) => r.venue_platform_team === 'supply').length,
       // TAT statistics
       tat_stats: tatStats
     };
@@ -1447,8 +1467,9 @@ router.post('/venues', async (req: Request, res: Response) => {
         growth_team_effort, platform_team_effort,
         day_type_id, time_of_day, amenities_required,
         capacity, comments, team, created_by,
-        venue_categories, amenities_list
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
+        venue_categories, amenities_list,
+        venue_platform_team
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
       RETURNING *`,
       [
         data.name,
@@ -1471,7 +1492,8 @@ router.post('/venues', async (req: Request, res: Response) => {
         team || null,
         'system',
         data.venue_categories || null,
-        data.amenities_list || null
+        data.amenities_list || null,
+        data.venue_platform_team || 'bau'
       ]
     );
 
@@ -1619,6 +1641,10 @@ router.put('/venues/:id', async (req: Request, res: Response) => {
       updates.push(`amenities_list = $${paramIndex++}`);
       params.push((data as any).amenities_list);
     }
+    if ((data as any).venue_platform_team !== undefined) {
+      updates.push(`venue_platform_team = $${paramIndex++}`);
+      params.push((data as any).venue_platform_team);
+    }
 
     updates.push(`updated_at = CURRENT_TIMESTAMP`);
 
@@ -1656,6 +1682,41 @@ router.put('/venues/:id', async (req: Request, res: Response) => {
   } catch (error) {
     console.error('Error updating venue requirement:', error);
     res.status(500).json({ success: false, error: 'Failed to update requirement' });
+  }
+});
+
+// POST /api/requirements/venues/:id/escalate - Escalate between BAU and Supply teams
+router.post('/venues/:id/escalate', async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { target_team, escalated_by } = req.body;
+
+    if (!target_team || !['bau', 'supply'].includes(target_team)) {
+      return res.status(400).json({
+        success: false,
+        error: 'target_team must be "bau" or "supply"'
+      });
+    }
+
+    const result = await queryLocal(
+      `UPDATE venue_requirements
+       SET venue_platform_team = $1, escalated_at = CURRENT_TIMESTAMP, escalated_by = $2, updated_at = CURRENT_TIMESTAMP
+       WHERE id = $3
+       RETURNING *`,
+      [target_team, escalated_by || 'system', id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'Requirement not found' });
+    }
+
+    res.json({
+      success: true,
+      requirement: { ...result.rows[0], type: 'venue' }
+    });
+  } catch (error) {
+    console.error('Error escalating venue requirement:', error);
+    res.status(500).json({ success: false, error: 'Failed to escalate requirement' });
   }
 });
 
