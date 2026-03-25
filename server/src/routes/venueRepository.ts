@@ -1,12 +1,25 @@
 import { Router, Request, Response } from 'express';
 import { exec } from 'child_process';
 import { promisify } from 'util';
+import multer from 'multer';
+import sharp from 'sharp';
+import crypto from 'crypto';
 import { logger } from '../utils/logger';
 import { queryLocal, queryProduction } from '../services/database';
 
 const execAsync = promisify(exec);
 
 const router = Router();
+
+// Multer for image uploads (max 10MB, images only)
+const imageUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    if (file.mimetype.startsWith('image/')) cb(null, true);
+    else cb(new Error('Only image files are allowed'));
+  }
+});
 
 // URL validation helper - must be Google Maps, not share.google
 function validateMapsUrl(url: string): { valid: boolean; error?: string } {
@@ -376,7 +389,6 @@ router.get('/', async (req: Request, res: Response) => {
 
     // Compute transfer readiness for each venue
     const computeCompleteness = (v: any) => {
-      // Required fields for VMS transfer
       const requiredFields = [
         { name: 'Area', filled: !!(v.area_id || v.custom_area) },
         { name: 'Google Maps URL', filled: !!v.url },
@@ -385,7 +397,6 @@ router.get('/', async (req: Request, res: Response) => {
         { name: 'Venue Category', filled: !!v.venue_info?.venue_category },
         { name: 'Capacity', filled: !!v.venue_info?.capacity_category }
       ];
-      // Optional fields (nice to have)
       const optionalFields = [
         { name: 'Seating', filled: !!v.venue_info?.seating_category },
         { name: 'Amenities', filled: !!(v.venue_info?.amenities && v.venue_info.amenities.length > 0) },
@@ -397,34 +408,85 @@ router.get('/', async (req: Request, res: Response) => {
       const optionalFilled = optionalFields.filter(f => f.filled).length;
       const allFilled = requiredFilled + optionalFilled;
       const allTotal = requiredFields.length + optionalFields.length;
-
-      // Transfer readiness status
       let status: 'ready' | 'almost' | 'incomplete' | 'not_started';
       let label: string;
-      if (requiredMissing.length === 0) {
-        status = 'ready';
-        label = 'Transfer ready';
-      } else if (requiredFilled >= 4) {
-        status = 'almost';
-        label = `${requiredMissing.length} field${requiredMissing.length > 1 ? 's' : ''} missing`;
-      } else if (requiredFilled >= 1) {
-        status = 'incomplete';
-        label = `${requiredMissing.length} fields missing`;
-      } else {
-        status = 'not_started';
-        label = 'Not started';
-      }
-
+      if (requiredMissing.length === 0) { status = 'ready'; label = 'Transfer ready'; }
+      else if (requiredFilled >= 4) { status = 'almost'; label = `${requiredMissing.length} field${requiredMissing.length > 1 ? 's' : ''} missing`; }
+      else if (requiredFilled >= 1) { status = 'incomplete'; label = `${requiredMissing.length} fields missing`; }
+      else { status = 'not_started'; label = 'Not started'; }
       return { status, label, missing: requiredMissing, filled: allFilled, total: allTotal };
     };
 
-    // Enrich venues with area/city names and completeness
-    const venues = result.rows.map(venue => ({
-      ...venue,
-      area_name: venue.area_id ? areaMap.get(venue.area_id)?.area_name : venue.custom_area || null,
-      city_name: venue.area_id ? areaMap.get(venue.area_id)?.city_name : venue.custom_city || null,
-      completeness: computeCompleteness(venue)
-    }));
+    // Check VMS status for venues that have vms_location_id
+    const vmsLocationIds = result.rows.filter(r => r.vms_location_id).map(r => r.vms_location_id);
+    const vmsStatusMap = new Map<number, { in_vms: boolean; data_updated: boolean; has_photos: boolean }>();
+
+    if (vmsLocationIds.length > 0) {
+      try {
+        const vmsQuery = `
+          SELECT id, venue_info, image,
+            CASE
+              WHEN venue_info IS NOT NULL AND venue_info != '{}'::jsonb
+                AND (venue_info->>'venue_category' IS NOT NULL OR venue_info->>'capacity_category' IS NOT NULL OR jsonb_array_length(COALESCE(venue_info->'amenities', '[]'::jsonb)) > 0)
+              THEN true ELSE false
+            END as data_updated,
+            CASE
+              WHEN venue_info->'media' IS NOT NULL AND jsonb_array_length(COALESCE(venue_info->'media', '[]'::jsonb)) > 0
+              THEN true ELSE false
+            END as has_photos
+          FROM location
+          WHERE id = ANY($1) AND is_deleted = false
+        `;
+        const vmsResult = await queryProduction(vmsQuery, [vmsLocationIds]);
+        for (const row of vmsResult.rows) {
+          vmsStatusMap.set(parseInt(row.id), { in_vms: true, data_updated: row.data_updated, has_photos: row.has_photos });
+        }
+      } catch (err) {
+        logger.warn('Failed to fetch VMS status for venues:', err);
+      }
+    }
+
+    // Also check venues without vms_location_id by URL or name+area match
+    const unmatchedVenues = result.rows.filter(r => !r.vms_location_id && (r.url || (r.name && r.area_id)));
+    if (unmatchedVenues.length > 0) {
+      try {
+        const urls = unmatchedVenues.filter(v => v.url).map(v => v.url);
+        if (urls.length > 0) {
+          const urlResult = await queryProduction(
+            `SELECT id, url, venue_info, image,
+              CASE WHEN venue_info IS NOT NULL AND venue_info != '{}'::jsonb
+                AND (venue_info->>'venue_category' IS NOT NULL OR venue_info->>'capacity_category' IS NOT NULL OR jsonb_array_length(COALESCE(venue_info->'amenities', '[]'::jsonb)) > 0)
+              THEN true ELSE false END as data_updated,
+              CASE WHEN venue_info->'media' IS NOT NULL AND jsonb_array_length(COALESCE(venue_info->'media', '[]'::jsonb)) > 0
+              THEN true ELSE false END as has_photos
+            FROM location WHERE url = ANY($1) AND is_deleted = false`,
+            [urls]
+          );
+          for (const row of urlResult.rows) {
+            const match = unmatchedVenues.find(v => v.url === row.url);
+            if (match) {
+              vmsStatusMap.set(match.id, { in_vms: true, data_updated: row.data_updated, has_photos: row.has_photos });
+            }
+          }
+        }
+      } catch (err) {
+        logger.warn('Failed to check VMS status by URL:', err);
+      }
+    }
+
+    // Enrich venues with area/city names, VMS status, and completeness
+    const venues = result.rows.map(venue => {
+      const vmsStatus = vmsStatusMap.get(venue.vms_location_id ? parseInt(venue.vms_location_id) : venue.id);
+      return {
+        ...venue,
+        area_name: venue.area_id ? areaMap.get(venue.area_id)?.area_name : venue.custom_area || null,
+        city_name: venue.area_id ? areaMap.get(venue.area_id)?.city_name : venue.custom_city || null,
+        vms_status: vmsStatus
+          ? (vmsStatus.data_updated ? 'data_updated' : 'data_pending')
+          : (venue.transferred_to_vms ? 'data_pending' : 'not_in_vms'),
+        completeness: computeCompleteness(venue)
+      };
+    });
 
     // Get total count with same filters
     const countFilter = await buildFilterClauses(req.query, 1);
@@ -1267,6 +1329,195 @@ router.get('/stats/summary', async (req: Request, res: Response) => {
 });
 
 // ============================================
+// IMAGE UPLOAD
+// ============================================
+
+const GRPC_API_KEY = '024d77dd28d21f0a99bfc2bb1c6ce9089d9273772c8319848d0a34f9ff9ae3d3';
+const GRPC_HOST = '15.207.255.212:8001';
+const GRPCURL_BIN = process.env.NODE_ENV === 'production' ? '/home/ec2-user/go/bin/grpcurl' : 'grpcurl';
+
+/**
+ * Helper: upload image via gRPC SaveFile → returns file_id AND s3_url
+ * Converts to webp first, sends base64-encoded bytes. The Go backend handles S3 upload.
+ */
+async function uploadImageViaGrpc(imageBuffer: Buffer): Promise<{ fileId: number; s3Url: string } | null> {
+  try {
+    const webpBuffer = await sharp(imageBuffer)
+      .resize(1200, 1200, { fit: 'inside', withoutEnlargement: true })
+      .webp({ quality: 80 })
+      .toBuffer();
+
+    const randomName = crypto.randomBytes(8).toString('base64url');
+    const fileName = `${randomName}.webp`;
+    const base64Data = webpBuffer.toString('base64');
+    const grpcData = JSON.stringify({ type: 'IMAGE', data: base64Data, file_name: fileName });
+    const escapedData = grpcData.replace(/'/g, "'\\''");
+    const grpcCmd = `${GRPCURL_BIN} -plaintext -H 'x-api-key: ${GRPC_API_KEY}' -d '${escapedData}' ${GRPC_HOST} FileService.SaveFile`;
+    const { stdout } = await execAsync(grpcCmd, { timeout: 60000 });
+    const result = JSON.parse(stdout);
+    const fileId = parseInt(result.fileId);
+    const s3Url = result.s3Url;
+    logger.info(`Uploaded image via gRPC SaveFile: file_id=${fileId}, s3_url=${s3Url}`);
+    return { fileId, s3Url };
+  } catch (error: any) {
+    logger.error('gRPC SaveFile failed:', error.message || error);
+    return null;
+  }
+}
+
+/**
+ * POST /api/venue-repository/:id/upload-cover
+ * Upload cover image via gRPC SaveFile (handles S3 + file_id), store in ops DB
+ */
+router.post('/:id/upload-cover', imageUpload.single('image'), async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    if (!req.file) return res.status(400).json({ error: 'No image file provided' });
+
+    const venueResult = await queryLocal('SELECT id FROM venue_repository WHERE id = $1', [id]);
+    if (venueResult.rows.length === 0) return res.status(404).json({ error: 'Venue not found' });
+
+    const result = await uploadImageViaGrpc(req.file.buffer);
+    if (!result) return res.status(500).json({ error: 'Failed to upload image to file service' });
+
+    await queryLocal(
+      'UPDATE venue_repository SET image_s3_url = $1, image_file_id = $2 WHERE id = $3',
+      [result.s3Url, result.fileId, id]
+    );
+
+    res.json({ success: true, s3_url: result.s3Url, file_id: result.fileId });
+  } catch (error) {
+    logger.error('Error uploading cover image:', error);
+    res.status(500).json({ error: 'Failed to upload cover image' });
+  }
+});
+
+/**
+ * DELETE /api/venue-repository/:id/cover
+ * Remove cover image reference
+ */
+router.delete('/:id/cover', async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    await queryLocal(
+      'UPDATE venue_repository SET image_file_id = NULL, image_s3_url = NULL WHERE id = $1',
+      [id]
+    );
+    res.json({ success: true });
+  } catch (error) {
+    logger.error('Error removing cover image:', error);
+    res.status(500).json({ error: 'Failed to remove cover image' });
+  }
+});
+
+/**
+ * POST /api/venue-repository/:id/upload-photo
+ * Upload an additional photo: convert to webp, upload to S3, append to photos JSON array
+ */
+router.post('/:id/upload-photo', imageUpload.single('image'), async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    if (!req.file) return res.status(400).json({ error: 'No image file provided' });
+
+    const venueResult = await queryLocal('SELECT id, photos FROM venue_repository WHERE id = $1', [id]);
+    if (venueResult.rows.length === 0) return res.status(404).json({ error: 'Venue not found' });
+
+    const result = await uploadImageViaGrpc(req.file.buffer);
+    if (!result) return res.status(500).json({ error: 'Failed to upload image to file service' });
+
+    const existingPhotos = venueResult.rows[0].photos || [];
+    const newPhoto = { s3_url: result.s3Url, file_id: result.fileId, uploaded_at: new Date().toISOString() };
+    const updatedPhotos = [...existingPhotos, newPhoto];
+
+    await queryLocal(
+      'UPDATE venue_repository SET photos = $1 WHERE id = $2',
+      [JSON.stringify(updatedPhotos), id]
+    );
+
+    res.json({ success: true, photo: newPhoto, photos: updatedPhotos });
+  } catch (error) {
+    logger.error('Error uploading photo:', error);
+    res.status(500).json({ error: 'Failed to upload photo' });
+  }
+});
+
+/**
+ * DELETE /api/venue-repository/:id/photo
+ * Remove a photo by s3_url from the photos array
+ */
+router.delete('/:id/photo', async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { s3_url } = req.body;
+
+    const venueResult = await queryLocal('SELECT photos FROM venue_repository WHERE id = $1', [id]);
+    if (venueResult.rows.length === 0) return res.status(404).json({ error: 'Venue not found' });
+
+    const photos = (venueResult.rows[0].photos || []).filter((p: any) => p.s3_url !== s3_url);
+    await queryLocal('UPDATE venue_repository SET photos = $1 WHERE id = $2', [JSON.stringify(photos), id]);
+
+    res.json({ success: true, photos });
+  } catch (error) {
+    logger.error('Error removing photo:', error);
+    res.status(500).json({ error: 'Failed to remove photo' });
+  }
+});
+
+/**
+ * GET /api/venue-repository/:id/vms-status
+ * Check if this venue already exists in production location table
+ */
+router.get('/:id/vms-status', async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const venueResult = await queryLocal('SELECT * FROM venue_repository WHERE id = $1', [id]);
+    if (venueResult.rows.length === 0) return res.status(404).json({ error: 'Venue not found' });
+
+    const venue = venueResult.rows[0];
+    let existingVenue: any = null;
+
+    // Check by URL first (most reliable)
+    if (venue.url) {
+      const urlMatch = await queryProduction(
+        `SELECT id, name, image, venue_info, url FROM location WHERE url = $1 AND is_deleted = false ORDER BY id ASC LIMIT 1`,
+        [venue.url]
+      );
+      if (urlMatch.rows.length > 0) existingVenue = urlMatch.rows[0];
+    }
+
+    // Fallback: check by name + area_id
+    if (!existingVenue && venue.area_id) {
+      const nameMatch = await queryProduction(
+        `SELECT id, name, image, venue_info, url FROM location WHERE name = $1 AND area_id = $2 AND is_deleted = false ORDER BY id ASC LIMIT 1`,
+        [venue.name, venue.area_id]
+      );
+      if (nameMatch.rows.length > 0) existingVenue = nameMatch.rows[0];
+    }
+
+    if (!existingVenue) {
+      return res.json({ exists: false });
+    }
+
+    const venueInfo = existingVenue.venue_info || {};
+    const media = venueInfo.media || [];
+    const hasVenueData = Object.keys(venueInfo).some(k => k !== 'media' && venueInfo[k] && venueInfo[k] !== '');
+
+    res.json({
+      exists: true,
+      location_id: existingVenue.id,
+      has_cover_image: existingVenue.image && existingVenue.image !== 350,
+      has_photos: media.length > 0,
+      photo_count: media.length,
+      has_venue_data: hasVenueData,
+      venue_info_keys: Object.keys(venueInfo).filter(k => venueInfo[k] && venueInfo[k] !== '' && !(Array.isArray(venueInfo[k]) && venueInfo[k].length === 0)),
+    });
+  } catch (error) {
+    logger.error('Error checking VMS status:', error);
+    res.status(500).json({ error: 'Failed to check VMS status' });
+  }
+});
+
+// ============================================
 // VMS TRANSFER
 // ============================================
 
@@ -1360,8 +1611,6 @@ router.post('/:id/transfer-to-vms', async (req: Request, res: Response) => {
     if (venueInfo.amenities && venueInfo.amenities.length > 0) grpcRequest.amenities = venueInfo.amenities;
     if (venueInfo.chargeable !== undefined) grpcRequest.chargeable = venueInfo.chargeable;
     if (venueInfo.reason_for_charge) grpcRequest.reason_for_charge = venueInfo.reason_for_charge;
-    if (venueInfo.media && venueInfo.media.length > 0) grpcRequest.media = venueInfo.media;
-
     if (venueInfo.preferred_schedules && venueInfo.preferred_schedules.length > 0) {
       // Time slot name → VMS start_time/end_time mapping
       const TIME_SLOT_HOURS: Record<string, { start: { hour: number; minute: number; second: number }; end: { hour: number; minute: number; second: number } }> = {
@@ -1417,45 +1666,130 @@ router.post('/:id/transfer-to-vms', async (req: Request, res: Response) => {
       grpcRequest.preferred_schedules = expandedSchedules;
     }
 
-    // gRPC API key for authentication
-    const grpcApiKey = '024d77dd28d21f0a99bfc2bb1c6ce9089d9273772c8319848d0a34f9ff9ae3d3';
+    // Determine the image file_id to use
+    const imageFileId = venue.image_file_id || 350; // uploaded image or default placeholder
 
-    // Call gRPC CreateVenue
-    const grpcData = JSON.stringify(grpcRequest);
-    const escapedData = grpcData.replace(/'/g, "'\\''");
-    const grpcCmd = `/home/ec2-user/go/bin/grpcurl -plaintext -H 'authorization: bearer ${grpcApiKey}' -d '${escapedData}' 15.207.255.212:8001 LocationService.CreateVenue`;
+    // Build venue_info JSON for production location table
+    const prodVenueInfo = JSON.stringify({
+      venue_category: venueInfo.venue_category || null,
+      capacity_category: venueInfo.capacity_category || null,
+      seating_category: venueInfo.seating_category || null,
+      venue_description: venueInfo.venue_description || null,
+      amenities: venueInfo.amenities || [],
+      chargeable: venueInfo.chargeable || false,
+      reason_for_charge: venueInfo.reason_for_charge || null,
+      full_address: venueInfo.full_address || null,
+      preferred_schedules: venueInfo.preferred_schedules || [],
+    });
 
-    logger.info(`Calling gRPC CreateVenue for venue ${id}: ${venue.name}`, { grpcRequest: JSON.stringify(grpcRequest).substring(0, 500) });
+    // ---- CHECK IF VENUE ALREADY EXISTS IN PRODUCTION ----
+    // Priority: 1) URL match (most reliable), 2) name + area_id match
+    let existingLocationId: number | null = null;
 
-    let grpcOutput: string;
-    try {
-      const { stdout, stderr } = await execAsync(grpcCmd, { timeout: 30000 });
-      grpcOutput = stdout;
-      if (stderr) logger.warn(`gRPC stderr: ${stderr}`);
-    } catch (grpcError: any) {
-      logger.error('gRPC CreateVenue failed:', grpcError);
-      return res.status(500).json({
-        error: 'Failed to create venue in VMS',
-        details: grpcError.stderr || grpcError.message
-      });
+    if (venue.url) {
+      const urlMatch = await queryProduction(
+        `SELECT id FROM location WHERE url = $1 AND is_deleted = false ORDER BY id ASC LIMIT 1`,
+        [venue.url]
+      );
+      if (urlMatch.rows.length > 0) {
+        existingLocationId = parseInt(urlMatch.rows[0].id);
+        logger.info(`Found existing venue by URL match: location_id=${existingLocationId}`);
+      }
     }
 
-    logger.info(`gRPC CreateVenue response: ${grpcOutput}`);
-
-    // Query production DB for the newly created venue (match by name + area_id)
-    let vmsLocationId: number | null = null;
-    try {
-      const findQuery = `
-        SELECT id FROM location
-        WHERE name = $1 AND area_id = $2 AND is_deleted = false
-        ORDER BY id DESC LIMIT 1
-      `;
-      const findResult = await queryProduction(findQuery, [venue.name, venue.area_id]);
-      if (findResult.rows.length > 0) {
-        vmsLocationId = parseInt(findResult.rows[0].id);
+    if (!existingLocationId) {
+      const nameMatch = await queryProduction(
+        `SELECT id FROM location WHERE name = $1 AND area_id = $2 AND is_deleted = false ORDER BY id ASC LIMIT 1`,
+        [venue.name, venue.area_id]
+      );
+      if (nameMatch.rows.length > 0) {
+        existingLocationId = parseInt(nameMatch.rows[0].id);
+        logger.info(`Found existing venue by name+area match: location_id=${existingLocationId}`);
       }
-    } catch (findError) {
-      logger.warn('Could not find newly created venue in VMS:', findError);
+    }
+
+    let vmsLocationId: number | null = null;
+
+    if (existingLocationId) {
+      // ---- UPDATE EXISTING VENUE VIA gRPC ----
+      logger.info(`Updating existing venue in production via gRPC: location_id=${existingLocationId}`);
+
+      // Build media array for update: cover image + additional photos
+      const updateMedia: any[] = [];
+      if (imageFileId) {
+        updateMedia.push({ type: 'IMAGE', file_id: imageFileId, order: 0 });
+      }
+      // Add additional photos that have file_ids
+      const venuePhotos = venue.photos || [];
+      venuePhotos.forEach((p: any, idx: number) => {
+        if (p.file_id) {
+          updateMedia.push({ type: 'IMAGE', file_id: p.file_id, order: idx + 1 });
+        }
+      });
+
+      const updateData = { ...grpcRequest, media: updateMedia };
+      const updateGrpcData = JSON.stringify({ venue_id: existingLocationId, data: updateData });
+      const updateEscaped = updateGrpcData.replace(/'/g, "'\\''");
+      const updateCmd = `${GRPCURL_BIN} -plaintext -H 'x-api-key: ${GRPC_API_KEY}' -d '${updateEscaped}' ${GRPC_HOST} LocationService.UpdateVenue`;
+
+      try {
+        const { stdout, stderr } = await execAsync(updateCmd, { timeout: 30000 });
+        if (stderr) logger.warn(`gRPC UpdateVenue stderr: ${stderr}`);
+        logger.info(`gRPC UpdateVenue response: ${stdout}`);
+      } catch (grpcError: any) {
+        logger.error('gRPC UpdateVenue failed:', grpcError);
+        return res.status(500).json({
+          error: 'Failed to update venue in VMS',
+          details: grpcError.stderr || grpcError.message
+        });
+      }
+      vmsLocationId = existingLocationId;
+    } else {
+      // ---- CREATE NEW VENUE VIA gRPC ----
+
+      // Build media array: cover image + additional photos with file_ids
+      const createMedia: any[] = [];
+      if (imageFileId) {
+        createMedia.push({ type: 'IMAGE', file_id: imageFileId, order: 0 });
+      }
+      const venuePhotos = venue.photos || [];
+      venuePhotos.forEach((p: any, idx: number) => {
+        if (p.file_id) {
+          createMedia.push({ type: 'IMAGE', file_id: p.file_id, order: idx + 1 });
+        }
+      });
+      grpcRequest.media = createMedia.length > 0 ? createMedia : [{ type: 'IMAGE', file_id: 350, order: 0 }];
+
+      const grpcData = JSON.stringify(grpcRequest);
+      const escapedData = grpcData.replace(/'/g, "'\\''");
+      const grpcCmd = `${GRPCURL_BIN} -plaintext -H 'x-api-key: ${GRPC_API_KEY}' -d '${escapedData}' ${GRPC_HOST} LocationService.CreateVenue`;
+
+      logger.info(`Calling gRPC CreateVenue for venue ${id}: ${venue.name}`, { grpcRequest: JSON.stringify(grpcRequest).substring(0, 500) });
+
+      try {
+        const { stdout, stderr } = await execAsync(grpcCmd, { timeout: 30000 });
+        if (stderr) logger.warn(`gRPC stderr: ${stderr}`);
+        logger.info(`gRPC CreateVenue response: ${stdout}`);
+      } catch (grpcError: any) {
+        logger.error('gRPC CreateVenue failed:', grpcError);
+        return res.status(500).json({
+          error: 'Failed to create venue in VMS',
+          details: grpcError.stderr || grpcError.message
+        });
+      }
+
+      // Find the newly created venue
+      try {
+        const findResult = await queryProduction(
+          `SELECT id FROM location WHERE name = $1 AND area_id = $2 AND is_deleted = false ORDER BY id DESC LIMIT 1`,
+          [venue.name, venue.area_id]
+        );
+        if (findResult.rows.length > 0) {
+          vmsLocationId = parseInt(findResult.rows[0].id);
+        }
+      } catch (findError) {
+        logger.warn('Could not find newly created venue in VMS:', findError);
+      }
     }
 
     // Update ops DB with transfer info
@@ -1470,30 +1804,29 @@ router.post('/:id/transfer-to-vms', async (req: Request, res: Response) => {
     `;
     const updateResult = await queryLocal(updateQuery, [venue_manager_phone || null, id]);
 
-    // If venue_manager_phone is provided, assign venue manager
+    // If venue_manager_phone is provided, assign venue manager via gRPC
     if (venue_manager_phone && vmsLocationId) {
       try {
-        // Step 1: Mark user as venue manager
-        const markCmd = `/home/ec2-user/go/bin/grpcurl -plaintext -H 'authorization: bearer ${grpcApiKey}' -d '{"phone_number": "${venue_manager_phone}"}' 15.207.255.212:8001 LocationService.MarkUserAsVenueManager`;
+        const markCmd = `${GRPCURL_BIN} -plaintext -H 'x-api-key: ${GRPC_API_KEY}' -d '{"phone_number": "${venue_manager_phone}"}' ${GRPC_HOST} LocationService.MarkUserAsVenueManager`;
         await execAsync(markCmd, { timeout: 15000 });
         logger.info(`Marked user ${venue_manager_phone} as venue manager`);
 
-        // Step 2: Add venue manager to venue
-        const addCmd = `/home/ec2-user/go/bin/grpcurl -plaintext -H 'authorization: bearer ${grpcApiKey}' -d '{"venue_id": ${vmsLocationId}, "phone_number": "${venue_manager_phone}"}' 15.207.255.212:8001 LocationService.AddVenueManager`;
+        const addCmd = `${GRPCURL_BIN} -plaintext -H 'x-api-key: ${GRPC_API_KEY}' -d '{"venue_id": ${vmsLocationId}, "phone_number": "${venue_manager_phone}"}' ${GRPC_HOST} LocationService.AddVenueManager`;
         await execAsync(addCmd, { timeout: 15000 });
         logger.info(`Added venue manager ${venue_manager_phone} to venue ${vmsLocationId}`);
       } catch (managerError: any) {
-        logger.warn('Failed to assign venue manager (venue was still created):', managerError.message);
+        logger.warn('Failed to assign venue manager (venue was still transferred):', managerError.message);
       }
     }
 
-    logger.info(`Transferred venue ${id} to VMS. VMS Location ID: ${vmsLocationId || 'unknown'}`);
+    const action = existingLocationId ? 'updated' : 'created';
+    logger.info(`Transferred venue ${id} to VMS (${action}). VMS Location ID: ${vmsLocationId || 'unknown'}`);
 
     res.json({
       success: true,
       venue: updateResult.rows[0],
       vms_location_id: vmsLocationId,
-      message: `Venue transferred to VMS${vmsLocationId ? ` (ID: ${vmsLocationId})` : ''}`
+      message: `Venue ${action} in VMS${vmsLocationId ? ` (ID: ${vmsLocationId})` : ''}`
     });
   } catch (error) {
     logger.error('Error transferring venue to VMS:', error);

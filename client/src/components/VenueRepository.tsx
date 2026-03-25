@@ -74,6 +74,10 @@ interface Venue {
   bau_picked?: boolean;
   bau_picked_at?: string;
   completeness?: { status: 'ready' | 'almost' | 'incomplete' | 'not_started'; label: string; missing: string[]; filled: number; total: number };
+  vms_status?: 'data_updated' | 'data_pending' | 'not_in_vms';
+  image_file_id?: number;
+  image_s3_url?: string;
+  photos?: Array<{ s3_url: string; file_id?: number | null; uploaded_at?: string }>;
   created_at: string;
   updated_at: string;
 }
@@ -357,6 +361,13 @@ export function VenueRepository() {
     }
   }, [filter.cities, filter.areas, filter.activities, filter.capacities, filter.notTransferred, activeStatusFilters, showOnboardedTransferred, showOnboardedNotTransferred, showInactive, showBauUnpicked, sourcedByFilter]);
 
+  // Re-fetch when search is cleared so all venues come back
+  useEffect(() => {
+    if (isExpanded && filter.search === '') {
+      fetchVenues();
+    }
+  }, [filter.search]);
+
   // Cascading: clear orphaned area selections when city changes
   useEffect(() => {
     if (filter.cities.length > 0 && filter.areas.length > 0) {
@@ -489,7 +500,7 @@ export function VenueRepository() {
     setShowModal(true);
   };
 
-  const handleSaveVenue = async (venueData: Partial<Venue>) => {
+  const handleSaveVenue = async (venueData: Partial<Venue>): Promise<number> => {
     const url = editingVenue
       ? `${API_BASE}/venue-repository/${editingVenue.id}`
       : `${API_BASE}/venue-repository`;
@@ -503,10 +514,8 @@ export function VenueRepository() {
 
     const data = await res.json();
     if (data.success) {
-      setShowModal(false);
-      fetchVenues();
-      fetchStats();
-      fetchFilterOptions();
+      const venueId = data.venue?.id || editingVenue?.id;
+      return venueId;
     } else {
       alert(data.error || 'Failed to save venue');
       throw new Error(data.error || 'Failed to save venue');
@@ -711,10 +720,21 @@ export function VenueRepository() {
           >
             {venue.name}
           </span>
-          {venue.transferred_to_vms && (
-            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-green-100 text-green-700 border border-green-200" title={`Transferred to VMS${venue.vms_location_id ? ` (ID: ${venue.vms_location_id})` : ''}`}>
+          {venue.vms_status === 'data_updated' && (
+            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-green-100 text-green-700 border border-green-200" title={`In VMS with data filled${venue.vms_location_id ? ` (ID: ${venue.vms_location_id})` : ''}`}>
               <Check className="h-2.5 w-2.5" />
-              VMS
+              In VMS - Data Updated
+            </span>
+          )}
+          {venue.vms_status === 'data_pending' && (
+            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-amber-100 text-amber-700 border border-amber-200" title={`In VMS but data not filled yet${venue.vms_location_id ? ` (ID: ${venue.vms_location_id})` : ''}`}>
+              <Clock className="h-2.5 w-2.5" />
+              In VMS - Data Pending
+            </span>
+          )}
+          {venue.vms_status === 'not_in_vms' && venue.status === 'onboarded' && (
+            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-gray-100 text-gray-500 border border-gray-200" title="Not yet transferred to VMS">
+              Not in VMS
             </span>
           )}
           {/* Transfer readiness indicator */}
@@ -1292,7 +1312,14 @@ export function VenueRepository() {
           venue={editingVenue}
           options={options}
           onClose={() => setShowModal(false)}
-          onSave={handleSaveVenue}
+          onSave={async (data) => {
+            const venueId = await handleSaveVenue(data);
+            setShowModal(false);
+            fetchVenues();
+            fetchStats();
+            fetchFilterOptions();
+            return venueId;
+          }}
         />
       )}
 
@@ -1444,7 +1471,7 @@ interface VenueModalProps {
   venue: Venue | null;
   options: Options;
   onClose: () => void;
-  onSave: (data: Partial<Venue>) => Promise<void>;
+  onSave: (data: Partial<Venue>) => Promise<number>;
 }
 
 function VenueModal({ venue, options, onClose, onSave }: VenueModalProps) {
@@ -1476,6 +1503,14 @@ function VenueModal({ venue, options, onClose, onSave }: VenueModalProps) {
   const [urlError, setUrlError] = useState('');
   const [saving, setSaving] = useState(false);
   const [selectedCity, setSelectedCity] = useState<number | '' | 'custom'>('');
+
+  // Image upload state
+  const [coverPreview, setCoverPreview] = useState<string | null>(venue?.image_s3_url || null);
+  const [coverFile, setCoverFile] = useState<File | null>(null);
+  const [photos, setPhotos] = useState<Array<{ s3_url: string; file?: File; isNew?: boolean }>>(
+    (venue?.photos || []).map(p => ({ s3_url: p.s3_url }))
+  );
+  const [uploading, setUploading] = useState(false);
   const [isCustomCity, setIsCustomCity] = useState(false);
   const [isCustomArea, setIsCustomArea] = useState(false);
 
@@ -1529,17 +1564,80 @@ function VenueModal({ venue, options, onClose, onSave }: VenueModalProps) {
     }
 
     setSaving(true);
+    setUploading(true);
     setUrlError('');
     try {
-      await onSave({
+      const venueId = await onSave({
         ...formData,
         area_id: formData.area_id ? Number(formData.area_id) : undefined
       });
+      if (venueId) {
+        // Upload cover image if new file selected
+        if (coverFile) {
+          const fd = new FormData();
+          fd.append('image', coverFile);
+          const res = await fetch(`${API_BASE}/venue-repository/${venueId}/upload-cover`, { method: 'POST', body: fd });
+          const data = await res.json();
+          if (!res.ok) alert(`Cover upload failed: ${data.error}`);
+        }
+        // Upload new additional photos
+        for (const photo of photos) {
+          if (photo.isNew && photo.file) {
+            const fd = new FormData();
+            fd.append('image', photo.file);
+            const res = await fetch(`${API_BASE}/venue-repository/${venueId}/upload-photo`, { method: 'POST', body: fd });
+            const data = await res.json();
+            if (!res.ok) alert(`Photo upload failed: ${data.error}`);
+          }
+        }
+      }
     } catch (err: any) {
       // Error is handled by parent
     } finally {
       setSaving(false);
+      setUploading(false);
     }
+  };
+
+  const validateFile = (file: File): boolean => {
+    if (!file.type.startsWith('image/')) { alert('Please select an image file'); return false; }
+    if (file.size > 10 * 1024 * 1024) { alert('Image must be under 10MB'); return false; }
+    return true;
+  };
+
+  const handleCoverSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !validateFile(file)) return;
+    setCoverFile(file);
+    setCoverPreview(URL.createObjectURL(file));
+  };
+
+  const removeCover = async () => {
+    if (venue?.id && venue.image_s3_url) {
+      await fetch(`${API_BASE}/venue-repository/${venue.id}/cover`, { method: 'DELETE' });
+    }
+    setCoverPreview(null);
+    setCoverFile(null);
+  };
+
+  const handlePhotoSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    const valid = files.filter(f => validateFile(f));
+    const newPhotos = valid.map(f => ({ s3_url: URL.createObjectURL(f), file: f, isNew: true }));
+    setPhotos(prev => [...prev, ...newPhotos]);
+    e.target.value = '';
+  };
+
+  const removePhoto = async (index: number) => {
+    const photo = photos[index];
+    if (!photo.isNew && venue?.id) {
+      await fetch(`${API_BASE}/venue-repository/${venue.id}/photo`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ s3_url: photo.s3_url })
+      });
+    }
+    setPhotos(prev => prev.filter((_, i) => i !== index));
   };
 
   const toggleAmenity = (amenity: string) => {
@@ -1570,6 +1668,18 @@ function VenueModal({ venue, options, onClose, onSave }: VenueModalProps) {
         </div>
 
         <form onSubmit={handleSubmit} className="p-6 overflow-y-auto max-h-[calc(90vh-140px)]">
+          {/* VMS Status Notice */}
+          {venue?.vms_status === 'data_updated' && (
+            <div className="mb-4 px-3 py-2 bg-green-50 border border-green-200 rounded-lg text-sm text-green-800">
+              <strong>In VMS - Data Updated</strong> (ID: {venue.vms_location_id}). This venue already exists in VMS with data filled. Changes here will update the existing venue.
+            </div>
+          )}
+          {venue?.vms_status === 'data_pending' && (
+            <div className="mb-4 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-800">
+              <strong>In VMS - Data Pending</strong> (ID: {venue.vms_location_id}). This venue is in VMS but data (category, amenities, etc.) hasn't been filled yet. Fill in the details and transfer again to update.
+            </div>
+          )}
+
           {/* Basic Info */}
           <div className="space-y-4 mb-6">
             <h4 className="text-sm font-semibold text-gray-700 uppercase tracking-wider">Basic Info</h4>
@@ -1586,6 +1696,94 @@ function VenueModal({ venue, options, onClose, onSave }: VenueModalProps) {
                 placeholder="Enter venue name"
               />
             </div>
+
+            {/* Cover Image */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Cover Image
+                {venue?.image_s3_url && !coverFile && (
+                  <span className="ml-2 text-xs text-green-600 font-normal">(existing cover in VMS)</span>
+                )}
+              </label>
+              {coverPreview ? (
+                <div className="relative inline-block">
+                  <img
+                    src={coverPreview}
+                    alt="Cover preview"
+                    className="w-40 h-28 object-cover rounded-lg border border-gray-200"
+                  />
+                  <button
+                    type="button"
+                    onClick={removeCover}
+                    className="absolute -top-2 -right-2 p-1 bg-red-500 text-white rounded-full hover:bg-red-600 transition-colors shadow-sm"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </div>
+              ) : (
+                <label className="flex items-center justify-center w-40 h-28 border-2 border-dashed border-gray-300 rounded-lg cursor-pointer hover:border-indigo-400 hover:bg-indigo-50/50 transition-colors">
+                  <div className="text-center">
+                    <Upload className="h-5 w-5 text-gray-400 mx-auto mb-1" />
+                    <span className="text-xs text-gray-500">Upload cover</span>
+                  </div>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={handleCoverSelect}
+                    className="hidden"
+                  />
+                </label>
+              )}
+            </div>
+
+            {/* Additional Photos */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Additional Photos
+                <span className="ml-1 text-xs text-gray-400 font-normal">({photos.length} added)</span>
+              </label>
+              <div className="flex flex-wrap gap-2">
+                {photos.map((photo, idx) => (
+                  <div key={idx} className="relative inline-block">
+                    <img
+                      src={photo.s3_url}
+                      alt={`Photo ${idx + 1}`}
+                      className="w-24 h-20 object-cover rounded-lg border border-gray-200"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => removePhoto(idx)}
+                      className="absolute -top-1.5 -right-1.5 p-0.5 bg-red-500 text-white rounded-full hover:bg-red-600 transition-colors shadow-sm"
+                    >
+                      <X className="h-2.5 w-2.5" />
+                    </button>
+                    {photo.isNew && (
+                      <span className="absolute bottom-0.5 left-0.5 px-1 py-0.5 bg-blue-500/80 text-white text-[9px] rounded">New</span>
+                    )}
+                  </div>
+                ))}
+                <label className="flex items-center justify-center w-24 h-20 border-2 border-dashed border-gray-300 rounded-lg cursor-pointer hover:border-indigo-400 hover:bg-indigo-50/50 transition-colors">
+                  <div className="text-center">
+                    <Plus className="h-4 w-4 text-gray-400 mx-auto" />
+                    <span className="text-[10px] text-gray-500">Add photos</span>
+                  </div>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    onChange={handlePhotoSelect}
+                    className="hidden"
+                  />
+                </label>
+              </div>
+            </div>
+
+            {uploading && (
+              <div className="flex items-center gap-2 text-sm text-indigo-600">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                <span>Uploading images...</span>
+              </div>
+            )}
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Google Maps URL</label>
