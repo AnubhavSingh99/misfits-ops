@@ -422,10 +422,30 @@ router.get('/admin/:id', async (req: Request, res: Response) => {
       pastApps = pastResult.rows;
     }
 
+    // Build question_map: { questionId: questionText } for questionnaire responses
+    let question_map: Record<string, string> = {};
+    if (app.questionnaire_data && typeof app.questionnaire_data === 'object') {
+      const qIds = Object.keys(app.questionnaire_data).map(Number).filter(n => !isNaN(n));
+      if (qIds.length > 0) {
+        try {
+          const qResult = await queryProduction(
+            'SELECT pk, question_text FROM club_questionnaire_config WHERE pk = ANY($1)',
+            [qIds]
+          );
+          for (const row of qResult.rows) {
+            question_map[String(row.pk)] = row.question_text;
+          }
+        } catch (err) {
+          logger.warn('Failed to fetch question texts:', err);
+        }
+      }
+    }
+
     res.json({
       success: true,
       data: {
         ...app,
+        question_map,
         timeline: mapAppRows(timeline.rows),
         activity_log: mapAppRows(activity.rows),
         past_applications: pastApps,
