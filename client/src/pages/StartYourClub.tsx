@@ -2092,6 +2092,9 @@ export default function StartYourClub() {
       if (cityFilter) params.set('city', cityFilter);
       if (activityFilter) params.set('activity', activityFilter);
       if (searchQuery) params.set('search', searchQuery);
+      // Pass active section's statuses so backend returns the right applications
+      const section = SECTIONS.find(s => s.id === activeSection);
+      if (section) params.set('statuses', section.statuses.join(','));
       params.set('sort', sortField);
       params.set('order', sortDir);
       params.set('page', String(page));
@@ -2109,7 +2112,7 @@ export default function StartYourClub() {
     } finally {
       setLoading(false);
     }
-  }, [cityFilter, activityFilter, searchQuery, sortField, sortDir, page]);
+  }, [cityFilter, activityFilter, searchQuery, sortField, sortDir, page, activeSection]);
 
   const fetchAnalytics = useCallback(async () => {
     try {

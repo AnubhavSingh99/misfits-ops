@@ -67,7 +67,7 @@ async function recordStatusEvent(
 router.get('/admin/all', async (req: Request, res: Response) => {
   try {
     const {
-      status, city, activity, search,
+      status, statuses, city, activity, search,
       sort = 'created_at', order = 'desc',
       page = '1', limit = '50',
       archived
@@ -82,7 +82,14 @@ router.get('/admin/all', async (req: Request, res: Response) => {
       conditions.push(`archived = false`);
     }
 
-    if (status) {
+    // Multi-status filter (comma-separated, e.g., "ACTIVE,ABANDONED")
+    if (statuses) {
+      const statusList = (statuses as string).split(',').filter(s => s.trim());
+      if (statusList.length > 0) {
+        conditions.push(`ca.status = ANY($${paramIdx++})`);
+        params.push(statusList);
+      }
+    } else if (status) {
       conditions.push(`ca.status = $${paramIdx++}`);
       params.push(status);
     }
@@ -108,7 +115,7 @@ router.get('/admin/all', async (req: Request, res: Response) => {
     const sortPrefix = sortCol === 'name' ? 'COALESCE(ca.name, u.name)' : `ca.${sortCol}`;
 
     const pageNum = Math.max(1, parseInt(page as string, 10) || 1);
-    const limitNum = Math.min(100, Math.max(1, parseInt(limit as string, 10) || 50));
+    const limitNum = Math.min(500, Math.max(1, parseInt(limit as string, 10) || 50));
     const offset = (pageNum - 1) * limitNum;
 
     const countResult = await queryProduction(
