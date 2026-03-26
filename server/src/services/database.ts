@@ -70,13 +70,6 @@ export function getLocalPool(): Pool {
   return pool;
 }
 
-export function getProductionPool(): Pool {
-  if (!prodPool) {
-    throw new Error('Production database not initialized');
-  }
-  return prodPool;
-}
-
 // Query local operations database (for POC, tasks, etc.)
 export async function queryLocal(text: string, params?: any[]) {
   const client = await getClient();
