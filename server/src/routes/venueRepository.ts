@@ -1334,7 +1334,8 @@ router.get('/stats/summary', async (req: Request, res: Response) => {
 
 const GRPC_API_KEY = '024d77dd28d21f0a99bfc2bb1c6ce9089d9273772c8319848d0a34f9ff9ae3d3';
 const GRPC_HOST = '15.207.255.212:8001';
-const GRPCURL_BIN = process.env.NODE_ENV === 'production' ? '/home/ec2-user/go/bin/grpcurl' : 'grpcurl';
+// Evaluate at runtime (after dotenv loads), not at module load time
+const getGrpcurlBin = () => process.env.NODE_ENV === 'production' ? '/home/ec2-user/go/bin/grpcurl' : 'grpcurl';
 
 /**
  * Helper: upload image via gRPC SaveFile → returns file_id AND s3_url
@@ -1352,7 +1353,7 @@ async function uploadImageViaGrpc(imageBuffer: Buffer): Promise<{ fileId: number
     const base64Data = webpBuffer.toString('base64');
     const grpcData = JSON.stringify({ type: 'IMAGE', data: base64Data, file_name: fileName });
     const escapedData = grpcData.replace(/'/g, "'\\''");
-    const grpcCmd = `${GRPCURL_BIN} -plaintext -H 'x-api-key: ${GRPC_API_KEY}' -d '${escapedData}' ${GRPC_HOST} FileService.SaveFile`;
+    const grpcCmd = `${getGrpcurlBin()} -plaintext -H 'x-api-key: ${GRPC_API_KEY}' -d '${escapedData}' ${GRPC_HOST} FileService.SaveFile`;
     const { stdout } = await execAsync(grpcCmd, { timeout: 60000 });
     const result = JSON.parse(stdout);
     const fileId = parseInt(result.fileId);
@@ -1808,7 +1809,7 @@ router.post('/:id/transfer-to-vms', async (req: Request, res: Response) => {
       const updateData = { ...grpcRequest, media: updateMedia };
       const updateGrpcData = JSON.stringify({ venue_id: existingLocationId, data: updateData });
       const updateEscaped = updateGrpcData.replace(/'/g, "'\\''");
-      const updateCmd = `${GRPCURL_BIN} -plaintext -H 'x-api-key: ${GRPC_API_KEY}' -d '${updateEscaped}' ${GRPC_HOST} LocationService.UpdateVenue`;
+      const updateCmd = `${getGrpcurlBin()} -plaintext -H 'x-api-key: ${GRPC_API_KEY}' -d '${updateEscaped}' ${GRPC_HOST} LocationService.UpdateVenue`;
 
       try {
         const { stdout, stderr } = await execAsync(updateCmd, { timeout: 30000 });
@@ -1840,7 +1841,7 @@ router.post('/:id/transfer-to-vms', async (req: Request, res: Response) => {
 
       const grpcData = JSON.stringify(grpcRequest);
       const escapedData = grpcData.replace(/'/g, "'\\''");
-      const grpcCmd = `${GRPCURL_BIN} -plaintext -H 'x-api-key: ${GRPC_API_KEY}' -d '${escapedData}' ${GRPC_HOST} LocationService.CreateVenue`;
+      const grpcCmd = `${getGrpcurlBin()} -plaintext -H 'x-api-key: ${GRPC_API_KEY}' -d '${escapedData}' ${GRPC_HOST} LocationService.CreateVenue`;
 
       logger.info(`Calling gRPC CreateVenue for venue ${id}: ${venue.name}`, { grpcRequest: JSON.stringify(grpcRequest).substring(0, 500) });
 
@@ -1885,11 +1886,11 @@ router.post('/:id/transfer-to-vms', async (req: Request, res: Response) => {
     // If venue_manager_phone is provided, assign venue manager via gRPC
     if (venue_manager_phone && vmsLocationId) {
       try {
-        const markCmd = `${GRPCURL_BIN} -plaintext -H 'x-api-key: ${GRPC_API_KEY}' -d '{"phone_number": "${venue_manager_phone}"}' ${GRPC_HOST} LocationService.MarkUserAsVenueManager`;
+        const markCmd = `${getGrpcurlBin()} -plaintext -H 'x-api-key: ${GRPC_API_KEY}' -d '{"phone_number": "${venue_manager_phone}"}' ${GRPC_HOST} LocationService.MarkUserAsVenueManager`;
         await execAsync(markCmd, { timeout: 15000 });
         logger.info(`Marked user ${venue_manager_phone} as venue manager`);
 
-        const addCmd = `${GRPCURL_BIN} -plaintext -H 'x-api-key: ${GRPC_API_KEY}' -d '{"venue_id": ${vmsLocationId}, "phone_number": "${venue_manager_phone}"}' ${GRPC_HOST} LocationService.AddVenueManager`;
+        const addCmd = `${getGrpcurlBin()} -plaintext -H 'x-api-key: ${GRPC_API_KEY}' -d '{"venue_id": ${vmsLocationId}, "phone_number": "${venue_manager_phone}"}' ${GRPC_HOST} LocationService.AddVenueManager`;
         await execAsync(addCmd, { timeout: 15000 });
         logger.info(`Added venue manager ${venue_manager_phone} to venue ${vmsLocationId}`);
       } catch (managerError: any) {
