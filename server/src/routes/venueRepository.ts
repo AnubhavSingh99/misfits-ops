@@ -1546,10 +1546,6 @@ router.post('/:id/transfer-to-vms', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Venue has already been transferred to VMS' });
     }
 
-    if (!venue.area_id) {
-      return res.status(400).json({ error: 'Venue must have an area (area_id) to transfer to VMS' });
-    }
-
     if (!venue.url) {
       return res.status(400).json({ error: 'Venue must have a Google Maps URL to transfer to VMS' });
     }
@@ -1573,27 +1569,137 @@ router.post('/:id/transfer-to-vms', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Venue must have a capacity category to transfer to VMS' });
     }
 
-    // Look up area name and city from production DB
+    // ---- RESOLVE AREA_ID (from area_id, or custom_city + custom_area) ----
     let areaName = '';
     let cityName = '';
     let cityId = 0;
-    try {
-      const areaResult = await queryProduction(
-        `SELECT a.id, a.name as area_name, c.id as city_id, c.name as city_name
-         FROM area a JOIN city c ON a.city_id = c.id WHERE a.id = $1`,
-        [venue.area_id]
-      );
-      if (areaResult.rows.length > 0) {
-        areaName = areaResult.rows[0].area_name;
-        cityId = parseInt(areaResult.rows[0].city_id);
-        cityName = areaResult.rows[0].city_name;
-      } else {
-        return res.status(400).json({ error: 'Area not found in production DB' });
+    let resolvedAreaId = venue.area_id ? parseInt(venue.area_id) : null;
+
+    if (resolvedAreaId) {
+      // Has area_id — look up names from production
+      try {
+        const areaResult = await queryProduction(
+          `SELECT a.id, a.name as area_name, c.id as city_id, c.name as city_name
+           FROM area a JOIN city c ON a.city_id = c.id WHERE a.id = $1`,
+          [resolvedAreaId]
+        );
+        if (areaResult.rows.length > 0) {
+          areaName = areaResult.rows[0].area_name;
+          cityId = parseInt(areaResult.rows[0].city_id);
+          cityName = areaResult.rows[0].city_name;
+        } else {
+          return res.status(400).json({ error: 'Area not found in production DB' });
+        }
+      } catch (areaError) {
+        logger.error('Failed to look up area/city:', areaError);
+        return res.status(500).json({ error: 'Failed to look up area and city information' });
       }
-    } catch (areaError) {
-      logger.error('Failed to look up area/city:', areaError);
-      return res.status(500).json({ error: 'Failed to look up area and city information' });
+    } else if (venue.custom_city && venue.custom_area) {
+      // No area_id — resolve from custom_city + custom_area
+      const customCity = venue.custom_city.trim();
+      const customArea = venue.custom_area.trim();
+      logger.info(`Resolving area_id for custom city="${customCity}", area="${customArea}"`);
+
+      // Step 1: Resolve city — exact match (case-insensitive)
+      let resolvedCityId: number | null = null;
+      const cityExact = await queryProduction(
+        `SELECT id, name FROM city WHERE LOWER(TRIM(name)) = LOWER($1) LIMIT 1`,
+        [customCity]
+      );
+      if (cityExact.rows.length > 0) {
+        resolvedCityId = parseInt(cityExact.rows[0].id);
+        cityName = cityExact.rows[0].name;
+        logger.info(`City exact match: "${customCity}" → id=${resolvedCityId} ("${cityName}")`);
+      } else {
+        // Fuzzy match — ILIKE with wildcards for partial matches
+        const cityFuzzy = await queryProduction(
+          `SELECT id, name FROM city WHERE LOWER(name) LIKE '%' || LOWER($1) || '%' OR LOWER($1) LIKE '%' || LOWER(name) || '%' ORDER BY LENGTH(name) ASC LIMIT 1`,
+          [customCity]
+        );
+        if (cityFuzzy.rows.length > 0) {
+          resolvedCityId = parseInt(cityFuzzy.rows[0].id);
+          cityName = cityFuzzy.rows[0].name;
+          logger.info(`City fuzzy match: "${customCity}" → id=${resolvedCityId} ("${cityName}")`);
+        } else {
+          // No match — create city via gRPC
+          logger.info(`No city match for "${customCity}", creating via gRPC`);
+          try {
+            const createCityData = JSON.stringify({ name: customCity, state: '' });
+            const createCityEscaped = createCityData.replace(/'/g, "'\\''");
+            const createCityCmd = `${GRPCURL_BIN} -plaintext -H 'x-api-key: ${GRPC_API_KEY}' -d '${createCityEscaped}' ${GRPC_HOST} LocationService.CreateCity`;
+            const { stdout } = await execAsync(createCityCmd, { timeout: 15000 });
+            const cityResponse = JSON.parse(stdout);
+            if (cityResponse.id) {
+              resolvedCityId = parseInt(cityResponse.id);
+              cityName = customCity;
+              logger.info(`Created city "${customCity}" → id=${resolvedCityId}`);
+            } else {
+              return res.status(500).json({ error: `Failed to create city "${customCity}" in production` });
+            }
+          } catch (grpcErr: any) {
+            logger.error('gRPC CreateCity failed:', grpcErr);
+            return res.status(500).json({ error: `Failed to create city "${customCity}": ${grpcErr.message}` });
+          }
+        }
+      }
+
+      cityId = resolvedCityId!;
+
+      // Step 2: Resolve area under resolved city — exact match
+      const areaExact = await queryProduction(
+        `SELECT id, name FROM area WHERE LOWER(TRIM(name)) = LOWER($1) AND city_id = $2 LIMIT 1`,
+        [customArea, cityId]
+      );
+      if (areaExact.rows.length > 0) {
+        resolvedAreaId = parseInt(areaExact.rows[0].id);
+        areaName = areaExact.rows[0].name;
+        logger.info(`Area exact match: "${customArea}" → id=${resolvedAreaId} ("${areaName}")`);
+      } else {
+        // Fuzzy match within the city
+        const areaFuzzy = await queryProduction(
+          `SELECT id, name FROM area WHERE city_id = $2 AND (LOWER(name) LIKE '%' || LOWER($1) || '%' OR LOWER($1) LIKE '%' || LOWER(name) || '%') ORDER BY LENGTH(name) ASC LIMIT 1`,
+          [customArea, cityId]
+        );
+        if (areaFuzzy.rows.length > 0) {
+          resolvedAreaId = parseInt(areaFuzzy.rows[0].id);
+          areaName = areaFuzzy.rows[0].name;
+          logger.info(`Area fuzzy match: "${customArea}" → id=${resolvedAreaId} ("${areaName}")`);
+        } else {
+          // No match — create area via gRPC
+          logger.info(`No area match for "${customArea}" in city ${cityId}, creating via gRPC`);
+          try {
+            const createAreaData = JSON.stringify({ name: customArea, city_id: cityId, postal_code: 0 });
+            const createAreaEscaped = createAreaData.replace(/'/g, "'\\''");
+            const createAreaCmd = `${GRPCURL_BIN} -plaintext -H 'x-api-key: ${GRPC_API_KEY}' -d '${createAreaEscaped}' ${GRPC_HOST} LocationService.CreateArea`;
+            const { stdout } = await execAsync(createAreaCmd, { timeout: 15000 });
+            const areaResponse = JSON.parse(stdout);
+            if (areaResponse.id) {
+              resolvedAreaId = parseInt(areaResponse.id);
+              areaName = customArea;
+              logger.info(`Created area "${customArea}" → id=${resolvedAreaId} under city ${cityId}`);
+            } else {
+              return res.status(500).json({ error: `Failed to create area "${customArea}" in production` });
+            }
+          } catch (grpcErr: any) {
+            logger.error('gRPC CreateArea failed:', grpcErr);
+            return res.status(500).json({ error: `Failed to create area "${customArea}": ${grpcErr.message}` });
+          }
+        }
+      }
+
+      // Save resolved area_id back to venue for future use
+      await queryLocal('UPDATE venue_repository SET area_id = $1 WHERE id = $2', [resolvedAreaId, venue.id]);
+      logger.info(`Saved resolved area_id=${resolvedAreaId} to venue ${venue.id}`);
+    } else {
+      return res.status(400).json({ error: 'Venue must have either an area_id or custom_city + custom_area to transfer to VMS' });
     }
+
+    if (!resolvedAreaId) {
+      return res.status(400).json({ error: 'Could not resolve area for this venue' });
+    }
+
+    // Override venue.area_id with resolved value for the rest of the flow
+    venue.area_id = resolvedAreaId;
 
     // Build gRPC CreateVenue request (all fields are top-level per protobuf schema)
     const grpcRequest: any = {
