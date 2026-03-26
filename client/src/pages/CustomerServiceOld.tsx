@@ -31,7 +31,10 @@ import {
   Save,
   Trash2,
   Link,
-  Loader2
+  Loader2,
+  Shield,
+  Ban,
+  Image as ImageIcon
 } from 'lucide-react';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5001';
@@ -93,6 +96,44 @@ interface Stats {
   no_contact: number;
   by_stakeholder: Record<string, number>;
   by_priority: Record<string, number>;
+}
+
+interface UserSafetyReport {
+  id: number;
+  report_id: number;
+  reporter_user_id: number;
+  reporter_name: string | null;
+  reporter_contact: string | null;
+  reported_user_id: number;
+  reported_name: string | null;
+  reported_contact: string | null;
+  reason: string;
+  description: string | null;
+  image_urls: string[];
+  status: 'created' | 'in_progress' | 'resolved';
+  assigned_to: string | null;
+  resolution_notes: string | null;
+  reported_user_blocked: boolean;
+  created_at: string;
+  updated_at: string;
+  resolved_at: string | null;
+  synced_at: string;
+}
+
+interface SafetyStats {
+  total: number;
+  open: number;
+  in_progress: number;
+  resolved: number;
+  blocked_users: number;
+}
+
+interface BlockedUser {
+  user_id: number;
+  name: string;
+  phone: string;
+  email: string | null;
+  blocked_at: string;
 }
 
 interface PollingStatus {
@@ -443,6 +484,198 @@ function QuerySection({
 }
 
 // Stakeholder Section Component
+// User Safety Section Component
+function UserSafetySection({
+  reports,
+  expandedSections,
+  onToggleSection,
+  onSelectReport,
+  onStatusUpdate
+}: {
+  reports: UserSafetyReport[];
+  expandedSections: Record<string, boolean>;
+  onToggleSection: (key: string) => void;
+  onSelectReport: (r: UserSafetyReport) => void;
+  onStatusUpdate: (id: number, status: string) => void;
+}) {
+  const openReports = reports.filter(r => ['created', 'in_progress'].includes(r.status));
+  const closedReports = reports.filter(r => r.status === 'resolved');
+
+  const isExpanded = expandedSections['safety'] !== false;
+
+  const SafetyReportRow = ({ report }: { report: UserSafetyReport }) => (
+    <tr
+      onClick={() => onSelectReport(report)}
+      className="border-b hover:bg-orange-50 cursor-pointer transition-colors"
+    >
+      <td className="p-3">
+        <div className="font-medium text-gray-900">{report.reported_name || 'Unknown User'}</div>
+        <div className="text-xs text-gray-500">{report.reported_contact}</div>
+      </td>
+      <td className="p-3">
+        <div className="text-sm text-gray-700">{report.reporter_name || 'Anonymous'}</div>
+        <div className="text-xs text-gray-500">{report.reporter_contact}</div>
+      </td>
+      <td className="p-3">
+        <span className="inline-flex items-center px-2 py-1 rounded text-xs font-medium bg-red-100 text-red-700">
+          {report.reason.replace(/_/g, ' ')}
+        </span>
+      </td>
+      <td className="p-3">
+        <div className="text-sm text-gray-600 line-clamp-2">
+          {report.description || 'No description'}
+        </div>
+      </td>
+      <td className="p-3">
+        {report.image_urls && report.image_urls.length > 0 ? (
+          <div className="flex items-center gap-1 text-xs text-gray-600">
+            <ImageIcon className="h-3 w-3" />
+            {report.image_urls.length}
+          </div>
+        ) : (
+          <span className="text-xs text-gray-400">-</span>
+        )}
+      </td>
+      <td className="p-3">
+        <select
+          value={report.status}
+          onChange={(e) => {
+            e.stopPropagation();
+            onStatusUpdate(report.id, e.target.value);
+          }}
+          className="text-xs border rounded px-2 py-1 bg-white"
+        >
+          <option value="created">Created</option>
+          <option value="in_progress">In Progress</option>
+          <option value="resolved">Resolved</option>
+        </select>
+      </td>
+      <td className="p-3">
+        {report.reported_user_blocked ? (
+          <span className="inline-flex items-center px-2 py-1 rounded text-xs font-medium bg-gray-900 text-white">
+            <Ban className="h-3 w-3 mr-1" />
+            Blocked
+          </span>
+        ) : (
+          <span className="text-xs text-gray-400">Active</span>
+        )}
+      </td>
+    </tr>
+  );
+
+  const SafetyReportsTable = ({ reports, title }: { reports: UserSafetyReport[]; title: string }) => (
+    <div className="overflow-hidden rounded-lg border">
+      <div className="overflow-x-auto">
+        <table className="w-full">
+          <thead className="bg-gray-50 border-b">
+            <tr>
+              <th className="text-left p-3 text-xs font-medium text-gray-600">Reported User</th>
+              <th className="text-left p-3 text-xs font-medium text-gray-600">Reporter</th>
+              <th className="text-left p-3 text-xs font-medium text-gray-600">Reason</th>
+              <th className="text-left p-3 text-xs font-medium text-gray-600">Description</th>
+              <th className="text-left p-3 text-xs font-medium text-gray-600">Images</th>
+              <th className="text-left p-3 text-xs font-medium text-gray-600">Status</th>
+              <th className="text-left p-3 text-xs font-medium text-gray-600">User Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {reports.length > 0 ? (
+              reports.map(report => <SafetyReportRow key={report.id} report={report} />)
+            ) : (
+              <tr>
+                <td colSpan={7} className="p-8 text-center text-gray-400">
+                  No {title.toLowerCase()} reports
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="rounded-xl border-2 border-orange-200 overflow-hidden">
+      <button
+        onClick={() => onToggleSection('safety')}
+        className="w-full flex items-center justify-between px-5 py-4 bg-orange-50 hover:opacity-95 transition-all"
+      >
+        <div className="flex items-center gap-3">
+          {isExpanded ? (
+            <ChevronDown className="h-5 w-5 text-orange-700" />
+          ) : (
+            <ChevronRight className="h-5 w-5 text-orange-700" />
+          )}
+          <div className="p-2 rounded-lg bg-white shadow-sm text-orange-700">
+            <Shield className="h-5 w-5" />
+          </div>
+          <div className="text-left">
+            <h3 className="text-lg font-bold text-orange-700">User Safety</h3>
+            <p className="text-xs text-gray-500">
+              {openReports.length} open, {closedReports.length} closed
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="px-3 py-1 rounded-full text-sm font-bold bg-orange-50 text-orange-700 border border-orange-200">
+            {reports.length} total
+          </span>
+        </div>
+      </button>
+
+      {isExpanded && (
+        <div className="p-4 space-y-3 bg-white">
+          <div className="space-y-2">
+            <button
+              onClick={() => onToggleSection('safety-open')}
+              className="w-full flex items-center justify-between p-3 rounded-lg bg-red-50 hover:bg-red-100 transition-colors"
+            >
+              <div className="flex items-center gap-2">
+                {expandedSections['safety-open'] !== false ? (
+                  <ChevronDown className="h-4 w-4 text-red-700" />
+                ) : (
+                  <ChevronRight className="h-4 w-4 text-red-700" />
+                )}
+                <FolderOpen className="h-4 w-4 text-red-700" />
+                <span className="font-medium text-red-700">Open Reports</span>
+              </div>
+              <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-red-100 text-red-700">
+                {openReports.length}
+              </span>
+            </button>
+            {expandedSections['safety-open'] !== false && (
+              <SafetyReportsTable reports={openReports} title="Open" />
+            )}
+          </div>
+
+          <div className="space-y-2">
+            <button
+              onClick={() => onToggleSection('safety-closed')}
+              className="w-full flex items-center justify-between p-3 rounded-lg bg-gray-100 hover:bg-gray-200 transition-colors"
+            >
+              <div className="flex items-center gap-2">
+                {expandedSections['safety-closed'] === true ? (
+                  <ChevronDown className="h-4 w-4 text-gray-600" />
+                ) : (
+                  <ChevronRight className="h-4 w-4 text-gray-600" />
+                )}
+                <Archive className="h-4 w-4 text-gray-600" />
+                <span className="font-medium text-gray-600">Closed Reports</span>
+              </div>
+              <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-gray-200 text-gray-600">
+                {closedReports.length}
+              </span>
+            </button>
+            {expandedSections['safety-closed'] === true && (
+              <SafetyReportsTable reports={closedReports} title="Closed" />
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function StakeholderSection({
   type,
   queries,
@@ -968,7 +1201,20 @@ export default function CustomerServiceOld() {
     'venue': false,
     'venue-open': true,
     'venue-closed': false,
+    'safety': false,
+    'safety-open': true,
+    'safety-closed': false,
   });
+
+  // User Safety State
+  const [safetyReports, setSafetyReports] = useState<UserSafetyReport[]>([]);
+  const [safetyStats, setSafetyStats] = useState<SafetyStats | null>(null);
+  const [selectedSafetyReport, setSelectedSafetyReport] = useState<UserSafetyReport | null>(null);
+  const [showSafetyDetailModal, setShowSafetyDetailModal] = useState(false);
+  const [blockingUser, setBlockingUser] = useState(false);
+  const [blockedUsers, setBlockedUsers] = useState<BlockedUser[]>([]);
+  const [showBlockedUsersModal, setShowBlockedUsersModal] = useState(false);
+  const [unblockingUserId, setUnblockingUserId] = useState<number | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedQuery, setSelectedQuery] = useState<CSQuery | null>(null);
   const [showDetailModal, setShowDetailModal] = useState(false);
@@ -1005,22 +1251,28 @@ export default function CustomerServiceOld() {
   // Fetch data
   const fetchData = useCallback(async () => {
     try {
-      const [queriesRes, typesRes, statsRes, pollingRes] = await Promise.all([
+      const [queriesRes, typesRes, statsRes, pollingRes, safetyRes, safetyStatsRes] = await Promise.all([
         fetch(`${API_BASE}/api/cs/queries?limit=500`),
         fetch(`${API_BASE}/api/cs/query-types`),
         fetch(`${API_BASE}/api/cs/stats`),
-        fetch(`${API_BASE}/api/cs/polling/status`)
+        fetch(`${API_BASE}/api/cs/polling/status`),
+        fetch(`${API_BASE}/api/user-safety/reports`),
+        fetch(`${API_BASE}/api/user-safety/stats`)
       ]);
 
       const queriesData = await queriesRes.json();
       const typesData = await typesRes.json();
       const statsData = await statsRes.json();
       const pollingData = await pollingRes.json();
+      const safetyData = await safetyRes.json();
+      const safetyStatsData = await safetyStatsRes.json();
 
       setQueries(queriesData.queries || []);
       setQueryTypes(typesData || []);
       setStats(statsData);
       setPollingStatus(pollingData);
+      setSafetyReports(safetyData || []);
+      setSafetyStats(safetyStatsData);
     } catch (error) {
       console.error('Failed to fetch data:', error);
     } finally {
@@ -1234,6 +1486,105 @@ export default function CustomerServiceOld() {
     }
   };
 
+  // User Safety functions
+  const updateSafetyReportStatus = async (id: number, status: string) => {
+    try {
+      await fetch(`${API_BASE}/api/user-safety/reports/${id}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status })
+      });
+      await fetchData();
+    } catch (error) {
+      console.error('Safety report status update failed:', error);
+    }
+  };
+
+  const blockUser = async (userId: number, userName: string) => {
+    if (!confirm(`Are you sure you want to block user "${userName}"? This will prevent them from accessing the Misfits app.`)) {
+      return;
+    }
+
+    setBlockingUser(true);
+    try {
+      const response = await fetch(`${API_BASE}/api/user-safety/block-user`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user_id: userId,
+          reason: selectedSafetyReport?.reason || 'Safety violation'
+        })
+      });
+
+      if (response.ok) {
+        alert(`User "${userName}" has been blocked successfully.`);
+        await fetchData();
+        setShowSafetyDetailModal(false);
+      } else {
+        const data = await response.json();
+        alert(data.error || 'Failed to block user');
+      }
+    } catch (error) {
+      console.error('Block user failed:', error);
+      alert('Failed to block user');
+    } finally {
+      setBlockingUser(false);
+    }
+  };
+
+  const syncSafetyReports = async () => {
+    setSyncing(true);
+    try {
+      await fetch(`${API_BASE}/api/user-safety/sync`, {
+        method: 'POST'
+      });
+      await fetchData();
+    } catch (error) {
+      console.error('Safety reports sync failed:', error);
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  const fetchBlockedUsers = async () => {
+    try {
+      const response = await fetch(`${API_BASE}/api/user-safety/blocked-users`);
+      const data = await response.json();
+      setBlockedUsers(data || []);
+    } catch (error) {
+      console.error('Failed to fetch blocked users:', error);
+    }
+  };
+
+  const unblockUser = async (userId: number, userName: string) => {
+    if (!confirm(`Are you sure you want to unblock user "${userName}"? They will be able to access the Misfits app again.`)) {
+      return;
+    }
+
+    setUnblockingUserId(userId);
+    try {
+      const response = await fetch(`${API_BASE}/api/user-safety/unblock-user`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: userId })
+      });
+
+      if (response.ok) {
+        alert(`User "${userName}" has been unblocked successfully.`);
+        await fetchBlockedUsers();
+        await fetchData();
+      } else {
+        const data = await response.json();
+        alert(data.error || 'Failed to unblock user');
+      }
+    } catch (error) {
+      console.error('Unblock user failed:', error);
+      alert('Failed to unblock user');
+    } finally {
+      setUnblockingUserId(null);
+    }
+  };
+
   // Get query types for create form
   const getMainTypes = (stakeholder: string) =>
     queryTypes.filter(t => t.stakeholder_type === stakeholder && t.parent_id === null);
@@ -1346,6 +1697,23 @@ export default function CustomerServiceOld() {
             Sync Now
           </button>
 
+          {/* Blocked Users */}
+          <button
+            onClick={() => {
+              fetchBlockedUsers();
+              setShowBlockedUsersModal(true);
+            }}
+            className="flex items-center gap-2 px-3 py-2 bg-gray-900 text-white rounded-lg text-sm font-medium hover:bg-gray-800"
+          >
+            <Ban className="h-4 w-4" />
+            Blocked Users
+            {safetyStats && safetyStats.blocked_users > 0 && (
+              <span className="ml-1 px-2 py-0.5 bg-red-500 text-white rounded-full text-xs font-bold">
+                {safetyStats.blocked_users}
+              </span>
+            )}
+          </button>
+
           {/* New Query */}
           <button
             onClick={() => setShowCreateModal(true)}
@@ -1430,6 +1798,15 @@ export default function CustomerServiceOld() {
 
       {/* Stakeholder Sections */}
       <div className="space-y-4">
+        {/* User Safety Section */}
+        <UserSafetySection
+          reports={safetyReports}
+          expandedSections={expandedSections}
+          onToggleSection={toggleSection}
+          onSelectReport={(r) => { setSelectedSafetyReport(r); setShowSafetyDetailModal(true); }}
+          onStatusUpdate={updateSafetyReportStatus}
+        />
+
         <StakeholderSection
           type="user"
           queries={filteredQueries}
@@ -2038,6 +2415,314 @@ export default function CustomerServiceOld() {
                   )}
                 </div>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* User Safety Detail Modal */}
+      {showSafetyDetailModal && selectedSafetyReport && (
+        <div className="fixed inset-0 z-50 overflow-y-auto">
+          <div className="fixed inset-0 bg-black/30 backdrop-blur-sm" onClick={() => setShowSafetyDetailModal(false)} />
+          <div className="flex min-h-full items-center justify-center p-4">
+            <div className="relative bg-white rounded-2xl shadow-xl w-full max-w-3xl p-6 max-h-[90vh] overflow-y-auto">
+              <button
+                onClick={() => setShowSafetyDetailModal(false)}
+                className="absolute top-4 right-4 p-1 hover:bg-gray-100 rounded-lg"
+              >
+                <X className="h-5 w-5 text-gray-500" />
+              </button>
+
+              {/* Header */}
+              <div className="flex items-start gap-4 mb-6">
+                <div className="p-3 bg-orange-100 rounded-xl">
+                  <Shield className="h-6 w-6 text-orange-600" />
+                </div>
+                <div className="flex-1">
+                  <div className="flex items-center gap-3 mb-1">
+                    <span className="font-bold text-lg text-orange-600">
+                      Safety Report #{selectedSafetyReport.id}
+                    </span>
+                    <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                      selectedSafetyReport.status === 'created' ? 'bg-blue-100 text-blue-700' :
+                      selectedSafetyReport.status === 'in_progress' ? 'bg-yellow-100 text-yellow-700' :
+                      'bg-green-100 text-green-700'
+                    }`}>
+                      {selectedSafetyReport.status.replace('_', ' ').toUpperCase()}
+                    </span>
+                  </div>
+                  <p className="text-sm text-gray-500">
+                    Reported {formatDate(selectedSafetyReport.created_at)}
+                  </p>
+                </div>
+              </div>
+
+              {/* Main Details Grid */}
+              <div className="grid grid-cols-2 gap-4 mb-6">
+                {/* Reported User */}
+                <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
+                  <p className="text-xs font-medium text-red-700 mb-2">REPORTED USER</p>
+                  <div className="space-y-1">
+                    <p className="font-bold text-gray-900">{selectedSafetyReport.reported_name || 'Unknown User'}</p>
+                    <p className="text-sm text-gray-600 flex items-center gap-2">
+                      <Phone className="h-3 w-3" />
+                      {selectedSafetyReport.reported_contact || 'N/A'}
+                    </p>
+                    <p className="text-xs text-gray-500">User ID: {selectedSafetyReport.reported_user_id}</p>
+                    {selectedSafetyReport.reported_user_blocked && (
+                      <div className="mt-2 inline-flex items-center px-2 py-1 rounded text-xs font-medium bg-gray-900 text-white">
+                        <Ban className="h-3 w-3 mr-1" />
+                        BLOCKED
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Reporter */}
+                <div className="p-4 bg-gray-50 border border-gray-200 rounded-lg">
+                  <p className="text-xs font-medium text-gray-700 mb-2">REPORTER</p>
+                  <div className="space-y-1">
+                    <p className="font-bold text-gray-900">{selectedSafetyReport.reporter_name || 'Anonymous'}</p>
+                    <p className="text-sm text-gray-600 flex items-center gap-2">
+                      <Phone className="h-3 w-3" />
+                      {selectedSafetyReport.reporter_contact || 'N/A'}
+                    </p>
+                    <p className="text-xs text-gray-500">User ID: {selectedSafetyReport.reporter_user_id}</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Reason */}
+              <div className="mb-6">
+                <p className="text-sm font-medium text-gray-700 mb-2">Report Reason</p>
+                <div className="p-3 bg-red-50 border border-red-200 rounded-lg">
+                  <span className="inline-flex items-center px-3 py-1.5 rounded-full text-sm font-medium bg-red-100 text-red-700">
+                    <AlertTriangle className="h-4 w-4 mr-2" />
+                    {selectedSafetyReport.reason.replace(/_/g, ' ')}
+                  </span>
+                </div>
+              </div>
+
+              {/* Description */}
+              {selectedSafetyReport.description && (
+                <div className="mb-6">
+                  <p className="text-sm font-medium text-gray-700 mb-2">Description</p>
+                  <div className="p-4 bg-gray-50 border border-gray-200 rounded-lg">
+                    <p className="text-gray-700">{selectedSafetyReport.description}</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Images */}
+              {selectedSafetyReport.image_urls && selectedSafetyReport.image_urls.length > 0 && (
+                <div className="mb-6">
+                  <p className="text-sm font-medium text-gray-700 mb-2">Evidence Images ({selectedSafetyReport.image_urls.length})</p>
+                  <div className="grid grid-cols-2 gap-4">
+                    {selectedSafetyReport.image_urls.map((url, idx) => (
+                      <a
+                        key={idx}
+                        href={url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="block group relative"
+                      >
+                        <img
+                          src={url}
+                          alt={`Evidence ${idx + 1}`}
+                          className="w-full h-48 object-cover rounded-lg border border-gray-200 group-hover:border-indigo-500 transition-colors"
+                        />
+                        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 rounded-lg transition-colors flex items-center justify-center">
+                          <div className="opacity-0 group-hover:opacity-100 bg-white rounded-lg p-2 shadow-lg">
+                            <span className="text-xs font-medium text-gray-700">View Full Size</span>
+                          </div>
+                        </div>
+                      </a>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Timeline */}
+              <div className="mb-6">
+                <p className="text-sm font-medium text-gray-700 mb-3">Timeline</p>
+                <div className="space-y-2">
+                  <div className="flex items-center gap-3 text-sm">
+                    <div className="w-2 h-2 rounded-full bg-blue-500" />
+                    <span className="text-gray-500">Created:</span>
+                    <span className="font-medium">{formatDate(selectedSafetyReport.created_at)}</span>
+                  </div>
+                  {selectedSafetyReport.resolved_at && (
+                    <div className="flex items-center gap-3 text-sm">
+                      <div className="w-2 h-2 rounded-full bg-green-500" />
+                      <span className="text-gray-500">Resolved:</span>
+                      <span className="font-medium">{formatDate(selectedSafetyReport.resolved_at)}</span>
+                    </div>
+                  )}
+                  <div className="flex items-center gap-3 text-sm">
+                    <div className="w-2 h-2 rounded-full bg-gray-400" />
+                    <span className="text-gray-500">Last Synced:</span>
+                    <span className="font-medium">{formatDate(selectedSafetyReport.synced_at)}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex items-center gap-3 pt-4 border-t">
+                <select
+                  value={selectedSafetyReport.status}
+                  onChange={(e) => updateSafetyReportStatus(selectedSafetyReport.id, e.target.value)}
+                  className="flex-1 px-4 py-2 border rounded-lg text-sm font-medium bg-white hover:bg-gray-50"
+                >
+                  <option value="created">Created</option>
+                  <option value="in_progress">In Progress</option>
+                  <option value="resolved">Resolved</option>
+                </select>
+
+                {!selectedSafetyReport.reported_user_blocked ? (
+                  <button
+                    onClick={() => blockUser(selectedSafetyReport.reported_user_id, selectedSafetyReport.reported_name || 'User')}
+                    disabled={blockingUser}
+                    className="px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                  >
+                    {blockingUser ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Blocking...
+                      </>
+                    ) : (
+                      <>
+                        <Ban className="h-4 w-4" />
+                        Block User
+                      </>
+                    )}
+                  </button>
+                ) : (
+                  <div className="px-4 py-2 bg-gray-900 text-white rounded-lg text-sm font-medium flex items-center gap-2">
+                    <Ban className="h-4 w-4" />
+                    User Blocked
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Blocked Users Modal */}
+      {showBlockedUsersModal && (
+        <div className="fixed inset-0 z-50 overflow-y-auto">
+          <div className="fixed inset-0 bg-black/30 backdrop-blur-sm" onClick={() => setShowBlockedUsersModal(false)} />
+          <div className="flex min-h-full items-center justify-center p-4">
+            <div className="relative bg-white rounded-2xl shadow-xl w-full max-w-4xl p-6 max-h-[90vh] overflow-y-auto">
+              <button
+                onClick={() => setShowBlockedUsersModal(false)}
+                className="absolute top-4 right-4 p-1 hover:bg-gray-100 rounded-lg"
+              >
+                <X className="h-5 w-5 text-gray-500" />
+              </button>
+
+              {/* Header */}
+              <div className="flex items-center gap-4 mb-6">
+                <div className="p-3 bg-gray-900 rounded-xl">
+                  <Ban className="h-6 w-6 text-white" />
+                </div>
+                <div>
+                  <h2 className="text-2xl font-bold text-gray-900">Blocked Users</h2>
+                  <p className="text-sm text-gray-500">
+                    {blockedUsers.length} user{blockedUsers.length !== 1 ? 's' : ''} currently blocked
+                  </p>
+                </div>
+              </div>
+
+              {/* Blocked Users Table */}
+              {blockedUsers.length > 0 ? (
+                <div className="overflow-hidden rounded-lg border">
+                  <table className="w-full">
+                    <thead className="bg-gray-50 border-b">
+                      <tr>
+                        <th className="text-left p-4 text-sm font-semibold text-gray-700">User</th>
+                        <th className="text-left p-4 text-sm font-semibold text-gray-700">Contact</th>
+                        <th className="text-left p-4 text-sm font-semibold text-gray-700">Email</th>
+                        <th className="text-left p-4 text-sm font-semibold text-gray-700">Blocked At</th>
+                        <th className="text-center p-4 text-sm font-semibold text-gray-700">Action</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {blockedUsers.map((user) => (
+                        <tr key={user.user_id} className="border-b hover:bg-gray-50">
+                          <td className="p-4">
+                            <div className="flex items-center gap-3">
+                              <div className="p-2 bg-gray-100 rounded-lg">
+                                <UserIcon className="h-4 w-4 text-gray-600" />
+                              </div>
+                              <div>
+                                <p className="font-medium text-gray-900">{user.name}</p>
+                                <p className="text-xs text-gray-500">ID: {user.user_id}</p>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="p-4">
+                            <div className="flex items-center gap-2 text-gray-700">
+                              <Phone className="h-4 w-4 text-gray-400" />
+                              <span className="font-mono text-sm">{user.phone}</span>
+                            </div>
+                          </td>
+                          <td className="p-4">
+                            <span className="text-sm text-gray-600">
+                              {user.email || <span className="text-gray-400">N/A</span>}
+                            </span>
+                          </td>
+                          <td className="p-4">
+                            <div className="text-sm text-gray-600">
+                              {formatDate(user.blocked_at)}
+                            </div>
+                          </td>
+                          <td className="p-4 text-center">
+                            <button
+                              onClick={() => unblockUser(user.user_id, user.name)}
+                              disabled={unblockingUserId === user.user_id}
+                              className="px-4 py-2 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-2"
+                            >
+                              {unblockingUserId === user.user_id ? (
+                                <>
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                  Unblocking...
+                                </>
+                              ) : (
+                                <>
+                                  <CheckCircle className="h-4 w-4" />
+                                  Unblock
+                                </>
+                              )}
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className="text-center py-12">
+                  <div className="inline-flex items-center justify-center w-16 h-16 bg-green-100 rounded-full mb-4">
+                    <CheckCircle className="h-8 w-8 text-green-600" />
+                  </div>
+                  <p className="text-lg font-medium text-gray-900 mb-1">No Blocked Users</p>
+                  <p className="text-sm text-gray-500">All users are currently active</p>
+                </div>
+              )}
+
+              {/* Footer */}
+              <div className="mt-6 pt-4 border-t flex items-center justify-between">
+                <p className="text-xs text-gray-500">
+                  Unblocking a user will restore their access to the Misfits platform immediately
+                </p>
+                <button
+                  onClick={() => setShowBlockedUsersModal(false)}
+                  className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-200"
+                >
+                  Close
+                </button>
+              </div>
             </div>
           </div>
         </div>

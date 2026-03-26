@@ -38,14 +38,16 @@ import { addClient as addSharkTankSSEClient } from './services/sharkTank/sseMana
 import supportProxyRoutes from './routes/supportProxy';
 import startYourClubRoutes from './routes/startYourClub';
 import venueLeadsRoutes from './routes/venueLeads';
+import userSafetyRoutes from './routes/userSafety';
 import { addClient as addStartClubSSEClient } from './services/startYourClub/sseManager';
 
 // Import services
-import { initializeDatabase, getLocalPool } from './services/database';
+import { initializeDatabase, getLocalPool, getProductionPool } from './services/database';
 import { initializeRedis } from './services/redis';
 import { initializeDimensions } from './services/dimensionSync';
 import { initCSPolling, startPolling } from './services/csPollingService';
 import { initSlackService, checkSLABreaches, checkStaleTickets } from './services/slackService';
+import { initUserSafetyService, syncUserReports } from './services/userSafetyService';
 import { runVmsSync } from './routes/venueRepository';
 import { logger } from './utils/logger';
 import { errorHandler } from './middleware/errorHandler';
@@ -165,6 +167,7 @@ app.use('/api/shark-tank/webhook', sharkTankWebhookRoutes);
 app.use('/api/shark-tank/pending-replies', sharkTankPendingRepliesRoutes);
 app.use('/api/start-club', startYourClubRoutes);
 app.use('/api/venue-leads', venueLeadsRoutes);
+app.use('/api/user-safety', userSafetyRoutes);
 // SSE endpoint for Shark Tank CRM real-time updates
 app.get('/api/shark-tank/events', (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
@@ -244,6 +247,21 @@ async function startServer() {
       // Initialize Slack service
       initSlackService(localPool);
       logger.info('Slack service initialized');
+
+      // Initialize User Safety service
+      const prodPool = getProductionPool();
+      initUserSafetyService(localPool, prodPool);
+      logger.info('User Safety service initialized');
+
+      // Sync user reports on startup (after 20 seconds to let DB connections settle)
+      setTimeout(async () => {
+        try {
+          const result = await syncUserReports();
+          logger.info(`Startup user reports sync: ${result.synced} synced, ${result.errors} errors`);
+        } catch (error) {
+          logger.error('Startup user reports sync failed:', error);
+        }
+      }, 20000);
 
       // Check SLA breaches every hour (production only)
       if (process.env.NODE_ENV === 'production') {
