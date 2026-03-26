@@ -439,7 +439,8 @@ function LeadRow({
       body: JSON.stringify({ reviewed_by: reviewerName.trim() }),
     });
     const data = await res.json();
-    if (data.success) { refetchDetail(); onRefresh(); }
+    // Don't call onRefresh() — keep the lead visible so screening form appears in-place
+    if (data.success) { refetchDetail(); }
     else alert(data.error);
   };
 
