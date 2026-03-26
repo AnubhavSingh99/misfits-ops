@@ -1621,25 +1621,11 @@ router.post('/:id/transfer-to-vms', async (req: Request, res: Response) => {
           cityName = cityFuzzy.rows[0].name;
           logger.info(`City fuzzy match: "${customCity}" → id=${resolvedCityId} ("${cityName}")`);
         } else {
-          // No match — create city via gRPC
-          logger.info(`No city match for "${customCity}", creating via gRPC`);
-          try {
-            const createCityData = JSON.stringify({ name: customCity, state: '' });
-            const createCityEscaped = createCityData.replace(/'/g, "'\\''");
-            const createCityCmd = `${GRPCURL_BIN} -plaintext -H 'x-api-key: ${GRPC_API_KEY}' -d '${createCityEscaped}' ${GRPC_HOST} LocationService.CreateCity`;
-            const { stdout } = await execAsync(createCityCmd, { timeout: 15000 });
-            const cityResponse = JSON.parse(stdout);
-            if (cityResponse.id) {
-              resolvedCityId = parseInt(cityResponse.id);
-              cityName = customCity;
-              logger.info(`Created city "${customCity}" → id=${resolvedCityId}`);
-            } else {
-              return res.status(500).json({ error: `Failed to create city "${customCity}" in production` });
-            }
-          } catch (grpcErr: any) {
-            logger.error('gRPC CreateCity failed:', grpcErr);
-            return res.status(500).json({ error: `Failed to create city "${customCity}": ${grpcErr.message}` });
-          }
+          // No match — block transfer, ask user to fix
+          logger.info(`No city match for "${customCity}"`);
+          return res.status(400).json({
+            error: `City "${customCity}" not found in Misfits. Please edit the venue and use an existing city name, or contact admin to add a new city.`
+          });
         }
       }
 
@@ -1665,25 +1651,11 @@ router.post('/:id/transfer-to-vms', async (req: Request, res: Response) => {
           areaName = areaFuzzy.rows[0].name;
           logger.info(`Area fuzzy match: "${customArea}" → id=${resolvedAreaId} ("${areaName}")`);
         } else {
-          // No match — create area via gRPC
-          logger.info(`No area match for "${customArea}" in city ${cityId}, creating via gRPC`);
-          try {
-            const createAreaData = JSON.stringify({ name: customArea, city_id: cityId, postal_code: 0 });
-            const createAreaEscaped = createAreaData.replace(/'/g, "'\\''");
-            const createAreaCmd = `${GRPCURL_BIN} -plaintext -H 'x-api-key: ${GRPC_API_KEY}' -d '${createAreaEscaped}' ${GRPC_HOST} LocationService.CreateArea`;
-            const { stdout } = await execAsync(createAreaCmd, { timeout: 15000 });
-            const areaResponse = JSON.parse(stdout);
-            if (areaResponse.id) {
-              resolvedAreaId = parseInt(areaResponse.id);
-              areaName = customArea;
-              logger.info(`Created area "${customArea}" → id=${resolvedAreaId} under city ${cityId}`);
-            } else {
-              return res.status(500).json({ error: `Failed to create area "${customArea}" in production` });
-            }
-          } catch (grpcErr: any) {
-            logger.error('gRPC CreateArea failed:', grpcErr);
-            return res.status(500).json({ error: `Failed to create area "${customArea}": ${grpcErr.message}` });
-          }
+          // No match — block transfer, ask user to fix
+          logger.info(`No area match for "${customArea}" in city ${cityId} ("${cityName}")`);
+          return res.status(400).json({
+            error: `Area "${customArea}" not found under "${cityName}". Please edit the venue and use an existing area name, or contact admin to add a new area.`
+          });
         }
       }
 
