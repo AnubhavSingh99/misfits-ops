@@ -55,13 +55,17 @@ async function checkUrlDuplicate(url: string, excludeId?: number): Promise<{ dup
     return { duplicate: true, source: 'Venue Repository', existingName: opsResult.rows[0].name };
   }
 
-  // Check production location table
-  const prodResult = await queryProduction(
-    'SELECT id, name FROM location WHERE url = $1 AND is_deleted = false LIMIT 1',
-    [url]
-  );
-  if (prodResult.rows.length > 0) {
-    return { duplicate: true, source: 'VMS (Production)', existingName: prodResult.rows[0].name };
+  // Check production location table (skip if production DB unavailable)
+  try {
+    const prodResult = await queryProduction(
+      'SELECT id, name FROM location WHERE url = $1 AND is_deleted = false LIMIT 1',
+      [url]
+    );
+    if (prodResult.rows.length > 0) {
+      return { duplicate: true, source: 'VMS (Production)', existingName: prodResult.rows[0].name };
+    }
+  } catch (err) {
+    logger.warn('Skipping production URL duplicate check (DB unavailable)');
   }
 
   return { duplicate: false };
