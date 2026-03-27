@@ -495,7 +495,7 @@ router.patch('/admin/:id/pick', async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, error: `Can only pick from SUBMITTED status, current: ${app.status}` });
     }
 
-    await callGrpc('SuperAdminService', 'StartYourClubPickApplication', { application_id: parseInt(id) });
+    await callGrpc('SuperAdminService', 'StartYourClubPickApplication', { application_id: parseInt(id), reviewed_by: reviewed_by.trim() });
 
     const updated = await queryProduction("SELECT ca.*, COALESCE(ca.name, CONCAT(u.first_name, ' ', u.last_name)) as name, u.phone as user_phone FROM club_application ca LEFT JOIN users u ON u.pk = ca.user_id WHERE ca.pk = $1", [id]);
     const freshApp = mapAppRow(updated.rows[0]);
@@ -678,17 +678,19 @@ router.patch('/admin/:id/milestones', async (req: Request, res: Response) => {
       return res.status(404).json({ success: false, error: 'Application not found' });
     }
 
-    const app = appResult.rows[0];
+    const app = mapAppRow(appResult.rows[0]);
     if (app.status !== 'SELECTED') {
       return res.status(400).json({ success: false, error: 'Milestones can only be updated for SELECTED applications' });
     }
 
+    // Merge with existing milestone state — only override fields that were explicitly sent
+    // This prevents toggling one milestone from clearing the others
     await callGrpc('SuperAdminService', 'StartYourClubUpdateMilestones', {
       application_id: parseInt(id),
-      first_call_done: !!first_call_done,
-      venue_sorted: !!venue_sorted,
-      toolkit_shared: !!toolkit_shared,
-      marketing_launched: !!marketing_launched
+      first_call_done: first_call_done !== undefined ? !!first_call_done : !!app.first_call_done,
+      venue_sorted: venue_sorted !== undefined ? !!venue_sorted : !!app.venue_sorted,
+      toolkit_shared: toolkit_shared !== undefined ? !!toolkit_shared : !!app.toolkit_shared,
+      marketing_launched: marketing_launched !== undefined ? !!marketing_launched : !!app.marketing_launched
     });
 
     const updated = await queryProduction("SELECT ca.*, COALESCE(ca.name, CONCAT(u.first_name, ' ', u.last_name)) as name, u.phone as user_phone FROM club_application ca LEFT JOIN users u ON u.pk = ca.user_id WHERE ca.pk = $1", [id]);
@@ -768,13 +770,30 @@ router.post('/admin/:id/call-log', async (req: Request, res: Response) => {
 router.patch('/admin/:id/reject', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const { rejection_reason } = req.body;
+    const { rejection_reason, ratings, interview_ratings } = req.body;
 
     if (!rejection_reason) {
       return res.status(400).json({ success: false, error: 'Rejection reason is required' });
     }
 
-    await callGrpc('SuperAdminService', 'StartYourClubRejectApplication', { application_id: parseInt(id), rejection_reason });
+    // If ratings are provided, save them via the review endpoint (reject outcome) to preserve them
+    if (ratings && Object.keys(ratings).length > 0) {
+      try {
+        await callGrpc('SuperAdminService', 'StartYourClubReviewApplication', {
+          application_id: parseInt(id),
+          outcome: 3, // REJECT
+          screening_ratings: ratings,
+          rejection_reason
+        });
+        // Review already handled rejection — skip the separate reject call
+      } catch (reviewErr: any) {
+        // If review fails (e.g., wrong status), fall back to direct reject
+        logger.warn('Review-reject failed, falling back to direct reject:', reviewErr.message);
+        await callGrpc('SuperAdminService', 'StartYourClubRejectApplication', { application_id: parseInt(id), rejection_reason });
+      }
+    } else {
+      await callGrpc('SuperAdminService', 'StartYourClubRejectApplication', { application_id: parseInt(id), rejection_reason });
+    }
 
     const updated = await queryProduction("SELECT ca.*, COALESCE(ca.name, CONCAT(u.first_name, ' ', u.last_name)) as name, u.phone as user_phone FROM club_application ca LEFT JOIN users u ON u.pk = ca.user_id WHERE ca.pk = $1", [id]);
     const freshApp = mapAppRow(updated.rows[0]);
