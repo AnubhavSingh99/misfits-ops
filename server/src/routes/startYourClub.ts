@@ -637,9 +637,10 @@ router.post('/admin/:id/select', async (req: Request, res: Response) => {
 router.patch('/admin/:id/split', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const { misfits, leader } = req.body;
+    const misfits = req.body.misfits ?? req.body.misfits_pct;
+    const leader = req.body.leader ?? req.body.leader_pct;
 
-    if (misfits == null || leader == null || misfits + leader !== 100) {
+    if (misfits == null || leader == null || Number(misfits) + Number(leader) !== 100) {
       return res.status(400).json({ success: false, error: 'Split must add up to 100%' });
     }
 
