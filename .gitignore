@@ -12,6 +12,7 @@ client/build/
 # Environment files (NEVER commit these - contain secrets)
 .env
 .env.local
+.config.sh
 .env.development.local
 .env.test.local
 .env.production.local

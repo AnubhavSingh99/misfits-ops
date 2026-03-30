@@ -1,23 +1,59 @@
 import React, { useState, useEffect } from 'react';
 import {
-  ChevronDown,
-  ChevronUp,
-  MapPin,
-  Loader2,
-  RefreshCw,
-  Phone,
-  User,
-  Building2,
-  CheckCircle2,
-  X,
-  ExternalLink,
-  Clock,
-  AlertCircle
+  ChevronDown, ChevronUp, MapPin, Loader2, RefreshCw,
+  Phone, User, CheckCircle2, X, ExternalLink, Clock,
+  AlertCircle, Pencil, Save, ImageIcon
 } from 'lucide-react';
 
 const API_BASE = import.meta.env.VITE_API_URL
   ? `${import.meta.env.VITE_API_URL}/api`
   : '/api';
+
+// ── Schema-derived constants ────────────────────────────────────────────────
+
+const VENUE_CATEGORIES = [
+  { value: 'STUDIO',          label: 'Studio' },
+  { value: 'CAFE',            label: 'Cafe' },
+  { value: 'PUB_AND_BAR',    label: 'Pub & Bar' },
+  { value: 'SPORTS_VENUE',   label: 'Sports Venue' },
+  { value: 'COMMUNITY_SPACE', label: 'Community Space' },
+  { value: 'VENUE_OTHER',    label: 'Other' },
+];
+
+// Map web-form human-readable strings → enum values
+const VENUE_CATEGORY_LABEL_MAP: Record<string, string> = {
+  'studio':         'STUDIO',
+  'cafe':           'CAFE',
+  'pub & bar':      'PUB_AND_BAR',
+  'pub and bar':    'PUB_AND_BAR',
+  'sports venue':   'SPORTS_VENUE',
+  'community space':'COMMUNITY_SPACE',
+  'other':          'VENUE_OTHER',
+};
+
+function normalizeVenueCategory(raw?: string): string {
+  if (!raw) return '';
+  const upper = raw.toUpperCase();
+  if (VENUE_CATEGORIES.some(c => c.value === upper)) return upper;
+  return VENUE_CATEGORY_LABEL_MAP[raw.toLowerCase()] || raw;
+}
+
+const CAPACITY_OPTIONS = [
+  { value: 'LESS_THAN_25', label: 'Less than 25' },
+  { value: '25_TO_50',     label: '25 – 50' },
+  { value: '50_PLUS',      label: '50+' },
+];
+
+const AMENITIES_LIST = [
+  'Air Conditioning', 'Parking', 'Parking Available', 'Valet Parking',
+  'WiFi', 'Wi-Fi', 'Projector', 'Sound System', 'DJ Setup',
+  'Multiple Screens', 'Outdoor Seating', 'Spectator Seating',
+  'Changing Rooms', 'Lockers', 'Water Cooler', 'Water Dispenser',
+  'Food & Beverages', 'First Aid Kit', 'Board Games',
+  'Pool Table', 'Sports Equipment', 'Dart Boards',
+];
+
+// ── Types ────────────────────────────────────────────────────────────────────
 
 interface VenueLead {
   id: number;
@@ -32,26 +68,40 @@ interface VenueLead {
   lng: number | null;
   contact_name: string;
   contact_phone: string;
-  sport_facilities: string[];
+  venue_info: { amenities?: string[]; sitting_size?: string; venue_category?: string } | null;
   notes: string | null;
   image: number | null;
+  image_url: string | null;
   submitted_by: number | null;
   status: 'PENDING' | 'APPROVED' | 'REJECTED';
   location_id: number | null;
   rejection_reason: string | null;
 }
 
-interface Stats {
-  PENDING: number;
-  APPROVED: number;
-  REJECTED: number;
-  total: number;
+interface EditForm {
+  venue_name: string;
+  address: string;
+  city: string;
+  area: string;
+  google_maps_link: string;
+  lat: string;
+  lng: string;
+  contact_name: string;
+  contact_phone: string;
+  notes: string;
+  venue_category: string;
+  sitting_size: string;
+  amenities: string[];
 }
 
+interface Stats { PENDING: number; APPROVED: number; REJECTED: number; total: number; }
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
 const STATUS_CONFIG: Record<string, { label: string; color: string; bgColor: string; borderColor: string }> = {
-  PENDING: { label: 'Pending', color: 'text-yellow-600', bgColor: 'bg-yellow-50', borderColor: 'border-yellow-200' },
-  APPROVED: { label: 'Approved', color: 'text-green-600', bgColor: 'bg-green-50', borderColor: 'border-green-200' },
-  REJECTED: { label: 'Rejected', color: 'text-red-600', bgColor: 'bg-red-50', borderColor: 'border-red-200' }
+  PENDING:  { label: 'Pending',  color: 'text-yellow-600', bgColor: 'bg-yellow-50', borderColor: 'border-yellow-200' },
+  APPROVED: { label: 'Approved', color: 'text-green-600',  bgColor: 'bg-green-50',  borderColor: 'border-green-200'  },
+  REJECTED: { label: 'Rejected', color: 'text-red-600',    bgColor: 'bg-red-50',    borderColor: 'border-red-200'    },
 };
 
 function timeAgo(dateStr: string): string {
@@ -63,86 +113,92 @@ function timeAgo(dateStr: string): string {
   const hours = Math.floor(mins / 60);
   if (hours < 24) return `${hours}h ago`;
   const days = Math.floor(hours / 24);
-  if (days < 30) return `${days}d ago`;
-  return new Date(dateStr).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  return days < 30 ? `${days}d ago` : new Date(dateStr).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
+function leadToForm(lead: VenueLead): EditForm {
+  return {
+    venue_name:     lead.venue_name     || '',
+    address:        lead.address        || '',
+    city:           lead.city           || '',
+    area:           lead.area           || '',
+    google_maps_link: lead.google_maps_link || '',
+    lat:            lead.lat  != null ? String(lead.lat)  : '',
+    lng:            lead.lng  != null ? String(lead.lng)  : '',
+    contact_name:   lead.contact_name   || '',
+    contact_phone:  lead.contact_phone  || '',
+    notes:          lead.notes          || '',
+    venue_category: normalizeVenueCategory(lead.venue_info?.venue_category),
+    sitting_size:   lead.venue_info?.sitting_size   || '',
+    amenities:      lead.venue_info?.amenities       || [],
+  };
+}
+
+const LBL  = 'block text-xs font-medium text-gray-500 mb-1';
+const INP  = 'w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:border-indigo-400';
+const SEL  = `${INP} bg-white`;
+
+// ── Component ────────────────────────────────────────────────────────────────
+
 export function VenueLeads() {
-  const [isExpanded, setIsExpanded] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [leads, setLeads] = useState<VenueLead[]>([]);
-  const [stats, setStats] = useState<Stats | null>(null);
+  const [isExpanded, setIsExpanded]   = useState(false);
+  const [loading, setLoading]         = useState(false);
+  const [leads, setLeads]             = useState<VenueLead[]>([]);
+  const [stats, setStats]             = useState<Stats | null>(null);
   const [activeFilter, setActiveFilter] = useState<string>('PENDING');
   const [actionLoading, setActionLoading] = useState<number | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError]             = useState<string | null>(null);
 
-  useEffect(() => {
-    fetchStats();
-  }, []);
+  // Edit state
+  const [editingLead, setEditingLead] = useState<VenueLead | null>(null);
+  const [editForm, setEditForm]       = useState<EditForm | null>(null);
+  const [editSaving, setEditSaving]   = useState(false);
+  const [editError, setEditError]     = useState<string | null>(null);
 
-  useEffect(() => {
-    if (isExpanded && leads.length === 0 && !error) {
-      fetchLeads();
-    }
-  }, [isExpanded]);
+  // City / area lookup state
+  const [cities, setCities]           = useState<{ id: number; name: string }[]>([]);
+  const [areas, setAreas]             = useState<{ id: number; name: string }[]>([]);
+  const [citySearch, setCitySearch]   = useState('');
+  const [areaSearch, setAreaSearch]   = useState('');
+  const [citiesLoading, setCitiesLoading] = useState(false);
+  const [areasLoading, setAreasLoading]   = useState(false);
 
-  useEffect(() => {
-    if (isExpanded && !error) {
-      fetchLeads();
-    }
-  }, [activeFilter]);
+  const [customAmenity, setCustomAmenity] = useState('');
+
+  useEffect(() => { fetchStats(); }, []);
+  useEffect(() => { if (isExpanded && leads.length === 0 && !error) fetchLeads(); }, [isExpanded]);
+  useEffect(() => { if (isExpanded) fetchLeads(); }, [activeFilter]);
 
   const fetchStats = async () => {
     try {
-      const res = await fetch(`${API_BASE}/venue-leads/stats`);
+      const res  = await fetch(`${API_BASE}/venue-leads/stats`);
       const data = await res.json();
-      if (data.success) {
-        setStats(data.stats);
-      }
-    } catch (error) {
-      console.error('Error fetching venue lead stats:', error);
-    }
+      if (data.success) setStats(data.stats);
+    } catch { /* silent */ }
   };
 
   const fetchLeads = async () => {
-    setLoading(true);
-    setError(null);
+    setLoading(true); setError(null);
     try {
       const params = activeFilter ? `?status=${activeFilter}` : '';
-      const res = await fetch(`${API_BASE}/venue-leads${params}`);
+      const res  = await fetch(`${API_BASE}/venue-leads${params}`);
       const data = await res.json();
-      if (data.success) {
-        setLeads(data.leads || []);
-      } else {
-        setError(data.error || 'Failed to fetch venue leads');
-      }
-    } catch (err) {
-      console.error('Error fetching venue leads:', err);
-      setError('Failed to connect to server');
-    } finally {
-      setLoading(false);
-    }
+      if (data.success) setLeads(data.leads || []);
+      else setError(data.error || 'Failed to fetch venue leads');
+    } catch { setError('Failed to connect to server'); }
+    finally { setLoading(false); }
   };
 
   const handleApprove = async (id: number) => {
     if (!confirm('Approve this venue lead? This will create a new location in the system.')) return;
     setActionLoading(id);
     try {
-      const res = await fetch(`${API_BASE}/venue-leads/${id}/approve`, { method: 'POST' });
+      const res  = await fetch(`${API_BASE}/venue-leads/${id}/approve`, { method: 'POST' });
       const data = await res.json();
-      if (data.success) {
-        alert(`Approved! Location ID: ${data.location_id}`);
-        fetchLeads();
-        fetchStats();
-      } else {
-        alert(data.error || 'Failed to approve');
-      }
-    } catch (error) {
-      console.error('Error approving venue lead:', error);
-      alert('Failed to approve venue lead');
-    } finally {
-      setActionLoading(null);
-    }
+      if (data.success) { alert(`Approved! Location ID: ${data.location_id}`); fetchLeads(); fetchStats(); }
+      else alert(data.error || 'Failed to approve');
+    } catch { alert('Failed to approve venue lead'); }
+    finally { setActionLoading(null); }
   };
 
   const handleReject = async (id: number) => {
@@ -150,221 +206,581 @@ export function VenueLeads() {
     if (reason === null) return;
     setActionLoading(id);
     try {
-      const res = await fetch(`${API_BASE}/venue-leads/${id}/reject`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reason })
+      const res  = await fetch(`${API_BASE}/venue-leads/${id}/reject`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason }),
       });
       const data = await res.json();
-      if (data.success) {
-        fetchLeads();
-        fetchStats();
-      } else {
-        alert(data.error || 'Failed to reject');
-      }
-    } catch (error) {
-      console.error('Error rejecting venue lead:', error);
-      alert('Failed to reject venue lead');
-    } finally {
-      setActionLoading(null);
-    }
+      if (data.success) { fetchLeads(); fetchStats(); }
+      else alert(data.error || 'Failed to reject');
+    } catch { alert('Failed to reject venue lead'); }
+    finally { setActionLoading(null); }
   };
 
+  const fetchCities = async () => {
+    setCitiesLoading(true);
+    try {
+      const res  = await fetch(`${API_BASE}/venue-leads/cities`);
+      const data = await res.json();
+      if (data.success) setCities(data.cities);
+    } catch { /* silent */ }
+    finally { setCitiesLoading(false); }
+  };
+
+  const fetchAreas = async (cityName: string) => {
+    if (!cityName) { setAreas([]); return; }
+    setAreasLoading(true);
+    try {
+      const res  = await fetch(`${API_BASE}/venue-leads/areas?city=${encodeURIComponent(cityName)}`);
+      const data = await res.json();
+      if (data.success) setAreas(data.areas);
+      else setAreas([]);
+    } catch { setAreas([]); }
+    finally { setAreasLoading(false); }
+  };
+
+  const openEdit = (lead: VenueLead) => {
+    setEditingLead(lead);
+    setEditForm(leadToForm(lead));
+    setEditError(null);
+    setCitySearch('');
+    setAreaSearch('');
+    fetchCities();
+    if (lead.city) fetchAreas(lead.city);
+  };
+
+  const closeEdit = () => {
+    setEditingLead(null); setEditForm(null);
+    setEditError(null);
+    setCustomAmenity('');
+    setCities([]); setAreas([]);
+    setCitySearch(''); setAreaSearch('');
+  };
+
+  const addCustomAmenity = () => {
+    const trimmed = customAmenity.trim();
+    if (!trimmed || !editForm) return;
+    if (!editForm.amenities.includes(trimmed)) {
+      setField('amenities', [...editForm.amenities, trimmed]);
+    }
+    setCustomAmenity('');
+  };
+
+  const setField = (field: keyof EditForm, value: string | string[]) =>
+    setEditForm(prev => prev ? { ...prev, [field]: value } : prev);
+
+  const toggleAmenity = (a: string) => {
+    if (!editForm) return;
+    const current = editForm.amenities;
+    setField('amenities', current.includes(a) ? current.filter(x => x !== a) : [...current, a]);
+  };
+
+  const handleEditSave = async () => {
+    if (!editingLead || !editForm) return;
+    setEditSaving(true); setEditError(null);
+    try {
+      const body = {
+        venue_name:       editForm.venue_name,
+        address:          editForm.address,
+        city:             editForm.city,
+        area:             editForm.area,
+        google_maps_link: editForm.google_maps_link,
+        lat:  editForm.lat  !== '' ? parseFloat(editForm.lat)  : null,
+        lng:  editForm.lng  !== '' ? parseFloat(editForm.lng)  : null,
+        contact_name:  editForm.contact_name,
+        contact_phone: editForm.contact_phone,
+        notes:         editForm.notes || null,
+        venue_info: {
+          venue_category: editForm.venue_category  || undefined,
+          sitting_size:   editForm.sitting_size    || undefined,
+          amenities:      editForm.amenities,
+        },
+      };
+      const res  = await fetch(`${API_BASE}/venue-leads/${editingLead.id}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (data.success) { closeEdit(); fetchLeads(); }
+      else setEditError(data.error || 'Failed to save');
+    } catch { setEditError('Failed to connect to server'); }
+    finally { setEditSaving(false); }
+  };
+
+  // ── Render ─────────────────────────────────────────────────────────────────
+
   return (
-    <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-      {/* Header - same style as VenueRepository */}
-      <button
-        onClick={() => setIsExpanded(!isExpanded)}
-        className="w-full px-4 py-3 flex items-center justify-between bg-gray-50/80 hover:bg-gray-100 transition-colors"
-      >
-        <div className="flex items-center gap-2">
-          <MapPin className="h-5 w-5 text-emerald-500" />
-          <span className="font-medium text-gray-700">
-            Venue Leads ({stats?.total || 0})
-          </span>
-          {stats && stats.PENDING > 0 && (
-            <span className="px-2 py-0.5 text-xs font-medium bg-yellow-100 text-yellow-700 rounded-full">
-              {stats.PENDING} pending
-            </span>
-          )}
-        </div>
-        <div className="flex items-center gap-2">
-          {isExpanded && (
-            <button
-              onClick={(e) => { e.stopPropagation(); fetchLeads(); fetchStats(); }}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
-            >
-              <RefreshCw className="h-4 w-4" />
-              Refresh
-            </button>
-          )}
-          {isExpanded ? <ChevronUp size={20} className="text-gray-400" /> : <ChevronDown size={20} className="text-gray-400" />}
-        </div>
-      </button>
-
-      {/* Expanded Content */}
-      {isExpanded && (
-        <div className="border-t border-gray-200">
-          {/* Status Filter Tabs */}
-          <div className="flex items-center gap-2 px-4 py-3 border-b border-gray-200 bg-white">
-            {(['PENDING', 'APPROVED', 'REJECTED'] as const).map(status => {
-              const config = STATUS_CONFIG[status];
-              const count = stats?.[status] || 0;
-              const isActive = activeFilter === status;
-              return (
-                <button
-                  key={status}
-                  onClick={() => setActiveFilter(isActive ? '' : status)}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border transition-all ${
-                    isActive
-                      ? `${config.bgColor} ${config.color} ${config.borderColor}`
-                      : 'bg-white text-gray-500 border-gray-200 hover:border-gray-300'
-                  }`}
-                >
-                  {config.label} ({count})
-                </button>
-              );
-            })}
-            <button
-              onClick={() => setActiveFilter('')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border transition-all ${
-                activeFilter === ''
-                  ? 'bg-gray-100 text-gray-700 border-gray-400'
-                  : 'bg-white text-gray-500 border-gray-200 hover:border-gray-300'
-              }`}
-            >
-              All ({stats?.total || 0})
-            </button>
+    <>
+      {/* ── Widget ── */}
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+        <button
+          onClick={() => setIsExpanded(!isExpanded)}
+          className="w-full px-4 py-3 flex items-center justify-between bg-gray-50/80 hover:bg-gray-100 transition-colors"
+        >
+          <div className="flex items-center gap-2">
+            <MapPin className="h-5 w-5 text-emerald-500" />
+            <span className="font-medium text-gray-700">Venue Leads ({stats?.total || 0})</span>
+            {stats && stats.PENDING > 0 && (
+              <span className="px-2 py-0.5 text-xs font-medium bg-yellow-100 text-yellow-700 rounded-full">
+                {stats.PENDING} pending
+              </span>
+            )}
           </div>
+          <div className="flex items-center gap-2">
+            {isExpanded && (
+              <button
+                onClick={e => { e.stopPropagation(); fetchLeads(); fetchStats(); }}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
+              >
+                <RefreshCw className="h-4 w-4" /> Refresh
+              </button>
+            )}
+            {isExpanded ? <ChevronUp size={20} className="text-gray-400" /> : <ChevronDown size={20} className="text-gray-400" />}
+          </div>
+        </button>
 
-          {/* Table */}
-          {error ? (
-            <div className="flex flex-col items-center justify-center py-12 gap-2">
-              <AlertCircle className="h-6 w-6 text-red-400" />
-              <p className="text-sm text-red-500">{error}</p>
-              <button onClick={() => fetchLeads()} className="text-xs text-indigo-500 hover:underline">Retry</button>
+        {isExpanded && (
+          <div className="border-t border-gray-200">
+            {/* Filter Tabs */}
+            <div className="flex items-center gap-2 px-4 py-3 border-b border-gray-200 bg-white">
+              {(['PENDING', 'APPROVED', 'REJECTED'] as const).map(status => {
+                const cfg = STATUS_CONFIG[status];
+                const isActive = activeFilter === status;
+                return (
+                  <button key={status}
+                    onClick={() => setActiveFilter(isActive ? '' : status)}
+                    className={`px-3 py-1.5 text-xs font-medium rounded-lg border transition-all ${
+                      isActive ? `${cfg.bgColor} ${cfg.color} ${cfg.borderColor}` : 'bg-white text-gray-500 border-gray-200 hover:border-gray-300'
+                    }`}
+                  >
+                    {cfg.label} ({stats?.[status] || 0})
+                  </button>
+                );
+              })}
+              <button
+                onClick={() => setActiveFilter('')}
+                className={`px-3 py-1.5 text-xs font-medium rounded-lg border transition-all ${
+                  activeFilter === '' ? 'bg-gray-100 text-gray-700 border-gray-400' : 'bg-white text-gray-500 border-gray-200 hover:border-gray-300'
+                }`}
+              >
+                All ({stats?.total || 0})
+              </button>
             </div>
-          ) : loading ? (
-            <div className="flex items-center justify-center py-12">
-              <Loader2 className="h-6 w-6 animate-spin text-gray-400" />
+
+            {/* Table */}
+            {error ? (
+              <div className="flex flex-col items-center justify-center py-12 gap-2">
+                <AlertCircle className="h-6 w-6 text-red-400" />
+                <p className="text-sm text-red-500">{error}</p>
+                <button onClick={fetchLeads} className="text-xs text-indigo-500 hover:underline">Retry</button>
+              </div>
+            ) : loading ? (
+              <div className="flex items-center justify-center py-12">
+                <Loader2 className="h-6 w-6 animate-spin text-gray-400" />
+              </div>
+            ) : leads.length === 0 ? (
+              <div className="text-center py-12 text-gray-400 text-sm">No venue leads found</div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="bg-gray-50 text-left">
+                      <th className="px-4 py-2.5 font-medium text-gray-500">Venue</th>
+                      <th className="px-4 py-2.5 font-medium text-gray-500">Location</th>
+                      <th className="px-4 py-2.5 font-medium text-gray-500">Contact</th>
+                      <th className="px-4 py-2.5 font-medium text-gray-500">Venue Info</th>
+                      <th className="px-4 py-2.5 font-medium text-gray-500">Status</th>
+                      <th className="px-4 py-2.5 font-medium text-gray-500">Submitted</th>
+                      <th className="px-4 py-2.5 font-medium text-gray-500">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {leads.map(lead => {
+                      const cfg = STATUS_CONFIG[lead.status];
+                      const isActioning = actionLoading === lead.id;
+                      return (
+                        <tr key={lead.id} className="hover:bg-gray-50/50">
+                          <td className="px-4 py-3">
+                            <div className="flex items-start gap-2">
+                              {lead.image_url ? (
+                                <img src={lead.image_url} alt={lead.venue_name}
+                                  className="w-10 h-10 rounded-lg object-cover flex-shrink-0 border border-gray-100" />
+                              ) : (
+                                <div className="w-10 h-10 rounded-lg bg-gray-100 flex items-center justify-center flex-shrink-0">
+                                  <ImageIcon className="h-4 w-4 text-gray-300" />
+                                </div>
+                              )}
+                              <div>
+                                <div className="font-medium text-gray-900">{lead.venue_name}</div>
+                                <div className="text-xs text-gray-400 mt-0.5 truncate max-w-[180px]">{lead.address}</div>
+                                {lead.google_maps_link && (
+                                  <a href={lead.google_maps_link} target="_blank" rel="noopener noreferrer"
+                                    className="inline-flex items-center gap-1 text-xs text-indigo-500 hover:text-indigo-700 mt-0.5">
+                                    <ExternalLink className="h-3 w-3" />Maps
+                                  </a>
+                                )}
+                              </div>
+                            </div>
+                          </td>
+                          <td className="px-4 py-3">
+                            <div className="text-gray-700">{lead.city}</div>
+                            <div className="text-xs text-gray-400">{lead.area}</div>
+                            {lead.lat && lead.lng && (
+                              <div className="text-xs text-gray-300 mt-0.5">{lead.lat.toFixed(4)}, {lead.lng.toFixed(4)}</div>
+                            )}
+                          </td>
+                          <td className="px-4 py-3">
+                            <div className="flex items-center gap-1 text-gray-700">
+                              <User className="h-3.5 w-3.5 text-gray-400" />{lead.contact_name}
+                            </div>
+                            <div className="flex items-center gap-1 text-xs text-gray-400 mt-0.5">
+                              <Phone className="h-3 w-3" />{lead.contact_phone}
+                            </div>
+                          </td>
+                          <td className="px-4 py-3">
+                            {lead.venue_info?.venue_category && (
+                              <div className="text-xs font-medium text-gray-700 mb-1">
+                                {VENUE_CATEGORIES.find(c => c.value === lead.venue_info?.venue_category)?.label || lead.venue_info.venue_category}
+                              </div>
+                            )}
+                            {lead.venue_info?.sitting_size && (
+                              <div className="text-xs text-blue-600 mb-1">
+                                {CAPACITY_OPTIONS.find(c => c.value === lead.venue_info?.sitting_size)?.label || lead.venue_info.sitting_size} seats
+                              </div>
+                            )}
+                            <div className="flex flex-wrap gap-1">
+                              {(lead.venue_info?.amenities || []).slice(0, 3).map(a => (
+                                <span key={a} className="px-1.5 py-0.5 text-xs bg-gray-100 text-gray-600 rounded">{a}</span>
+                              ))}
+                              {(lead.venue_info?.amenities || []).length > 3 && (
+                                <span className="px-1.5 py-0.5 text-xs bg-gray-100 text-gray-400 rounded">
+                                  +{(lead.venue_info?.amenities || []).length - 3}
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                          <td className="px-4 py-3">
+                            <span className={`inline-flex items-center gap-1 px-2 py-1 text-xs font-medium rounded-full border ${cfg.bgColor} ${cfg.color} ${cfg.borderColor}`}>
+                              {lead.status === 'PENDING'  && <Clock        className="h-3 w-3" />}
+                              {lead.status === 'APPROVED' && <CheckCircle2 className="h-3 w-3" />}
+                              {lead.status === 'REJECTED' && <AlertCircle  className="h-3 w-3" />}
+                              {cfg.label}
+                            </span>
+                            {lead.status === 'APPROVED' && lead.location_id && (
+                              <div className="text-xs text-green-600 mt-1">Location #{lead.location_id}</div>
+                            )}
+                            {lead.status === 'REJECTED' && lead.rejection_reason && (
+                              <div className="text-xs text-red-400 mt-1 truncate max-w-[150px]" title={lead.rejection_reason}>
+                                {lead.rejection_reason}
+                              </div>
+                            )}
+                          </td>
+                          <td className="px-4 py-3">
+                            <div className="text-xs text-gray-400">{timeAgo(lead.created_at)}</div>
+                          </td>
+                          <td className="px-4 py-3">
+                            <div className="flex flex-col gap-1.5">
+                              {lead.status === 'PENDING' && (
+                                <div className="flex items-center gap-1.5">
+                                  <button onClick={() => handleApprove(lead.id)} disabled={isActioning}
+                                    className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 disabled:opacity-50">
+                                    {isActioning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+                                    Approve
+                                  </button>
+                                  <button onClick={() => handleReject(lead.id)} disabled={isActioning}
+                                    className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-white bg-red-500 rounded-lg hover:bg-red-600 disabled:opacity-50">
+                                    <X className="h-3.5 w-3.5" />Reject
+                                  </button>
+                                </div>
+                              )}
+                              <button onClick={() => openEdit(lead)}
+                                className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 w-fit">
+                                <Pencil className="h-3.5 w-3.5" />Edit
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* ── Edit Modal ── */}
+      {editingLead && editForm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[92vh] flex flex-col">
+
+            {/* Header */}
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 flex-shrink-0">
+              <div>
+                <h2 className="text-base font-semibold text-gray-900">Edit Venue Lead</h2>
+                <p className="text-xs text-gray-400 mt-0.5">
+                  ID #{editingLead.id} ·{' '}
+                  <span className={STATUS_CONFIG[editingLead.status].color}>{editingLead.status}</span>
+                </p>
+              </div>
+              <button onClick={closeEdit} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600">
+                <X className="h-5 w-5" />
+              </button>
             </div>
-          ) : leads.length === 0 ? (
-            <div className="text-center py-12 text-gray-400 text-sm">
-              No venue leads found
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="bg-gray-50 text-left">
-                    <th className="px-4 py-2.5 font-medium text-gray-500">Venue</th>
-                    <th className="px-4 py-2.5 font-medium text-gray-500">Location</th>
-                    <th className="px-4 py-2.5 font-medium text-gray-500">Contact</th>
-                    <th className="px-4 py-2.5 font-medium text-gray-500">Sports</th>
-                    <th className="px-4 py-2.5 font-medium text-gray-500">Status</th>
-                    <th className="px-4 py-2.5 font-medium text-gray-500">Submitted</th>
-                    <th className="px-4 py-2.5 font-medium text-gray-500">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100">
-                  {leads.map(lead => {
-                    const config = STATUS_CONFIG[lead.status];
-                    const isActioning = actionLoading === lead.id;
-                    return (
-                      <tr key={lead.id} className="hover:bg-gray-50/50">
-                        <td className="px-4 py-3">
-                          <div className="font-medium text-gray-900">{lead.venue_name}</div>
-                          <div className="text-xs text-gray-400 mt-0.5 truncate max-w-[200px]">{lead.address}</div>
-                          {lead.google_maps_link && (
-                            <a
-                              href={lead.google_maps_link}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="inline-flex items-center gap-1 text-xs text-indigo-500 hover:text-indigo-700 mt-0.5"
-                            >
-                              <ExternalLink className="h-3 w-3" />
-                              Maps
-                            </a>
-                          )}
-                        </td>
-                        <td className="px-4 py-3">
-                          <div className="text-gray-700">{lead.city}</div>
-                          <div className="text-xs text-gray-400">{lead.area}</div>
-                        </td>
-                        <td className="px-4 py-3">
-                          <div className="flex items-center gap-1 text-gray-700">
-                            <User className="h-3.5 w-3.5 text-gray-400" />
-                            {lead.contact_name}
-                          </div>
-                          <div className="flex items-center gap-1 text-xs text-gray-400 mt-0.5">
-                            <Phone className="h-3 w-3" />
-                            {lead.contact_phone}
-                          </div>
-                        </td>
-                        <td className="px-4 py-3">
-                          <div className="flex flex-wrap gap-1">
-                            {(lead.sport_facilities || []).map(sport => (
-                              <span key={sport} className="px-1.5 py-0.5 text-xs bg-gray-100 text-gray-600 rounded">
-                                {sport}
-                              </span>
-                            ))}
-                          </div>
-                        </td>
-                        <td className="px-4 py-3">
-                          <span className={`inline-flex items-center gap-1 px-2 py-1 text-xs font-medium rounded-full border ${config.bgColor} ${config.color} ${config.borderColor}`}>
-                            {lead.status === 'PENDING' && <Clock className="h-3 w-3" />}
-                            {lead.status === 'APPROVED' && <CheckCircle2 className="h-3 w-3" />}
-                            {lead.status === 'REJECTED' && <AlertCircle className="h-3 w-3" />}
-                            {config.label}
+
+            {/* Body */}
+            <div className="overflow-y-auto flex-1 px-6 py-5 space-y-5">
+
+              {/* ── Venue Details ── */}
+              <div>
+                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">Venue Details</p>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="col-span-2">
+                    <label className={LBL}>Venue Name</label>
+                    <input className={INP} value={editForm.venue_name}
+                      onChange={e => setField('venue_name', e.target.value)} placeholder="Venue name" />
+                  </div>
+                  <div className="col-span-2">
+                    <label className={LBL}>Address</label>
+                    <input className={INP} value={editForm.address}
+                      onChange={e => setField('address', e.target.value)} placeholder="Full address" />
+                  </div>
+                  <div className="relative">
+                    <label className={LBL}>City</label>
+                    <div className="relative">
+                      <input
+                        className={INP}
+                        value={citySearch || editForm.city}
+                        onChange={e => {
+                          setCitySearch(e.target.value);
+                          setField('city', e.target.value);
+                          setAreas([]); setAreaSearch(''); setField('area', '');
+                        }}
+                        placeholder={citiesLoading ? 'Loading…' : 'Search or type city'}
+                      />
+                      {citiesLoading && (
+                        <Loader2 className="absolute right-2.5 top-2.5 h-4 w-4 animate-spin text-gray-400" />
+                      )}
+                    </div>
+                    {cities.length > 0 && citySearch && (() => {
+                      const filtered = cities.filter(c =>
+                        c.name.toLowerCase().includes(citySearch.toLowerCase())
+                      );
+                      return filtered.length > 0 ? (
+                        <ul className="absolute z-10 mt-1 w-full bg-white border border-gray-200 rounded-lg shadow-lg max-h-48 overflow-y-auto text-sm">
+                          {filtered.map(c => (
+                            <li key={c.id}>
+                              <button type="button"
+                                className="w-full text-left px-3 py-2 hover:bg-indigo-50 hover:text-indigo-700"
+                                onClick={() => {
+                                  setField('city', c.name);
+                                  setCitySearch('');
+                                  setAreas([]); setAreaSearch(''); setField('area', '');
+                                  fetchAreas(c.name);
+                                }}
+                              >{c.name}</button>
+                            </li>
+                          ))}
+                        </ul>
+                      ) : null;
+                    })()}
+                  </div>
+                  <div className="relative">
+                    <label className={LBL}>Area</label>
+                    <div className="relative">
+                      <input
+                        className={INP}
+                        value={areaSearch || editForm.area}
+                        onChange={e => {
+                          setAreaSearch(e.target.value);
+                          setField('area', e.target.value);
+                        }}
+                        placeholder={areasLoading ? 'Loading…' : areas.length > 0 ? 'Search or type area' : 'Select city first or type'}
+                      />
+                      {areasLoading && (
+                        <Loader2 className="absolute right-2.5 top-2.5 h-4 w-4 animate-spin text-gray-400" />
+                      )}
+                    </div>
+                    {areas.length > 0 && areaSearch && (() => {
+                      const filtered = areas.filter(a =>
+                        a.name.toLowerCase().includes(areaSearch.toLowerCase())
+                      );
+                      return filtered.length > 0 ? (
+                        <ul className="absolute z-10 mt-1 w-full bg-white border border-gray-200 rounded-lg shadow-lg max-h-48 overflow-y-auto text-sm">
+                          {filtered.map(a => (
+                            <li key={a.id}>
+                              <button type="button"
+                                className="w-full text-left px-3 py-2 hover:bg-indigo-50 hover:text-indigo-700"
+                                onClick={() => {
+                                  setField('area', a.name);
+                                  setAreaSearch('');
+                                }}
+                              >{a.name}</button>
+                            </li>
+                          ))}
+                        </ul>
+                      ) : null;
+                    })()}
+                  </div>
+                  <div className="col-span-2">
+                    <label className={LBL}>Google Maps Link</label>
+                    <input className={INP} value={editForm.google_maps_link}
+                      onChange={e => setField('google_maps_link', e.target.value)} placeholder="https://maps.app.goo.gl/..." />
+                  </div>
+                  <div>
+                    <label className={LBL}>Latitude</label>
+                    <input className={INP} type="number" step="any" value={editForm.lat}
+                      onChange={e => setField('lat', e.target.value)} placeholder="e.g. 28.6139" />
+                  </div>
+                  <div>
+                    <label className={LBL}>Longitude</label>
+                    <input className={INP} type="number" step="any" value={editForm.lng}
+                      onChange={e => setField('lng', e.target.value)} placeholder="e.g. 77.2090" />
+                  </div>
+                </div>
+              </div>
+
+              {/* ── Contact ── */}
+              <div>
+                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">Contact</p>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className={LBL}>Contact Name</label>
+                    <input className={INP} value={editForm.contact_name}
+                      onChange={e => setField('contact_name', e.target.value)} placeholder="Full name" />
+                  </div>
+                  <div>
+                    <label className={LBL}>Contact Phone</label>
+                    <input className={INP} value={editForm.contact_phone}
+                      onChange={e => setField('contact_phone', e.target.value)} placeholder="+91 XXXXX XXXXX" />
+                  </div>
+                </div>
+              </div>
+
+              {/* ── Venue Info ── */}
+              <div>
+                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">Venue Info</p>
+                <div className="grid grid-cols-2 gap-4">
+                  {/* Category dropdown */}
+                  <div>
+                    <label className={LBL}>Venue Category</label>
+                    <select className={SEL} value={editForm.venue_category}
+                      onChange={e => setField('venue_category', e.target.value)}>
+                      <option value="">— Select category —</option>
+                      {VENUE_CATEGORIES.map(c => (
+                        <option key={c.value} value={c.value}>{c.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                  {/* Capacity dropdown */}
+                  <div>
+                    <label className={LBL}>Seating Capacity</label>
+                    <select className={SEL} value={editForm.sitting_size}
+                      onChange={e => setField('sitting_size', e.target.value)}>
+                      <option value="">— Select capacity —</option>
+                      {CAPACITY_OPTIONS.map(c => (
+                        <option key={c.value} value={c.value}>{c.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                {/* Amenities checkboxes */}
+                <div className="mt-4">
+                  <label className={LBL}>Amenities</label>
+                  <div className="grid grid-cols-3 gap-2 mt-1">
+                    {AMENITIES_LIST.map(a => {
+                      const checked = editForm.amenities.includes(a);
+                      return (
+                        <label key={a}
+                          className={`flex items-center gap-2 px-3 py-2 rounded-lg border cursor-pointer text-xs transition-all ${
+                            checked
+                              ? 'border-indigo-300 bg-indigo-50 text-indigo-700'
+                              : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'
+                          }`}
+                        >
+                          <input type="checkbox" className="hidden" checked={checked} onChange={() => toggleAmenity(a)} />
+                          <span className={`w-3.5 h-3.5 rounded flex-shrink-0 border flex items-center justify-center ${
+                            checked ? 'bg-indigo-500 border-indigo-500' : 'border-gray-300'
+                          }`}>
+                            {checked && <svg className="w-2.5 h-2.5 text-white" fill="none" viewBox="0 0 10 8">
+                              <path stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" d="M1 4l3 3 5-6"/>
+                            </svg>}
                           </span>
-                          {lead.status === 'APPROVED' && lead.location_id && (
-                            <div className="text-xs text-green-600 mt-1">Location #{lead.location_id}</div>
-                          )}
-                          {lead.status === 'REJECTED' && lead.rejection_reason && (
-                            <div className="text-xs text-red-400 mt-1 truncate max-w-[150px]" title={lead.rejection_reason}>
-                              {lead.rejection_reason}
-                            </div>
-                          )}
-                        </td>
-                        <td className="px-4 py-3">
-                          <div className="text-xs text-gray-400">{timeAgo(lead.created_at)}</div>
-                        </td>
-                        <td className="px-4 py-3">
-                          {lead.status === 'PENDING' && (
-                            <div className="flex items-center gap-1.5">
-                              <button
-                                onClick={() => handleApprove(lead.id)}
-                                disabled={isActioning}
-                                className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50"
-                              >
-                                {isActioning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
-                                Approve
-                              </button>
-                              <button
-                                onClick={() => handleReject(lead.id)}
-                                disabled={isActioning}
-                                className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-white bg-red-500 rounded-lg hover:bg-red-600 transition-colors disabled:opacity-50"
-                              >
-                                <X className="h-3.5 w-3.5" />
-                                Reject
-                              </button>
-                            </div>
-                          )}
-                          {lead.notes && (
-                            <div className="text-xs text-gray-400 mt-1 truncate max-w-[150px]" title={lead.notes}>
-                              {lead.notes}
-                            </div>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+                          {a}
+                        </label>
+                      );
+                    })}
+                  </div>
+
+                  {/* Custom amenity chips */}
+                  {editForm.amenities.filter(a => !AMENITIES_LIST.includes(a)).length > 0 && (
+                    <div className="flex flex-wrap gap-2 mt-3">
+                      {editForm.amenities.filter(a => !AMENITIES_LIST.includes(a)).map(a => (
+                        <span key={a}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-purple-50 text-purple-700 border border-purple-200 rounded-full"
+                        >
+                          {a}
+                          <button type="button" onClick={() => toggleAmenity(a)}
+                            className="hover:text-purple-900 ml-0.5">
+                            <X className="h-3 w-3" />
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Add custom amenity input */}
+                  <div className="flex gap-2 mt-3">
+                    <input
+                      className={`${INP} flex-1`}
+                      value={customAmenity}
+                      onChange={e => setCustomAmenity(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addCustomAmenity(); } }}
+                      placeholder="Add custom amenity…"
+                    />
+                    <button
+                      type="button"
+                      onClick={addCustomAmenity}
+                      disabled={!customAmenity.trim()}
+                      className="px-3 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 disabled:opacity-40 whitespace-nowrap"
+                    >
+                      + Add
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* ── Notes ── */}
+              <div>
+                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">Notes</p>
+                <textarea className={`${INP} resize-none`} rows={3} value={editForm.notes}
+                  onChange={e => setField('notes', e.target.value)} placeholder="Any additional notes..." />
+              </div>
+
+              {editError && (
+                <div className="flex items-center gap-2 px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-sm text-red-600">
+                  <AlertCircle className="h-4 w-4 flex-shrink-0" />{editError}
+                </div>
+              )}
             </div>
-          )}
+
+            {/* Footer */}
+            <div className="flex items-center justify-end gap-2 px-6 py-4 border-t border-gray-200 flex-shrink-0">
+              <button onClick={closeEdit}
+                className="px-4 py-2 text-sm font-medium text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200">
+                Cancel
+              </button>
+              <button onClick={handleEditSave} disabled={editSaving}
+                className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 disabled:opacity-50">
+                {editSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                Save Changes
+              </button>
+            </div>
+          </div>
         </div>
       )}
-    </div>
+    </>
   );
 }
