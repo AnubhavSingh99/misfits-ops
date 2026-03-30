@@ -495,7 +495,8 @@ router.patch('/admin/:id/pick', async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, error: `Can only pick from SUBMITTED status, current: ${app.status}` });
     }
 
-    await callGrpc('SuperAdminService', 'StartYourClubPickApplication', { application_id: parseInt(id), reviewed_by: reviewed_by.trim() });
+    // Note: reviewed_by not in gRPC proto — Go backend doesn't store it on pick
+    await callGrpc('SuperAdminService', 'StartYourClubPickApplication', { application_id: parseInt(id) });
 
     const updated = await queryProduction("SELECT ca.*, COALESCE(ca.name, CONCAT(u.first_name, ' ', u.last_name)) as name, u.phone as user_phone FROM club_application ca LEFT JOIN users u ON u.pk = ca.user_id WHERE ca.pk = $1", [id]);
     const freshApp = mapAppRow(updated.rows[0]);
