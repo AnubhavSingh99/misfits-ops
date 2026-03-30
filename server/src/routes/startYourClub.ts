@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
-import { queryProduction } from '../services/database';
+import { queryProduction, queryLocal } from '../services/database';
 import { broadcast } from '../services/startYourClub/sseManager';
 import { misfitsApi } from '../services/startYourClub/misfitsApi';
 import { callGrpc } from '../services/grpcClient';
@@ -475,6 +475,17 @@ router.get('/admin/:id', async (req: Request, res: Response) => {
   }
 });
 
+// GET /admin/reviewers — Get past reviewer names for autocomplete
+router.get('/admin/reviewers', async (req: Request, res: Response) => {
+  try {
+    const result = await queryLocal('SELECT name FROM syc_reviewers ORDER BY last_used_at DESC');
+    res.json({ success: true, reviewers: result.rows.map((r: any) => r.name) });
+  } catch (error: any) {
+    logger.error('Failed to fetch reviewers:', error);
+    res.json({ success: true, reviewers: [] });
+  }
+});
+
 // PATCH /admin/:id/pick — "Pick" a submitted application for review (SUBMITTED → UNDER_REVIEW)
 router.patch('/admin/:id/pick', async (req: Request, res: Response) => {
   try {
@@ -495,8 +506,17 @@ router.patch('/admin/:id/pick', async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, error: `Can only pick from SUBMITTED status, current: ${app.status}` });
     }
 
-    // Note: reviewed_by not in gRPC proto — Go backend doesn't store it on pick
+    // Note: reviewed_by not in gRPC proto yet — Go backend doesn't store it on pick
     await callGrpc('SuperAdminService', 'StartYourClubPickApplication', { application_id: parseInt(id) });
+
+    // Save reviewer name locally for autocomplete
+    try {
+      await queryLocal(
+        `INSERT INTO syc_reviewers (name, last_used_at) VALUES ($1, NOW())
+         ON CONFLICT (name) DO UPDATE SET last_used_at = NOW()`,
+        [reviewed_by.trim()]
+      );
+    } catch (e) { /* ignore — autocomplete is non-critical */ }
 
     const updated = await queryProduction("SELECT ca.*, COALESCE(ca.name, CONCAT(u.first_name, ' ', u.last_name)) as name, u.phone as user_phone FROM club_application ca LEFT JOIN users u ON u.pk = ca.user_id WHERE ca.pk = $1", [id]);
     const freshApp = mapAppRow(updated.rows[0]);

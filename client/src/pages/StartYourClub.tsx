@@ -365,8 +365,20 @@ function LeadRow({
   const [rejectionReason, setRejectionReason] = useState('');
   const [showRejectForm, setShowRejectForm] = useState(false);
 
-  // Reviewer name (for pick flow)
+  // Reviewer name (for pick flow) with autocomplete
   const [reviewerName, setReviewerName] = useState('');
+  const [reviewerSuggestions, setReviewerSuggestions] = useState<string[]>([]);
+  const [showReviewerDropdown, setShowReviewerDropdown] = useState(false);
+
+  // Fetch past reviewer names for autocomplete
+  useEffect(() => {
+    if (isExpanded) {
+      fetch(`${API_BASE}/admin/reviewers`)
+        .then(r => r.json())
+        .then(data => { if (data.success) setReviewerSuggestions(data.reviewers || []); })
+        .catch(() => {});
+    }
+  }, [isExpanded]);
 
   // Split percentage (configurable)
   const [splitMisfits, setSplitMisfits] = useState('70');
@@ -1067,14 +1079,38 @@ function LeadRow({
                         <div className="p-4 bg-emerald-50 rounded-xl border border-emerald-200">
                           <h4 className="text-sm font-bold text-emerald-700 mb-2">Pick for Review</h4>
                           <p className="text-xs text-emerald-600 mb-3">Enter your name and start reviewing this lead.</p>
-                          <input
-                            type="text"
-                            value={reviewerName}
-                            onChange={e => setReviewerName(e.target.value)}
-                            onKeyDown={e => e.key === 'Enter' && handlePick()}
-                            placeholder="Your name..."
-                            className="w-full px-3 py-2 text-sm border border-emerald-200 rounded-lg mb-2 focus:outline-none focus:ring-2 focus:ring-emerald-400/30 bg-white"
-                          />
+                          <div className="relative mb-2">
+                            <input
+                              type="text"
+                              value={reviewerName}
+                              onChange={e => { setReviewerName(e.target.value); setShowReviewerDropdown(true); }}
+                              onFocus={() => setShowReviewerDropdown(true)}
+                              onBlur={() => setTimeout(() => setShowReviewerDropdown(false), 150)}
+                              onKeyDown={e => e.key === 'Enter' && handlePick()}
+                              placeholder="Your name..."
+                              className="w-full px-3 py-2 text-sm border border-emerald-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-400/30 bg-white"
+                            />
+                            {showReviewerDropdown && reviewerSuggestions.filter(s => s.toLowerCase().includes(reviewerName.toLowerCase())).length > 0 && reviewerName.length > 0 && (
+                              <div className="absolute z-10 w-full mt-1 bg-white border border-emerald-200 rounded-lg shadow-lg max-h-32 overflow-y-auto">
+                                {reviewerSuggestions
+                                  .filter(s => s.toLowerCase().includes(reviewerName.toLowerCase()))
+                                  .map(s => (
+                                    <button key={s} onMouseDown={() => { setReviewerName(s); setShowReviewerDropdown(false); }}
+                                      className="w-full text-left px-3 py-2 text-sm hover:bg-emerald-50 transition-colors"
+                                    >{s}</button>
+                                  ))}
+                              </div>
+                            )}
+                            {showReviewerDropdown && reviewerName.length === 0 && reviewerSuggestions.length > 0 && (
+                              <div className="absolute z-10 w-full mt-1 bg-white border border-emerald-200 rounded-lg shadow-lg max-h-32 overflow-y-auto">
+                                {reviewerSuggestions.map(s => (
+                                  <button key={s} onMouseDown={() => { setReviewerName(s); setShowReviewerDropdown(false); }}
+                                    className="w-full text-left px-3 py-2 text-sm hover:bg-emerald-50 transition-colors"
+                                  >{s}</button>
+                                ))}
+                              </div>
+                            )}
+                          </div>
                           <button
                             onClick={handlePick}
                             disabled={!reviewerName.trim()}
