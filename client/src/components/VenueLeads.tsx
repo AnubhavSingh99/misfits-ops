@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import {
   ChevronDown, ChevronUp, MapPin, Loader2, RefreshCw,
   Phone, User, CheckCircle2, X, ExternalLink, Clock,
-  AlertCircle, Pencil, Save, ImageIcon
+  AlertCircle, Pencil, Save, ImageIcon, Plus
 } from 'lucide-react';
 
 const API_BASE = import.meta.env.VITE_API_URL
@@ -53,6 +53,30 @@ const AMENITIES_LIST = [
   'Pool Table', 'Sports Equipment', 'Dart Boards',
 ];
 
+const SEATING_CATEGORIES = [
+  { value: 'INDOOR',  label: 'Indoor' },
+  { value: 'OUTDOOR', label: 'Outdoor' },
+  { value: 'BOTH',    label: 'Both' },
+];
+
+const DAYS_OF_WEEK = ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY', 'SUNDAY'];
+
+const ACTIVITY_OPTIONS = [
+  'Art', 'Badminton', 'Basketball', 'Board Gaming', 'Book Club', 'Bowling',
+  'Box Cricket', 'Community Space', 'Content Creation', 'Dance', 'Drama',
+  'Films', 'Football', 'Hiking', 'Journaling', 'Mafia', 'Mindfulness',
+  'Music', 'Pickleball', 'Quiz', 'Running', 'Yoga'
+];
+
+const TIME_SLOTS: Record<string, { label: string; start: { hour: number; minute: number }; end: { hour: number; minute: number }; display: string }> = {
+  early_morning: { label: 'Early Morning', start: { hour: 5,  minute: 0 }, end: { hour: 8,  minute: 0 }, display: '5–8 AM'    },
+  morning:       { label: 'Morning',       start: { hour: 8,  minute: 0 }, end: { hour: 12, minute: 0 }, display: '8 AM–12 PM' },
+  afternoon:     { label: 'Afternoon',     start: { hour: 12, minute: 0 }, end: { hour: 16, minute: 0 }, display: '12–4 PM'   },
+  evening:       { label: 'Evening',       start: { hour: 16, minute: 0 }, end: { hour: 20, minute: 0 }, display: '4–8 PM'    },
+  night:         { label: 'Night',         start: { hour: 20, minute: 0 }, end: { hour: 0,  minute: 0 }, display: '8 PM–12 AM'},
+  all_nighter:   { label: 'All-Nighter',   start: { hour: 0,  minute: 0 }, end: { hour: 5,  minute: 0 }, display: '12–5 AM'  },
+};
+
 // ── Types ────────────────────────────────────────────────────────────────────
 
 interface VenueLead {
@@ -68,7 +92,20 @@ interface VenueLead {
   lng: number | null;
   contact_name: string;
   contact_phone: string;
-  venue_info: { amenities?: string[]; sitting_size?: string; venue_category?: string } | null;
+  venue_info: {
+    amenities?: string[];
+    sitting_size?: string;
+    venue_category?: string;
+    seating_category?: string;
+    chargeable?: boolean;
+    reason_for_charge?: string;
+    preferred_schedules?: Array<{
+      day: string;
+      preferred_activity: string;
+      start_time?: { hour: number; minute: number };
+      end_time?: { hour: number; minute: number };
+    }>;
+  } | null;
   notes: string | null;
   image: number | null;
   image_url: string | null;
@@ -92,6 +129,15 @@ interface EditForm {
   venue_category: string;
   sitting_size: string;
   amenities: string[];
+  seating_category: string;
+  chargeable: boolean;
+  reason_for_charge: string;
+  preferred_schedules: Array<{
+    day: string;
+    preferred_activity: string;
+    start_time?: { hour: number; minute: number };
+    end_time?: { hour: number; minute: number };
+  }>;
 }
 
 interface Stats { PENDING: number; APPROVED: number; REJECTED: number; total: number; }
@@ -129,8 +175,23 @@ function leadToForm(lead: VenueLead): EditForm {
     contact_phone:  lead.contact_phone  || '',
     notes:          lead.notes          || '',
     venue_category: normalizeVenueCategory(lead.venue_info?.venue_category),
-    sitting_size:   lead.venue_info?.sitting_size   || '',
-    amenities:      lead.venue_info?.amenities       || [],
+    sitting_size:   lead.venue_info?.sitting_size        || '',
+    amenities:      lead.venue_info?.amenities           || [],
+    seating_category:   lead.venue_info?.seating_category   || '',
+    chargeable:         lead.venue_info?.chargeable         ?? false,
+    reason_for_charge:  lead.venue_info?.reason_for_charge  || '',
+    preferred_schedules: lead.venue_info?.preferred_schedules || [],
+  };
+}
+
+function emptyForm(): EditForm {
+  return {
+    venue_name: '', address: '', city: '', area: '',
+    google_maps_link: '', lat: '', lng: '',
+    contact_name: '', contact_phone: '', notes: '',
+    venue_category: '', sitting_size: '', amenities: [],
+    seating_category: '', chargeable: false, reason_for_charge: '',
+    preferred_schedules: [],
   };
 }
 
@@ -149,11 +210,16 @@ export function VenueLeads() {
   const [actionLoading, setActionLoading] = useState<number | null>(null);
   const [error, setError]             = useState<string | null>(null);
 
-  // Edit state
+  // Edit / create state
   const [editingLead, setEditingLead] = useState<VenueLead | null>(null);
   const [editForm, setEditForm]       = useState<EditForm | null>(null);
   const [editSaving, setEditSaving]   = useState(false);
   const [editError, setEditError]     = useState<string | null>(null);
+  const [isCreating, setIsCreating]   = useState(false);
+
+  // Image state
+  const [imageFile, setImageFile]       = useState<File | null>(null);
+  const [imagePreview, setImagePreview] = useState<string | null>(null);
 
   // City / area lookup state
   const [cities, setCities]           = useState<{ id: number; name: string }[]>([]);
@@ -243,18 +309,42 @@ export function VenueLeads() {
     setEditingLead(lead);
     setEditForm(leadToForm(lead));
     setEditError(null);
+    setIsCreating(false);
     setCitySearch('');
     setAreaSearch('');
     fetchCities();
     if (lead.city) fetchAreas(lead.city);
   };
 
+  const openCreate = () => {
+    setEditingLead(null);
+    setEditForm(emptyForm());
+    setEditError(null);
+    setIsCreating(true);
+    setCitySearch('');
+    setAreaSearch('');
+    fetchCities();
+  };
+
   const closeEdit = () => {
     setEditingLead(null); setEditForm(null);
     setEditError(null);
+    setIsCreating(false);
     setCustomAmenity('');
     setCities([]); setAreas([]);
     setCitySearch(''); setAreaSearch('');
+    setImageFile(null); setImagePreview(null);
+  };
+
+  const uploadImage = async (leadId: number, file: File): Promise<void> => {
+    const formData = new FormData();
+    formData.append('image', file);
+    const res = await fetch(`${API_BASE}/venue-leads/${leadId}/image`, {
+      method: 'POST',
+      body: formData,
+    });
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error || 'Failed to upload image');
   };
 
   const addCustomAmenity = () => {
@@ -266,8 +356,28 @@ export function VenueLeads() {
     setCustomAmenity('');
   };
 
-  const setField = (field: keyof EditForm, value: string | string[]) =>
+  const setField = (field: keyof EditForm, value: string | string[] | boolean | EditForm['preferred_schedules']) =>
     setEditForm(prev => prev ? { ...prev, [field]: value } : prev);
+
+  const addSchedule = () => {
+    if (!editForm) return;
+    setField('preferred_schedules', [
+      ...editForm.preferred_schedules,
+      { day: 'MONDAY', preferred_activity: '' },
+    ]);
+  };
+
+  const removeSchedule = (index: number) => {
+    if (!editForm) return;
+    setField('preferred_schedules', editForm.preferred_schedules.filter((_, i) => i !== index));
+  };
+
+  const updateSchedule = (index: number, updates: Partial<EditForm['preferred_schedules'][0]>) => {
+    if (!editForm) return;
+    setField('preferred_schedules', editForm.preferred_schedules.map((s, i) =>
+      i === index ? { ...s, ...updates } : s
+    ));
+  };
 
   const toggleAmenity = (a: string) => {
     if (!editForm) return;
@@ -276,7 +386,7 @@ export function VenueLeads() {
   };
 
   const handleEditSave = async () => {
-    if (!editingLead || !editForm) return;
+    if (!editForm) return;
     setEditSaving(true); setEditError(null);
     try {
       const body = {
@@ -291,18 +401,42 @@ export function VenueLeads() {
         contact_phone: editForm.contact_phone,
         notes:         editForm.notes || null,
         venue_info: {
-          venue_category: editForm.venue_category  || undefined,
-          sitting_size:   editForm.sitting_size    || undefined,
-          amenities:      editForm.amenities,
+          venue_category:    editForm.venue_category   || undefined,
+          sitting_size:      editForm.sitting_size     || undefined,
+          amenities:         editForm.amenities,
+          seating_category:  editForm.seating_category || undefined,
+          chargeable:        editForm.chargeable       || undefined,
+          reason_for_charge: editForm.reason_for_charge || undefined,
+          preferred_schedules: editForm.preferred_schedules.length > 0 ? editForm.preferred_schedules : undefined,
         },
       };
-      const res  = await fetch(`${API_BASE}/venue-leads/${editingLead.id}`, {
-        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      const data = await res.json();
-      if (data.success) { closeEdit(); fetchLeads(); }
-      else setEditError(data.error || 'Failed to save');
+
+      if (isCreating) {
+        const res = await fetch(`${API_BASE}/venue-leads`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        const data = await res.json();
+        if (data.success) {
+          if (imageFile) {
+            try { await uploadImage(data.lead.id, imageFile); } catch { /* image upload failure is non-fatal */ }
+          }
+          closeEdit(); fetchLeads(); fetchStats();
+        } else setEditError(data.error || 'Failed to create');
+      } else {
+        if (!editingLead) return;
+        const res = await fetch(`${API_BASE}/venue-leads/${editingLead.id}`, {
+          method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        const data = await res.json();
+        if (data.success) {
+          if (imageFile) {
+            try { await uploadImage(editingLead.id, imageFile); } catch { /* image upload failure is non-fatal */ }
+          }
+          closeEdit(); fetchLeads();
+        } else setEditError(data.error || 'Failed to save');
+      }
     } catch { setEditError('Failed to connect to server'); }
     finally { setEditSaving(false); }
   };
@@ -328,12 +462,20 @@ export function VenueLeads() {
           </div>
           <div className="flex items-center gap-2">
             {isExpanded && (
-              <button
-                onClick={e => { e.stopPropagation(); fetchLeads(); fetchStats(); }}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
-              >
-                <RefreshCw className="h-4 w-4" /> Refresh
-              </button>
+              <>
+                <button
+                  onClick={e => { e.stopPropagation(); openCreate(); }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors"
+                >
+                  <Plus className="h-4 w-4" /> Add Venue Lead
+                </button>
+                <button
+                  onClick={e => { e.stopPropagation(); fetchLeads(); fetchStats(); }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
+                >
+                  <RefreshCw className="h-4 w-4" /> Refresh
+                </button>
+              </>
             )}
             {isExpanded ? <ChevronUp size={20} className="text-gray-400" /> : <ChevronDown size={20} className="text-gray-400" />}
           </div>
@@ -448,6 +590,11 @@ export function VenueLeads() {
                                 {CAPACITY_OPTIONS.find(c => c.value === lead.venue_info?.sitting_size)?.label || lead.venue_info.sitting_size} seats
                               </div>
                             )}
+                            {lead.venue_info?.seating_category && (
+                              <div className="text-xs text-gray-500 mb-1">
+                                {SEATING_CATEGORIES.find(c => c.value === lead.venue_info?.seating_category)?.label || lead.venue_info.seating_category}
+                              </div>
+                            )}
                             <div className="flex flex-wrap gap-1">
                               {(lead.venue_info?.amenities || []).slice(0, 3).map(a => (
                                 <span key={a} className="px-1.5 py-0.5 text-xs bg-gray-100 text-gray-600 rounded">{a}</span>
@@ -510,19 +657,23 @@ export function VenueLeads() {
         )}
       </div>
 
-      {/* ── Edit Modal ── */}
-      {editingLead && editForm && (
+      {/* ── Edit / Create Modal ── */}
+      {editForm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[92vh] flex flex-col">
 
             {/* Header */}
             <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 flex-shrink-0">
               <div>
-                <h2 className="text-base font-semibold text-gray-900">Edit Venue Lead</h2>
-                <p className="text-xs text-gray-400 mt-0.5">
-                  ID #{editingLead.id} ·{' '}
-                  <span className={STATUS_CONFIG[editingLead.status].color}>{editingLead.status}</span>
-                </p>
+                <h2 className="text-base font-semibold text-gray-900">
+                  {isCreating ? 'Add Venue Lead' : 'Edit Venue Lead'}
+                </h2>
+                {!isCreating && editingLead && (
+                  <p className="text-xs text-gray-400 mt-0.5">
+                    ID #{editingLead.id} ·{' '}
+                    <span className={STATUS_CONFIG[editingLead.status].color}>{editingLead.status}</span>
+                  </p>
+                )}
               </div>
               <button onClick={closeEdit} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600">
                 <X className="h-5 w-5" />
@@ -531,6 +682,52 @@ export function VenueLeads() {
 
             {/* Body */}
             <div className="overflow-y-auto flex-1 px-6 py-5 space-y-5">
+
+              {/* ── Image ── */}
+              <div>
+                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">Venue Image</p>
+                <div className="flex items-start gap-4">
+                  <div className="w-24 h-24 rounded-lg border-2 border-dashed border-gray-200 overflow-hidden flex items-center justify-center bg-gray-50 flex-shrink-0">
+                    {imagePreview ? (
+                      <img src={imagePreview} alt="Preview" className="w-full h-full object-cover" />
+                    ) : (!isCreating && editingLead?.image_url) ? (
+                      <img src={editingLead.image_url} alt="Current" className="w-full h-full object-cover" />
+                    ) : (
+                      <ImageIcon className="h-8 w-8 text-gray-300" />
+                    )}
+                  </div>
+                  <div className="flex-1">
+                    <label className="cursor-pointer">
+                      <input
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={e => {
+                          const file = e.target.files?.[0];
+                          if (file) {
+                            setImageFile(file);
+                            setImagePreview(URL.createObjectURL(file));
+                          }
+                        }}
+                      />
+                      <span className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors cursor-pointer w-fit">
+                        <ImageIcon className="h-4 w-4" />
+                        {imagePreview || (!isCreating && editingLead?.image_url) ? 'Change Image' : 'Upload Image'}
+                      </span>
+                    </label>
+                    {imageFile && (
+                      <p className="text-xs text-gray-500 mt-2 truncate max-w-[200px]">{imageFile.name}</p>
+                    )}
+                    {imageFile && (
+                      <button type="button" onClick={() => { setImageFile(null); setImagePreview(null); }}
+                        className="text-xs text-red-400 hover:text-red-600 mt-1">
+                        Remove
+                      </button>
+                    )}
+                    <p className="text-xs text-gray-400 mt-1">Max 10MB · JPG, PNG, GIF</p>
+                  </div>
+                </div>
+              </div>
 
               {/* ── Venue Details ── */}
               <div>
@@ -673,6 +870,17 @@ export function VenueLeads() {
                       ))}
                     </select>
                   </div>
+                  {/* Seating Type */}
+                  <div>
+                    <label className={LBL}>Seating Type</label>
+                    <select className={SEL} value={editForm.seating_category}
+                      onChange={e => setField('seating_category', e.target.value)}>
+                      <option value="">— Select type —</option>
+                      {SEATING_CATEGORIES.map(c => (
+                        <option key={c.value} value={c.value}>{c.label}</option>
+                      ))}
+                    </select>
+                  </div>
                   {/* Capacity dropdown */}
                   <div>
                     <label className={LBL}>Seating Capacity</label>
@@ -684,6 +892,27 @@ export function VenueLeads() {
                       ))}
                     </select>
                   </div>
+                  {/* Chargeable */}
+                  <div className="flex flex-col justify-end">
+                    <label className={LBL}>Chargeable</label>
+                    <label className="flex items-center gap-2 cursor-pointer mt-1">
+                      <input
+                        type="checkbox"
+                        checked={editForm.chargeable}
+                        onChange={e => setField('chargeable', e.target.checked)}
+                        className="w-4 h-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                      />
+                      <span className="text-sm text-gray-700">Venue charges a fee</span>
+                    </label>
+                  </div>
+                  {editForm.chargeable && (
+                    <div className="col-span-2">
+                      <label className={LBL}>Reason for Charge</label>
+                      <input className={INP} value={editForm.reason_for_charge}
+                        onChange={e => setField('reason_for_charge', e.target.value)}
+                        placeholder="Describe the charge details..." />
+                    </div>
+                  )}
                 </div>
 
                 {/* Amenities checkboxes */}
@@ -752,6 +981,83 @@ export function VenueLeads() {
                 </div>
               </div>
 
+              {/* ── Preferred Schedules ── */}
+              <div>
+                <div className="flex items-center justify-between mb-3">
+                  <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Preferred Schedules</p>
+                  <button type="button" onClick={addSchedule}
+                    className="flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-indigo-600 bg-indigo-50 rounded-lg hover:bg-indigo-100 transition-colors">
+                    <Plus className="h-3.5 w-3.5" />Add Schedule
+                  </button>
+                </div>
+                {editForm.preferred_schedules.length === 0 ? (
+                  <p className="text-xs text-gray-400 text-center py-4 border border-dashed border-gray-200 rounded-lg">
+                    No schedules added. Click "Add Schedule" to add preferred time slots.
+                  </p>
+                ) : (
+                  <div className="space-y-3">
+                    {editForm.preferred_schedules.map((schedule, index) => (
+                      <div key={index} className="p-3 border border-gray-200 rounded-lg bg-gray-50 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-medium text-gray-600">Schedule {index + 1}</span>
+                          <button type="button" onClick={() => removeSchedule(index)}
+                            className="p-1 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors">
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <label className={LBL}>Day</label>
+                            <select className={SEL} value={schedule.day}
+                              onChange={e => updateSchedule(index, { day: e.target.value })}>
+                              <option value="WEEKDAY">Weekday</option>
+                              <option value="WEEKEND">Weekend</option>
+                              {DAYS_OF_WEEK.map(d => (
+                                <option key={d} value={d}>{d.charAt(0) + d.slice(1).toLowerCase()}</option>
+                              ))}
+                            </select>
+                          </div>
+                          <div>
+                            <label className={LBL}>Activity</label>
+                            <select className={SEL} value={schedule.preferred_activity}
+                              onChange={e => updateSchedule(index, { preferred_activity: e.target.value })}>
+                              <option value="">— Select activity —</option>
+                              {ACTIVITY_OPTIONS.map(a => (
+                                <option key={a} value={a}>{a}</option>
+                              ))}
+                            </select>
+                          </div>
+                        </div>
+                        <div>
+                          <label className={LBL}>Time Slot</label>
+                          <div className="flex flex-wrap gap-2 mt-1">
+                            {Object.entries(TIME_SLOTS).map(([key, slot]) => {
+                              const active = schedule.start_time?.hour === slot.start.hour &&
+                                schedule.start_time?.minute === slot.start.minute;
+                              return (
+                                <button key={key} type="button"
+                                  onClick={() => updateSchedule(index, {
+                                    start_time: active ? undefined : slot.start,
+                                    end_time:   active ? undefined : slot.end,
+                                  })}
+                                  className={`px-2.5 py-1 text-xs rounded-lg border transition-all ${
+                                    active
+                                      ? 'bg-indigo-50 text-indigo-700 border-indigo-300'
+                                      : 'bg-white text-gray-600 border-gray-200 hover:border-gray-300'
+                                  }`}
+                                >
+                                  {slot.label} <span className="text-gray-400 text-[10px]">{slot.display}</span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
               {/* ── Notes ── */}
               <div>
                 <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">Notes</p>
@@ -774,8 +1080,8 @@ export function VenueLeads() {
               </button>
               <button onClick={handleEditSave} disabled={editSaving}
                 className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 disabled:opacity-50">
-                {editSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-                Save Changes
+                {editSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : isCreating ? <Plus className="h-4 w-4" /> : <Save className="h-4 w-4" />}
+                {isCreating ? 'Create Lead' : 'Save Changes'}
               </button>
             </div>
           </div>

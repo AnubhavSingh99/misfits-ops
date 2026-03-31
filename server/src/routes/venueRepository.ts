@@ -232,7 +232,7 @@ async function buildFilterClauses(query: Record<string, any>, startIndex: number
   const params: any[] = [];
   let idx = startIndex;
 
-  const { status, statuses, area_id, search, city_names, area_names, activities, capacity_categories, not_transferred } = query;
+  const { status, statuses, area_id, search, city_names, area_names, activities, capacity_categories, not_transferred, bau_workqueue } = query;
 
   if (statuses) {
     const statusList = (statuses as string).split(',').filter(s => VALID_STATUSES.includes(s));
@@ -312,6 +312,10 @@ async function buildFilterClauses(query: Record<string, any>, startIndex: number
   if (not_transferred === 'true') {
     clauses.push(`(vr.transferred_to_vms IS NULL OR vr.transferred_to_vms = false)`);
     clauses.push(`vr.status = 'onboarded'`);
+  }
+
+  if (bau_workqueue === 'true') {
+    clauses.push(`vr.venue_info->>'source' = 'venue_lead'`);
   }
 
   return { clauses, params, nextIndex: idx };

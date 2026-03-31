@@ -137,6 +137,20 @@ const CAPACITY_LABELS: Record<string, string> = {
   'CAPACITY_50_PLUS': '50+'
 };
 
+// Venue category label mapping
+const VENUE_CATEGORY_LABELS: Record<string, string> = {
+  'CAFE': 'Cafe',
+  'PUB_AND_BAR': 'Pub & Bar',
+  'STUDIO': 'Studio',
+};
+
+// Seating category label mapping
+const SEATING_LABELS: Record<string, string> = {
+  'INDOOR': 'Indoor',
+  'OUTDOOR': 'Outdoor',
+  'BOTH': 'Both',
+};
+
 // Days of week
 const DAYS_OF_WEEK = ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY', 'SUNDAY'];
 
@@ -198,6 +212,7 @@ export function VenueRepository() {
   );
   const [showOnboarded, setShowOnboarded] = useState(false);
   const [showInactive, setShowInactive] = useState(false);
+  const [showBauWorkqueue, setShowBauWorkqueue] = useState(false);
 
   // Hierarchy order state (like requirements page)
   type HierarchyLevel = 'city' | 'area';
@@ -338,7 +353,7 @@ export function VenueRepository() {
     if (isExpanded) {
       fetchVenues();
     }
-  }, [filter.cities, filter.areas, filter.activities, filter.capacities, filter.notTransferred, activeStatusFilters, showOnboarded, showInactive]);
+  }, [filter.cities, filter.areas, filter.activities, filter.capacities, filter.notTransferred, activeStatusFilters, showOnboarded, showInactive, showBauWorkqueue]);
 
   // Cascading: clear orphaned area selections when city changes
   useEffect(() => {
@@ -430,6 +445,10 @@ export function VenueRepository() {
 
       if (filter.notTransferred) {
         params.append('not_transferred', 'true');
+      }
+
+      if (showBauWorkqueue) {
+        params.append('bau_workqueue', 'true');
       }
 
       params.append('limit', '10000');
@@ -684,10 +703,25 @@ export function VenueRepository() {
           </a>
         )}
       </td>
-      <td className="px-4 py-3 text-gray-600">
-        {venue.venue_info?.capacity_category
-          ? CAPACITY_LABELS[venue.venue_info.capacity_category] || venue.venue_info.capacity_category
-          : '-'}
+      <td className="px-4 py-3">
+        {venue.venue_info?.venue_category && (
+          <div className="text-xs font-medium text-gray-700">
+            {VENUE_CATEGORY_LABELS[venue.venue_info.venue_category] || venue.venue_info.venue_category}
+          </div>
+        )}
+        {venue.venue_info?.seating_category && (
+          <div className="text-xs text-gray-500">
+            {SEATING_LABELS[venue.venue_info.seating_category] || venue.venue_info.seating_category}
+          </div>
+        )}
+        {venue.venue_info?.capacity_category && (
+          <div className="text-xs text-blue-600">
+            {CAPACITY_LABELS[venue.venue_info.capacity_category] || venue.venue_info.capacity_category} seats
+          </div>
+        )}
+        {!venue.venue_info?.venue_category && !venue.venue_info?.seating_category && !venue.venue_info?.capacity_category && (
+          <span className="text-gray-400 text-xs">-</span>
+        )}
       </td>
       <td className="px-4 py-3 text-xs text-gray-900">
         {venue.contact_name || <span className="text-gray-400">-</span>}
@@ -810,7 +844,8 @@ export function VenueRepository() {
                 if (turningOn) {
                   setActiveStatusFilters([]);
                   setShowInactive(false);
-                } else if (!showInactive) {
+                  setShowBauWorkqueue(false);
+                } else if (!showInactive && !showBauWorkqueue) {
                   setActiveStatusFilters(['new', 'contacted', 'interested', 'negotiating', 'rejected']);
                 }
               }}
@@ -830,7 +865,8 @@ export function VenueRepository() {
                 if (turningOn) {
                   setActiveStatusFilters([]);
                   setShowOnboarded(false);
-                } else if (!showOnboarded) {
+                  setShowBauWorkqueue(false);
+                } else if (!showOnboarded && !showBauWorkqueue) {
                   setActiveStatusFilters(['new', 'contacted', 'interested', 'negotiating', 'rejected']);
                 }
               }}
@@ -841,6 +877,27 @@ export function VenueRepository() {
               }`}
             >
               Inactive ({stats?.inactive || 0})
+            </button>
+            {/* BAU Workqueue toggle */}
+            <button
+              onClick={() => {
+                const turningOn = !showBauWorkqueue;
+                setShowBauWorkqueue(turningOn);
+                if (turningOn) {
+                  setActiveStatusFilters([]);
+                  setShowOnboarded(false);
+                  setShowInactive(false);
+                } else {
+                  setActiveStatusFilters(['new', 'contacted', 'interested', 'negotiating', 'rejected']);
+                }
+              }}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border transition-all ${
+                showBauWorkqueue
+                  ? 'bg-purple-50 text-purple-700 border-purple-300'
+                  : 'bg-white text-gray-500 border-gray-200 hover:border-gray-300'
+              }`}
+            >
+              BAU Workqueue
             </button>
             <div className="h-6 w-px bg-gray-200" />
             <MultiSelectDropdown
@@ -997,7 +1054,7 @@ export function VenueRepository() {
                 <thead className="bg-gray-50 sticky top-0 z-10">
                   <tr>
                     <th className="text-left px-4 py-3 font-medium text-gray-600">Venue</th>
-                    <th className="text-left px-4 py-3 font-medium text-gray-600">Capacity</th>
+                    <th className="text-left px-4 py-3 font-medium text-gray-600">Venue Info</th>
                     <th className="text-left px-4 py-3 font-medium text-gray-600">Contact Name</th>
                     <th className="text-left px-4 py-3 font-medium text-gray-600">Contact Number</th>
                     <th className="text-left px-4 py-3 font-medium text-gray-600">Status</th>
@@ -1517,7 +1574,7 @@ function VenueModal({ venue, options, onClose, onSave }: VenueModalProps) {
                 >
                   <option value="">Select category</option>
                   {options.venueCategories.map(cat => (
-                    <option key={cat} value={cat}>{cat.replace(/_/g, ' ')}</option>
+                    <option key={cat} value={cat}>{VENUE_CATEGORY_LABELS[cat] || cat.replace(/_/g, ' ')}</option>
                   ))}
                 </select>
               </div>
@@ -1530,7 +1587,7 @@ function VenueModal({ venue, options, onClose, onSave }: VenueModalProps) {
                 >
                   <option value="">Select seating</option>
                   {options.seatingCategories.map(cat => (
-                    <option key={cat} value={cat}>{cat}</option>
+                    <option key={cat} value={cat}>{SEATING_LABELS[cat] || cat}</option>
                   ))}
                 </select>
               </div>
