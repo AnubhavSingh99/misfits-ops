@@ -39,9 +39,11 @@ import supportProxyRoutes from './routes/supportProxy';
 import startYourClubRoutes from './routes/startYourClub';
 import venueLeadsRoutes from './routes/venueLeads';
 import { addClient as addStartClubSSEClient } from './services/startYourClub/sseManager';
+import userSafetyRoutes from './routes/userSafety';
 
 // Import services
-import { initializeDatabase, getLocalPool } from './services/database';
+import { initializeDatabase, getLocalPool, getProductionPool } from './services/database';
+import { initUserSafetyService, syncUserReports } from './services/userSafetyService';
 import { initializeRedis } from './services/redis';
 import { initializeDimensions } from './services/dimensionSync';
 import { initCSPolling, startPolling } from './services/csPollingService';
@@ -165,6 +167,7 @@ app.use('/api/shark-tank/webhook', sharkTankWebhookRoutes);
 app.use('/api/shark-tank/pending-replies', sharkTankPendingRepliesRoutes);
 app.use('/api/start-club', startYourClubRoutes);
 app.use('/api/venue-leads', venueLeadsRoutes);
+app.use('/api/user-safety', userSafetyRoutes);
 // SSE endpoint for Shark Tank CRM real-time updates
 app.get('/api/shark-tank/events', (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
@@ -244,6 +247,25 @@ async function startServer() {
       // Initialize Slack service
       initSlackService(localPool);
       logger.info('Slack service initialized');
+
+      // Initialize User Safety Service
+      try {
+        const prodPool = getProductionPool();
+        initUserSafetyService(localPool, prodPool);
+        logger.info('User Safety Service initialized');
+
+        // Auto-sync user safety reports on startup (after 20 seconds delay)
+        setTimeout(async () => {
+          try {
+            const result = await syncUserReports();
+            logger.info(`User safety reports auto-synced on startup: ${result.synced} reports, ${result.errors} errors`);
+          } catch (error) {
+            logger.error('User safety reports auto-sync failed:', error);
+          }
+        }, 20000); // 20 second delay
+      } catch (error) {
+        logger.warn('User Safety Service initialization skipped (production DB not available):', error);
+      }
 
       // Check SLA breaches every hour (production only)
       if (process.env.NODE_ENV === 'production') {
