@@ -47,6 +47,8 @@ interface VenueInfo {
   venue_description?: string;
   chargeable?: boolean;
   reason_for_charge?: string;
+  source?: string;
+  venue_lead_id?: number;
 }
 
 interface Venue {
@@ -735,6 +737,11 @@ export function VenueRepository() {
           {venue.vms_status === 'not_in_vms' && venue.status === 'onboarded' && (
             <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-gray-100 text-gray-500 border border-gray-200" title="Not yet transferred to VMS">
               Not in VMS
+            </span>
+          )}
+          {venue.venue_info?.source === 'venue_lead' && (
+            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-purple-100 text-purple-700 border border-purple-200" title={`Added via Venue Lead${venue.venue_info.venue_lead_id ? ` #${venue.venue_info.venue_lead_id}` : ''}`}>
+              Via Venue Lead
             </span>
           )}
           {/* Transfer readiness indicator */}
