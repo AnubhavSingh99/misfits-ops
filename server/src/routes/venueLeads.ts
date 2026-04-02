@@ -4,6 +4,7 @@ import path from 'path';
 import fs from 'fs';
 import { queryProduction } from '../services/database';
 import { logger } from '../utils/logger';
+import { runVmsSync } from './venueRepository';
 
 // Store uploads in server/public/uploads
 const uploadsDir = path.join(__dirname, '../../public/uploads');
@@ -208,11 +209,43 @@ router.post('/:id/approve', async (req, res) => {
       [id, locationId]
     );
 
+    // Sync new location into venue_repository immediately (fire-and-forget)
+    runVmsSync().catch(err => logger.warn('Post-approval VMS sync failed:', err));
+
     logger.info(`Venue lead ${id} approved, location ${locationId} created`);
     res.json({ success: true, location_id: locationId, message: 'Venue lead approved and location created' });
   } catch (error: any) {
     logger.error(`Error approving venue lead ${id}:`, error);
     res.status(500).json({ success: false, error: 'Failed to approve venue lead' });
+  }
+});
+
+// POST /api/venue-leads - Create a new venue lead
+router.post('/', async (req, res) => {
+  const {
+    venue_name, address, city, area, google_maps_link,
+    lat, lng, contact_name, contact_phone, notes, venue_info
+  } = req.body;
+
+  if (!venue_name) {
+    return res.status(400).json({ success: false, error: 'venue_name is required' });
+  }
+
+  try {
+    const result = await queryProduction(
+      `INSERT INTO venue_lead (venue_name, address, city, area, google_maps_link, lat, lng, contact_name, contact_phone, notes, venue_info, status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'PENDING')
+       RETURNING *`,
+      [venue_name, address || null, city || null, area || null, google_maps_link || null,
+       lat ?? null, lng ?? null, contact_name || null, contact_phone || null,
+       notes ?? null, venue_info ? JSON.stringify(venue_info) : null]
+    );
+
+    logger.info(`Venue lead created: ${venue_name}`);
+    res.json({ success: true, lead: result.rows[0] });
+  } catch (error: any) {
+    logger.error('Error creating venue lead:', error);
+    res.status(500).json({ success: false, error: 'Failed to create venue lead' });
   }
 });
 
