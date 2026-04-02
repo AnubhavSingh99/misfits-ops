@@ -1003,6 +1003,9 @@ export interface LeaderRequirement extends BaseRequirement {
 // Priority levels for venue requirements
 export type PriorityLevel = 'critical' | 'high' | 'normal' | 'done' | 'deprioritised';
 
+// Venue platform team (BAU/Supply) - separate from growth teams (blue/green/yellow)
+export type VenuePlatformTeam = 'bau' | 'supply';
+
 // Capacity bucket options for venue requirements
 export type CapacityBucket = '<10' | '10-20' | '20-30' | '30-50' | '50-100' | '100-200' | '200-500' | '>500';
 
@@ -1027,6 +1030,10 @@ export interface VenueRequirement extends BaseRequirement {
   venue_area?: string;
   venue_categories?: string[];
   amenities_list?: string[];
+  // Venue platform team routing (BAU/Supply)
+  venue_platform_team?: VenuePlatformTeam;
+  escalated_at?: string;
+  escalated_by?: string;
 }
 
 // Request types for creating/updating requirements
@@ -1056,6 +1063,7 @@ export interface CreateRequirementRequest {
   capacity?: CapacityBucket;
   venue_categories?: string[];
   amenities_list?: string[];
+  venue_platform_team?: VenuePlatformTeam;
 }
 
 export interface UpdateRequirementRequest extends Partial<CreateRequirementRequest> {

@@ -2,19 +2,34 @@ import { Router, Request, Response } from 'express';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
-import { queryProduction } from '../services/database';
-import { validateTransition } from '../services/startYourClub/stateMachine';
+import { queryProduction, queryLocal } from '../services/database';
 import { broadcast } from '../services/startYourClub/sseManager';
+import { misfitsApi } from '../services/startYourClub/misfitsApi';
+import { callGrpc } from '../services/grpcClient';
 import { logger } from '../utils/logger';
-import type { ClubApplicationStatus, ScreeningRatings, RejectionReason } from '../../../shared/types';
 
 // Map production column names to frontend-expected names
 function mapAppRow(row: any) {
   if (!row) return row;
   if (row.pk != null) row.id = row.pk;
   // Map production column names to ops frontend names
+  if (row.city_name !== undefined && row.city === undefined) row.city = row.city_name;
+  if (row.activity_name !== undefined && row.activity === undefined) row.activity = row.activity_name;
+  if (row.club_name !== undefined && row.club === undefined) row.club = row.club_name;
+  // Map timestamp columns to boolean flags for frontend compatibility
+  if (row.first_call_done === undefined) row.first_call_done = !!row.first_call_done_at;
+  if (row.venue_sorted === undefined) row.venue_sorted = !!row.venue_sorted_at;
+  if (row.toolkit_shared === undefined) row.toolkit_shared = !!row.toolkit_shared_at;
+  if (row.marketing_launched === undefined) row.marketing_launched = !!row.marketing_launched_at;
   if (row.split_snapshot !== undefined) row.split_percentage = row.split_snapshot;
   if (row.contract_pdf_url !== undefined) row.contract_url = row.contract_pdf_url;
+  if (row.city_name !== undefined) row.city = row.city_name;
+  if (row.activity_name !== undefined) row.activity = row.activity_name;
+  // Map milestone timestamps to booleans (DB stores _at timestamps, frontend expects booleans)
+  row.first_call_done = row.first_call_done_at != null;
+  row.venue_sorted = row.venue_sorted_at != null;
+  row.toolkit_shared = row.toolkit_shared_at != null;
+  row.marketing_launched = row.marketing_launched_at != null;
   return row;
 }
 function mapAppRows(rows: any[]) {
@@ -48,26 +63,11 @@ const contractUpload = multer({
 
 const router = Router();
 
-// Helper: record a status event
-async function recordStatusEvent(
-  applicationId: string | number,
-  fromStatus: string | null,
-  toStatus: string,
-  actor: 'applicant' | 'admin' | 'system',
-  metadata: Record<string, any> = {}
-) {
-  await queryProduction(
-    `INSERT INTO club_application_status_event (application_id, from_status, to_status, actor, metadata)
-     VALUES ($1, $2, $3, $4, $5)`,
-    [applicationId, fromStatus, toStatus, actor, JSON.stringify(metadata)]
-  );
-}
-
 // GET /admin/all — List all applications (filterable, sortable, paginated)
 router.get('/admin/all', async (req: Request, res: Response) => {
   try {
     const {
-      status, city, activity, search,
+      status, statuses, city, activity, search,
       sort = 'created_at', order = 'desc',
       page = '1', limit = '50',
       archived
@@ -82,33 +82,40 @@ router.get('/admin/all', async (req: Request, res: Response) => {
       conditions.push(`archived = false`);
     }
 
-    if (status) {
+    // Multi-status filter (comma-separated, e.g., "ACTIVE,ABANDONED")
+    if (statuses) {
+      const statusList = (statuses as string).split(',').filter(s => s.trim());
+      if (statusList.length > 0) {
+        conditions.push(`ca.status = ANY($${paramIdx++})`);
+        params.push(statusList);
+      }
+    } else if (status) {
       conditions.push(`ca.status = $${paramIdx++}`);
       params.push(status);
     }
     if (city) {
-      conditions.push(`ca.city = $${paramIdx++}`);
+      conditions.push(`ca.city_name = $${paramIdx++}`);
       params.push(city);
     }
     if (activity) {
-      conditions.push(`ca.activity = $${paramIdx++}`);
+      conditions.push(`ca.activity_name = $${paramIdx++}`);
       params.push(activity);
     }
     if (search) {
-      conditions.push(`(ca.name ILIKE $${paramIdx} OR u.name ILIKE $${paramIdx} OR ca.city ILIKE $${paramIdx} OR ca.activity ILIKE $${paramIdx})`);
+      conditions.push(`(ca.name ILIKE $${paramIdx} OR CONCAT(u.first_name, ' ', u.last_name) ILIKE $${paramIdx} OR ca.city_name ILIKE $${paramIdx} OR ca.activity_name ILIKE $${paramIdx})`);
       params.push(`%${search}%`);
       paramIdx++;
     }
 
     const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
-    const allowedSorts = ['created_at', 'updated_at', 'submitted_at', 'name', 'city', 'activity', 'status'];
+    const allowedSorts = ['created_at', 'updated_at', 'submitted_at', 'name', 'city_name', 'activity_name', 'status'];
     const sortCol = allowedSorts.includes(sort as string) ? sort : 'created_at';
     const sortOrder = order === 'asc' ? 'ASC' : 'DESC';
-    const sortPrefix = sortCol === 'name' ? 'COALESCE(ca.name, u.name)' : `ca.${sortCol}`;
+    const sortPrefix = sortCol === 'name' ? "COALESCE(ca.name, CONCAT(u.first_name, ' ', u.last_name))" : `ca.${sortCol}`;
 
     const pageNum = Math.max(1, parseInt(page as string, 10) || 1);
-    const limitNum = Math.min(100, Math.max(1, parseInt(limit as string, 10) || 50));
+    const limitNum = Math.min(500, Math.max(1, parseInt(limit as string, 10) || 50));
     const offset = (pageNum - 1) * limitNum;
 
     const countResult = await queryProduction(
@@ -117,7 +124,7 @@ router.get('/admin/all', async (req: Request, res: Response) => {
     const total = parseInt(countResult.rows[0].count, 10);
 
     const dataResult = await queryProduction(
-      `SELECT ca.*, COALESCE(ca.name, u.name) as name FROM club_application ca LEFT JOIN users u ON u.pk = ca.user_id ${where}
+      `SELECT ca.*, COALESCE(ca.name, CONCAT(u.first_name, ' ', u.last_name)) as name, u.phone as user_phone FROM club_application ca LEFT JOIN users u ON u.pk = ca.user_id ${where}
        ORDER BY ${sortPrefix} ${sortOrder}
        LIMIT $${paramIdx++} OFFSET $${paramIdx++}`,
       [...params, limitNum, offset]
@@ -149,18 +156,18 @@ router.get('/admin/funnel', async (req: Request, res: Response) => {
     );
 
     const byCity = await queryProduction(
-      `SELECT city, COUNT(*)::int as count
+      `SELECT city_name as city, COUNT(*)::int as count
        FROM club_application
-       WHERE archived = false AND city IS NOT NULL
-       GROUP BY city
+       WHERE archived = false AND city_name IS NOT NULL
+       GROUP BY city_name
        ORDER BY count DESC`
     );
 
     const byActivity = await queryProduction(
-      `SELECT activity, COUNT(*)::int as count
+      `SELECT activity_name as activity, COUNT(*)::int as count
        FROM club_application
-       WHERE archived = false AND activity IS NOT NULL
-       GROUP BY activity
+       WHERE archived = false AND activity_name IS NOT NULL
+       GROUP BY activity_name
        ORDER BY count DESC`
     );
 
@@ -331,12 +338,20 @@ router.post('/admin/rating-dimensions', async (req: Request, res: Response) => {
       [step]
     );
     const sortOrder = maxOrder.rows[0].max_order + 1;
-    const result = await queryProduction(
-      `INSERT INTO club_rating_dimension (key, label, description, step, sort_order)
-       VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-      [key, label.trim(), (description || '').trim(), step, sortOrder]
+    const active = true;
+    const sort_order = sortOrder;
+    const result = await callGrpc('SuperAdminService', 'StartYourClubCreateRatingDimension', { key, label, description, step, sort_order, active });
+
+    // Re-fetch all dimensions to return fresh data
+    const freshResult = await queryProduction(
+      `SELECT pk as id, key, label, description, step, sort_order
+       FROM club_rating_dimension
+       WHERE active = true
+       ORDER BY step, sort_order`
     );
-    res.json({ success: true, data: mapAppRow(result.rows[0]) });
+    const screening = freshResult.rows.filter((r: any) => r.step === 'screening');
+    const interview = freshResult.rows.filter((r: any) => r.step === 'interview');
+    res.json({ success: true, data: { screening, interview } });
   } catch (error: any) {
     logger.error('Failed to add rating dimension:', error);
     res.status(500).json({ success: false, error: error.message });
@@ -347,14 +362,18 @@ router.post('/admin/rating-dimensions', async (req: Request, res: Response) => {
 router.delete('/admin/rating-dimensions/:id', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const result = await queryProduction(
-      `UPDATE club_rating_dimension SET active = false WHERE pk = $1 RETURNING *`,
-      [id]
+    await callGrpc('SuperAdminService', 'StartYourClubDeleteRatingDimension', { id: parseInt(id) });
+
+    // Re-fetch all dimensions to return fresh data
+    const freshResult = await queryProduction(
+      `SELECT pk as id, key, label, description, step, sort_order
+       FROM club_rating_dimension
+       WHERE active = true
+       ORDER BY step, sort_order`
     );
-    if (result.rowCount === 0) {
-      return res.status(404).json({ success: false, error: 'Dimension not found' });
-    }
-    res.json({ success: true, data: mapAppRow(result.rows[0]) });
+    const screening = freshResult.rows.filter((r: any) => r.step === 'screening');
+    const interview = freshResult.rows.filter((r: any) => r.step === 'interview');
+    res.json({ success: true, data: { screening, interview } });
   } catch (error: any) {
     logger.error('Failed to delete rating dimension:', error);
     res.status(500).json({ success: false, error: error.message });
@@ -365,7 +384,7 @@ router.delete('/admin/rating-dimensions/:id', async (req: Request, res: Response
 router.get('/admin/cities', async (req: Request, res: Response) => {
   try {
     const result = await queryProduction(
-      `SELECT DISTINCT city FROM club_application WHERE city IS NOT NULL AND archived = false ORDER BY city`
+      `SELECT DISTINCT city_name as city FROM club_application WHERE city_name IS NOT NULL AND archived = false ORDER BY city_name`
     );
     res.json({ success: true, data: result.rows.map((r: any) => r.city) });
   } catch (error: any) {
@@ -377,7 +396,7 @@ router.get('/admin/cities', async (req: Request, res: Response) => {
 router.get('/admin/activities', async (req: Request, res: Response) => {
   try {
     const result = await queryProduction(
-      `SELECT DISTINCT activity FROM club_application WHERE activity IS NOT NULL AND archived = false ORDER BY activity`
+      `SELECT DISTINCT activity_name as activity FROM club_application WHERE activity_name IS NOT NULL AND archived = false ORDER BY activity_name`
     );
     res.json({ success: true, data: result.rows.map((r: any) => r.activity) });
   } catch (error: any) {
@@ -391,7 +410,7 @@ router.get('/admin/:id', async (req: Request, res: Response) => {
     const { id } = req.params;
 
     const appResult = await queryProduction(
-      'SELECT ca.*, COALESCE(ca.name, u.name) as name FROM club_application ca LEFT JOIN users u ON u.pk = ca.user_id WHERE ca.pk = $1', [id]
+      "SELECT ca.*, COALESCE(ca.name, CONCAT(u.first_name, ' ', u.last_name)) as name, u.phone as user_phone FROM club_application ca LEFT JOIN users u ON u.pk = ca.user_id WHERE ca.pk = $1", [id]
     );
     if (appResult.rows.length === 0) {
       return res.status(404).json({ success: false, error: 'Application not found' });
@@ -415,16 +434,36 @@ router.get('/admin/:id', async (req: Request, res: Response) => {
     let pastApps: any[] = [];
     if (app.user_id) {
       const pastResult = await queryProduction(
-        'SELECT pk as id, status, city, activity, created_at, archived FROM club_application WHERE user_id = $1 AND pk != $2 ORDER BY created_at DESC',
+        'SELECT pk as id, status, city_name as city, activity_name as activity, created_at, archived FROM club_application WHERE user_id = $1 AND pk != $2 ORDER BY created_at DESC',
         [app.user_id, id]
       );
       pastApps = pastResult.rows;
+    }
+
+    // Build question_map: { questionId: questionText } for questionnaire responses
+    let question_map: Record<string, string> = {};
+    if (app.questionnaire_data && typeof app.questionnaire_data === 'object') {
+      const qIds = Object.keys(app.questionnaire_data).map(Number).filter(n => !isNaN(n));
+      if (qIds.length > 0) {
+        try {
+          const qResult = await queryProduction(
+            'SELECT pk, question_text FROM club_questionnaire_config WHERE pk = ANY($1)',
+            [qIds]
+          );
+          for (const row of qResult.rows) {
+            question_map[String(row.pk)] = row.question_text;
+          }
+        } catch (err) {
+          logger.warn('Failed to fetch question texts:', err);
+        }
+      }
     }
 
     res.json({
       success: true,
       data: {
         ...app,
+        question_map,
         timeline: mapAppRows(timeline.rows),
         activity_log: mapAppRows(activity.rows),
         past_applications: pastApps,
@@ -433,6 +472,17 @@ router.get('/admin/:id', async (req: Request, res: Response) => {
   } catch (error: any) {
     logger.error('Failed to get application detail:', error);
     res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// GET /admin/reviewers — Get past reviewer names for autocomplete
+router.get('/admin/reviewers', async (req: Request, res: Response) => {
+  try {
+    const result = await queryLocal('SELECT name FROM syc_reviewers ORDER BY last_used_at DESC');
+    res.json({ success: true, reviewers: result.rows.map((r: any) => r.name) });
+  } catch (error: any) {
+    logger.error('Failed to fetch reviewers:', error);
+    res.json({ success: true, reviewers: [] });
   }
 });
 
@@ -456,14 +506,23 @@ router.patch('/admin/:id/pick', async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, error: `Can only pick from SUBMITTED status, current: ${app.status}` });
     }
 
-    await queryProduction(
-      `UPDATE club_application SET status = 'UNDER_REVIEW', reviewed_by = $2, picked_at = NOW(), updated_at = NOW() WHERE pk = $1`,
-      [id, reviewed_by.trim()]
-    );
+    // Note: reviewed_by not in gRPC proto yet — Go backend doesn't store it on pick
+    await callGrpc('SuperAdminService', 'StartYourClubPickApplication', { application_id: parseInt(id) });
 
-    await recordStatusEvent(id, 'SUBMITTED', 'UNDER_REVIEW', 'admin', { reviewed_by: reviewed_by.trim() });
+    // Save reviewer name locally for autocomplete
+    try {
+      await queryLocal(
+        `INSERT INTO syc_reviewers (name, last_used_at) VALUES ($1, NOW())
+         ON CONFLICT (name) DO UPDATE SET last_used_at = NOW()`,
+        [reviewed_by.trim()]
+      );
+    } catch (e) { /* ignore — autocomplete is non-critical */ }
+
+    const updated = await queryProduction("SELECT ca.*, COALESCE(ca.name, CONCAT(u.first_name, ' ', u.last_name)) as name, u.phone as user_phone FROM club_application ca LEFT JOIN users u ON u.pk = ca.user_id WHERE ca.pk = $1", [id]);
+    const freshApp = mapAppRow(updated.rows[0]);
+
     broadcast('application_updated', { id, status: 'UNDER_REVIEW' });
-    res.json({ success: true, data: { id, status: 'UNDER_REVIEW', reviewed_by: reviewed_by.trim() } });
+    res.json({ success: true, data: freshApp });
   } catch (error: any) {
     logger.error('Failed to pick application:', error);
     res.status(500).json({ success: false, error: error.message });
@@ -471,153 +530,81 @@ router.patch('/admin/:id/pick', async (req: Request, res: Response) => {
 });
 
 // PATCH /admin/:id/review — 3-outcome review (select-for-interview / reject / on-hold)
-// ALL actions require screening ratings. Also handles SUBMITTED directly (sets reviewed_by).
 router.patch('/admin/:id/review', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const { action, ratings, rejection_reason, rejection_note, reviewed_by } = req.body;
 
-    const appResult = await queryProduction('SELECT * FROM club_application WHERE pk = $1', [id]);
-    if (appResult.rows.length === 0) {
-      return res.status(404).json({ success: false, error: 'Application not found' });
-    }
-
-    const app = appResult.rows[0];
-    let toStatus: ClubApplicationStatus;
-
-    if (action === 'select_for_interview') {
-      toStatus = 'INTERVIEW_PENDING';
-    } else if (action === 'reject') {
-      toStatus = 'REJECTED';
-    } else if (action === 'on_hold') {
-      toStatus = 'ON_HOLD';
-    } else {
+    if (!['select_for_interview', 'reject', 'on_hold'].includes(action)) {
       return res.status(400).json({ success: false, error: 'Invalid action. Must be select_for_interview, reject, or on_hold' });
     }
 
-    // If coming from SUBMITTED, require reviewed_by
-    if (app.status === 'SUBMITTED' && !reviewed_by?.trim()) {
-      return res.status(400).json({ success: false, error: 'Your name (reviewed_by) is required when reviewing from Submitted' });
-    }
-
-    const validation = validateTransition({
-      from: app.status,
-      to: toStatus,
-      actor: 'admin',
-      ratings: ratings as ScreeningRatings,
-      rejectionReason: rejection_reason as RejectionReason,
+    const outcomeMap: Record<string, number> = { 'select_for_interview': 1, 'on_hold': 2, 'reject': 3 };
+    await callGrpc('SuperAdminService', 'StartYourClubReviewApplication', {
+      application_id: parseInt(id),
+      outcome: outcomeMap[action] || 0,
+      screening_ratings: ratings || {},
+      rejection_reason: rejection_reason || ''
     });
 
-    if (!validation.valid) {
-      return res.status(400).json({ success: false, error: validation.error });
-    }
+    const updated = await queryProduction("SELECT ca.*, COALESCE(ca.name, CONCAT(u.first_name, ' ', u.last_name)) as name, u.phone as user_phone FROM club_application ca LEFT JOIN users u ON u.pk = ca.user_id WHERE ca.pk = $1", [id]);
+    const freshApp = mapAppRow(updated.rows[0]);
 
-    // Build update
-    const updates: string[] = ['status = $2', 'updated_at = NOW()'];
-    const updateParams: any[] = [id, toStatus];
-    let paramIdx = 3;
-
-    if (ratings) {
-      updates.push(`screening_ratings = $${paramIdx++}`);
-      updateParams.push(JSON.stringify(ratings));
-    }
-    if (rejection_reason) {
-      updates.push(`rejection_reason = $${paramIdx++}`);
-      updateParams.push(rejection_reason);
-    }
-    // Set reviewed_by + picked_at when coming from SUBMITTED
-    if (reviewed_by?.trim()) {
-      updates.push(`reviewed_by = $${paramIdx++}`);
-      updateParams.push(reviewed_by.trim());
-      updates.push('picked_at = NOW()');
-    }
-    // Track which stage they were rejected from
-    if (toStatus === 'REJECTED') {
-      updates.push(`rejected_from_status = $${paramIdx++}`);
-      updateParams.push(app.status);
-    }
-    // Track interview start time
-    if (toStatus === 'INTERVIEW_PENDING') {
-      updates.push('interview_started_at = NOW()');
-    }
-
-    await queryProduction(
-      `UPDATE club_application SET ${updates.join(', ')} WHERE pk = $1`,
-      updateParams
-    );
-
-    await recordStatusEvent(id, app.status, toStatus, 'admin', {
-      action,
-      ...(ratings && { ratings }),
-      ...(rejection_reason && { rejection_reason }),
-      ...(rejection_note && { rejection_note }),
-      ...(reviewed_by && { reviewed_by: reviewed_by.trim() }),
-    });
+    const statusMap: Record<string, string> = {
+      'select_for_interview': 'INTERVIEW_PENDING',
+      'reject': 'REJECTED',
+      'on_hold': 'ON_HOLD',
+    };
+    const toStatus = statusMap[action] || 'UNDER_REVIEW';
 
     broadcast('application_updated', { id, status: toStatus });
-    res.json({ success: true, data: { id, status: toStatus } });
+    res.json({ success: true, data: freshApp });
   } catch (error: any) {
     logger.error('Failed to review application:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// PATCH /admin/:id/status — General status transition
+// PATCH /admin/:id/status — General status transition (mapped to appropriate gRPC call)
 router.patch('/admin/:id/status', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const { to_status, actor = 'admin', metadata = {} } = req.body;
+
+    if (!to_status) {
+      return res.status(400).json({ success: false, error: 'to_status is required' });
+    }
 
     const appResult = await queryProduction('SELECT * FROM club_application WHERE pk = $1', [id]);
     if (appResult.rows.length === 0) {
       return res.status(404).json({ success: false, error: 'Application not found' });
     }
 
-    const app = appResult.rows[0];
-    const validation = validateTransition({
-      from: app.status,
-      to: to_status,
-      actor,
-      ratings: metadata.ratings,
-      interviewRatings: metadata.interview_ratings,
-      rejectionReason: metadata.rejection_reason,
-    });
+    // Map target status to the appropriate gRPC call
+    const statusToGrpc: Record<string, { method: string; data: any }> = {
+      'UNDER_REVIEW': { method: 'StartYourClubPickApplication', data: { application_id: parseInt(id) } },
+      'REJECTED': { method: 'StartYourClubRejectApplication', data: { application_id: parseInt(id), rejection_reason: metadata.rejection_reason || '' } },
+      'INTERVIEW_PENDING': { method: 'StartYourClubReviewApplication', data: { application_id: parseInt(id), outcome: 1, screening_ratings: metadata.ratings || {}, rejection_reason: '' } },
+      'ON_HOLD': { method: 'StartYourClubReviewApplication', data: { application_id: parseInt(id), outcome: 2, screening_ratings: metadata.ratings || {}, rejection_reason: '' } },
+      'SELECTED': { method: 'StartYourClubSelectApplication', data: { application_id: parseInt(id), misfits_pct: 70, leader_pct: 30, interview_ratings: { dimensions: metadata.interview_ratings || {} } } },
+    };
 
-    if (!validation.valid) {
-      return res.status(400).json({ success: false, error: validation.error });
+    const grpcCall = statusToGrpc[to_status];
+    if (grpcCall) {
+      await callGrpc('SuperAdminService', grpcCall.method, grpcCall.data);
+    } else {
+      // Fallback: use the misfitsApi for statuses not mapped to gRPC
+      const apiRes = await misfitsApi('PATCH', `/start-your-club/admin/${id}/status`, { status: to_status });
+      if (!apiRes.ok) {
+        return res.status(apiRes.status).json({ success: false, error: apiRes.error || apiRes.data?.message });
+      }
     }
 
-    const updates: string[] = ['status = $2', 'updated_at = NOW()'];
-    const params: any[] = [id, to_status];
-    let paramIdx = 3;
-
-    // Set timestamps based on status
-    if (to_status === 'SUBMITTED') {
-      updates.push('submitted_at = NOW()');
-    } else if (to_status === 'SELECTED') {
-      updates.push('selected_at = NOW()');
-    } else if (to_status === 'CLUB_CREATED') {
-      updates.push('club_created_at = NOW()');
-    }
-
-    if (metadata.rejection_reason) {
-      updates.push(`rejection_reason = $${paramIdx++}`);
-      params.push(metadata.rejection_reason);
-    }
-    if (metadata.ratings) {
-      updates.push(`screening_ratings = $${paramIdx++}`);
-      params.push(JSON.stringify(metadata.ratings));
-    }
-    if (metadata.interview_ratings) {
-      updates.push(`interview_ratings = $${paramIdx++}`);
-      params.push(JSON.stringify(metadata.interview_ratings));
-    }
-
-    await queryProduction(`UPDATE club_application SET ${updates.join(', ')} WHERE pk = $1`, params);
-    await recordStatusEvent(id, app.status, to_status, actor, metadata);
+    const updated = await queryProduction("SELECT ca.*, COALESCE(ca.name, CONCAT(u.first_name, ' ', u.last_name)) as name, u.phone as user_phone FROM club_application ca LEFT JOIN users u ON u.pk = ca.user_id WHERE ca.pk = $1", [id]);
+    const freshApp = mapAppRow(updated.rows[0]);
 
     broadcast('application_updated', { id, status: to_status });
-    res.json({ success: true, data: { id, status: to_status } });
+    res.json({ success: true, data: freshApp });
   } catch (error: any) {
     logger.error('Failed to update status:', error);
     res.status(500).json({ success: false, error: error.message });
@@ -628,7 +615,7 @@ router.patch('/admin/:id/status', async (req: Request, res: Response) => {
 router.post('/admin/:id/select', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const { split_percentage, interview_ratings } = req.body;
+    const { split_percentage, interview_ratings: ratings } = req.body;
 
     const appResult = await queryProduction('SELECT * FROM club_application WHERE pk = $1', [id]);
     if (appResult.rows.length === 0) {
@@ -640,36 +627,27 @@ router.post('/admin/:id/select', async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, error: 'Can only select from INTERVIEW_DONE status' });
     }
 
+    const split = split_percentage || { misfits: 70, leader: 30 };
+
     // Validate split percentages add to 100
-    if (split_percentage) {
-      const m = Number(split_percentage.misfits);
-      const l = Number(split_percentage.leader);
-      if (isNaN(m) || isNaN(l) || m + l !== 100) {
-        return res.status(400).json({ success: false, error: 'Split percentages must add up to 100' });
-      }
+    const m = Number(split.misfits);
+    const l = Number(split.leader);
+    if (isNaN(m) || isNaN(l) || m + l !== 100) {
+      return res.status(400).json({ success: false, error: 'Split percentages must add up to 100' });
     }
 
-    // Validate interview ratings required
-    const validation = validateTransition({
-      from: 'INTERVIEW_DONE',
-      to: 'SELECTED',
-      actor: 'admin',
-      interviewRatings: interview_ratings,
+    await callGrpc('SuperAdminService', 'StartYourClubSelectApplication', {
+      application_id: parseInt(id),
+      misfits_pct: parseInt(split.misfits),
+      leader_pct: parseInt(split.leader),
+      interview_ratings: { dimensions: ratings || {} }
     });
-    if (!validation.valid) {
-      return res.status(400).json({ success: false, error: validation.error });
-    }
 
-    await queryProduction(
-      `UPDATE club_application
-       SET status = 'SELECTED', split_snapshot = $2, interview_ratings = $3, selected_at = NOW(), updated_at = NOW()
-       WHERE pk = $1`,
-      [id, JSON.stringify(split_percentage || { misfits: 70, leader: 30 }), JSON.stringify(interview_ratings)]
-    );
+    const updated = await queryProduction("SELECT ca.*, COALESCE(ca.name, CONCAT(u.first_name, ' ', u.last_name)) as name, u.phone as user_phone FROM club_application ca LEFT JOIN users u ON u.pk = ca.user_id WHERE ca.pk = $1", [id]);
+    const freshApp = mapAppRow(updated.rows[0]);
 
-    await recordStatusEvent(id, 'INTERVIEW_DONE', 'SELECTED', 'admin', { split_percentage, interview_ratings });
     broadcast('application_updated', { id, status: 'SELECTED' });
-    res.json({ success: true, data: { id, status: 'SELECTED' } });
+    res.json({ success: true, data: freshApp });
   } catch (error: any) {
     logger.error('Failed to select applicant:', error);
     res.status(500).json({ success: false, error: error.message });
@@ -680,9 +658,10 @@ router.post('/admin/:id/select', async (req: Request, res: Response) => {
 router.patch('/admin/:id/split', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const { misfits, leader } = req.body;
+    const misfits = req.body.misfits ?? req.body.misfits_pct;
+    const leader = req.body.leader ?? req.body.leader_pct;
 
-    if (misfits == null || leader == null || misfits + leader !== 100) {
+    if (misfits == null || leader == null || Number(misfits) + Number(leader) !== 100) {
       return res.status(400).json({ success: false, error: 'Split must add up to 100%' });
     }
 
@@ -692,13 +671,17 @@ router.patch('/admin/:id/split', async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, error: 'Split can only be updated for selected/onboarded applications' });
     }
 
-    await queryProduction(
-      `UPDATE club_application SET split_snapshot = $2, updated_at = NOW() WHERE pk = $1`,
-      [id, JSON.stringify({ misfits, leader })]
-    );
+    await callGrpc('SuperAdminService', 'StartYourClubUpdateSplit', {
+      application_id: parseInt(id),
+      misfits_pct: misfits,
+      leader_pct: leader
+    });
+
+    const updated = await queryProduction("SELECT ca.*, COALESCE(ca.name, CONCAT(u.first_name, ' ', u.last_name)) as name, u.phone as user_phone FROM club_application ca LEFT JOIN users u ON u.pk = ca.user_id WHERE ca.pk = $1", [id]);
+    const freshApp = mapAppRow(updated.rows[0]);
 
     broadcast('application_updated', { id, type: 'split_updated' });
-    res.json({ success: true, data: { split_percentage: { misfits, leader } } });
+    res.json({ success: true, data: freshApp });
   } catch (error: any) {
     logger.error('Failed to update split:', error);
     res.status(500).json({ success: false, error: error.message });
@@ -709,79 +692,39 @@ router.patch('/admin/:id/split', async (req: Request, res: Response) => {
 router.patch('/admin/:id/milestones', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const { first_call_done, venue_sorted, toolkit_shared, marketing_launched, contract_url } = req.body;
+    const { first_call_done, venue_sorted, toolkit_shared, marketing_launched } = req.body;
 
     const appResult = await queryProduction('SELECT * FROM club_application WHERE pk = $1', [id]);
     if (appResult.rows.length === 0) {
       return res.status(404).json({ success: false, error: 'Application not found' });
     }
 
-    const app = appResult.rows[0];
+    const app = mapAppRow(appResult.rows[0]);
     if (app.status !== 'SELECTED') {
       return res.status(400).json({ success: false, error: 'Milestones can only be updated for SELECTED applications' });
     }
 
-    const updates: string[] = ['updated_at = NOW()'];
-    const params: any[] = [id];
-    let paramIdx = 2;
+    // Merge with existing milestone state — only override fields that were explicitly sent
+    // This prevents toggling one milestone from clearing the others
+    await callGrpc('SuperAdminService', 'StartYourClubUpdateMilestones', {
+      application_id: parseInt(id),
+      first_call_done: first_call_done !== undefined ? !!first_call_done : !!app.first_call_done,
+      venue_sorted: venue_sorted !== undefined ? !!venue_sorted : !!app.venue_sorted,
+      toolkit_shared: toolkit_shared !== undefined ? !!toolkit_shared : !!app.toolkit_shared,
+      marketing_launched: marketing_launched !== undefined ? !!marketing_launched : !!app.marketing_launched
+    });
 
-    if (first_call_done !== undefined) {
-      updates.push(`first_call_done = $${paramIdx++}`);
-      params.push(first_call_done);
-      if (first_call_done) updates.push('first_call_done_at = NOW()');
-      else updates.push('first_call_done_at = NULL');
-    }
-    if (venue_sorted !== undefined) {
-      updates.push(`venue_sorted = $${paramIdx++}`);
-      params.push(venue_sorted);
-      if (venue_sorted) updates.push('venue_sorted_at = NOW()');
-      else updates.push('venue_sorted_at = NULL');
-    }
-    if (toolkit_shared !== undefined) {
-      updates.push(`toolkit_shared = $${paramIdx++}`);
-      params.push(toolkit_shared);
-      if (toolkit_shared) updates.push('toolkit_shared_at = NOW()');
-      else updates.push('toolkit_shared_at = NULL');
-    }
-    if (contract_url !== undefined) {
-      updates.push(`contract_url = $${paramIdx++}`);
-      params.push(contract_url || null);
-    }
-    if (marketing_launched !== undefined) {
-      // Gate: marketing_launched can only be set to true if first_call_done AND venue_sorted AND split saved
-      if (marketing_launched === true) {
-        const fcDone = first_call_done !== undefined ? first_call_done : app.first_call_done;
-        const vsDone = venue_sorted !== undefined ? venue_sorted : app.venue_sorted;
-        if (!fcDone || !vsDone) {
-          return res.status(400).json({ success: false, error: 'First call and venue must be completed before marketing launch' });
-        }
-        if (!app.split_snapshot) {
-          return res.status(400).json({ success: false, error: 'Revenue split must be saved before marketing launch' });
-        }
-      }
-      updates.push(`marketing_launched = $${paramIdx++}`);
-      params.push(marketing_launched);
-      if (marketing_launched) updates.push('marketing_launched_at = NOW()');
-      else updates.push('marketing_launched_at = NULL');
-    }
+    const updated = await queryProduction("SELECT ca.*, COALESCE(ca.name, CONCAT(u.first_name, ' ', u.last_name)) as name, u.phone as user_phone FROM club_application ca LEFT JOIN users u ON u.pk = ca.user_id WHERE ca.pk = $1", [id]);
+    const freshApp = mapAppRow(updated.rows[0]);
 
-    await queryProduction(`UPDATE club_application SET ${updates.join(', ')} WHERE pk = $1`, params);
-
-    // If marketing_launched is true and all milestones done → auto-transition to CLUB_CREATED
-    const updatedResult = await queryProduction('SELECT * FROM club_application WHERE pk = $1', [id]);
-    const updated = updatedResult.rows[0];
-    if (updated.first_call_done && updated.venue_sorted && updated.marketing_launched) {
-      await queryProduction(
-        `UPDATE club_application SET status = 'CLUB_CREATED', club_created_at = NOW(), updated_at = NOW() WHERE pk = $1`,
-        [id]
-      );
-      await recordStatusEvent(id, 'SELECTED', 'CLUB_CREATED', 'admin', { trigger: 'all_milestones_complete' });
+    // Check if auto-transitioned to CLUB_CREATED
+    if (freshApp.status === 'CLUB_CREATED') {
       broadcast('application_updated', { id, status: 'CLUB_CREATED' });
-      return res.json({ success: true, data: { id, status: 'CLUB_CREATED', milestones_complete: true } });
+      return res.json({ success: true, data: freshApp });
     }
 
-    broadcast('application_updated', { id, status: 'SELECTED' });
-    res.json({ success: true, data: { id, milestones: { first_call_done: updated.first_call_done, venue_sorted: updated.venue_sorted, toolkit_shared: updated.toolkit_shared, marketing_launched: updated.marketing_launched, contract_url: updated.contract_url } } });
+    broadcast('application_updated', { id, status: freshApp.status });
+    res.json({ success: true, data: freshApp });
   } catch (error: any) {
     logger.error('Failed to update milestones:', error);
     res.status(500).json({ success: false, error: error.message });
@@ -792,20 +735,26 @@ router.patch('/admin/:id/milestones', async (req: Request, res: Response) => {
 router.post('/admin/:id/note', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const { content } = req.body;
+    const { content: text } = req.body;
 
-    if (!content?.trim()) {
+    if (!text?.trim()) {
       return res.status(400).json({ success: false, error: 'Note content is required' });
     }
 
-    const result = await queryProduction(
-      `INSERT INTO club_application_activity (application_id, type, content, created_by)
-       VALUES ($1, 'note', $2, 0) RETURNING *`,
-      [id, content.trim()]
+    await callGrpc('SuperAdminService', 'StartYourClubAddNote', {
+      application_id: parseInt(id),
+      content: text,
+      metadata_json: ''
+    });
+
+    // Re-fetch activity log for fresh data
+    const activity = await queryProduction(
+      'SELECT * FROM club_application_activity WHERE application_id = $1 ORDER BY created_at DESC LIMIT 1',
+      [id]
     );
 
     broadcast('activity_added', { application_id: id, type: 'note' });
-    res.json({ success: true, data: mapAppRow(result.rows[0]) });
+    res.json({ success: true, data: activity.rows[0] ? mapAppRow(activity.rows[0]) : { application_id: id, type: 'note' } });
   } catch (error: any) {
     logger.error('Failed to add note:', error);
     res.status(500).json({ success: false, error: error.message });
@@ -818,14 +767,20 @@ router.post('/admin/:id/call-log', async (req: Request, res: Response) => {
     const { id } = req.params;
     const { duration, outcome, notes } = req.body;
 
-    const result = await queryProduction(
-      `INSERT INTO club_application_activity (application_id, type, content, metadata, created_by)
-       VALUES ($1, 'call', $2, $3, 0) RETURNING *`,
-      [id, notes || '', JSON.stringify({ duration, outcome })]
+    await callGrpc('SuperAdminService', 'StartYourClubAddCallLog', {
+      application_id: parseInt(id),
+      content: notes || '',
+      metadata_json: JSON.stringify({ duration, outcome })
+    });
+
+    // Re-fetch activity log for fresh data
+    const activity = await queryProduction(
+      'SELECT * FROM club_application_activity WHERE application_id = $1 ORDER BY created_at DESC LIMIT 1',
+      [id]
     );
 
     broadcast('activity_added', { application_id: id, type: 'call' });
-    res.json({ success: true, data: mapAppRow(result.rows[0]) });
+    res.json({ success: true, data: activity.rows[0] ? mapAppRow(activity.rows[0]) : { application_id: id, type: 'call' } });
   } catch (error: any) {
     logger.error('Failed to log call:', error);
     res.status(500).json({ success: false, error: error.message });
@@ -836,56 +791,43 @@ router.post('/admin/:id/call-log', async (req: Request, res: Response) => {
 router.patch('/admin/:id/reject', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const { rejection_reason, rejection_note, ratings, interview_ratings } = req.body;
+    const { rejection_reason, ratings, interview_ratings } = req.body;
 
     if (!rejection_reason) {
       return res.status(400).json({ success: false, error: 'Rejection reason is required' });
     }
 
-    const appResult = await queryProduction('SELECT * FROM club_application WHERE pk = $1', [id]);
-    if (appResult.rows.length === 0) {
-      return res.status(404).json({ success: false, error: 'Application not found' });
+    // If ratings are provided, save them via the review endpoint (reject outcome) to preserve them
+    if (ratings && Object.keys(ratings).length > 0) {
+      try {
+        await callGrpc('SuperAdminService', 'StartYourClubReviewApplication', {
+          application_id: parseInt(id),
+          outcome: 3, // REJECT
+          screening_ratings: ratings,
+          rejection_reason
+        });
+        // Review already handled rejection — skip the separate reject call
+      } catch (reviewErr: any) {
+        // If review fails (e.g., wrong status), fall back to direct reject
+        logger.warn('Review-reject failed, falling back to direct reject:', reviewErr.message);
+        await callGrpc('SuperAdminService', 'StartYourClubRejectApplication', { application_id: parseInt(id), rejection_reason });
+      }
+    } else {
+      await callGrpc('SuperAdminService', 'StartYourClubRejectApplication', { application_id: parseInt(id), rejection_reason });
     }
 
-    const app = appResult.rows[0];
-    const validation = validateTransition({
-      from: app.status,
-      to: 'REJECTED',
-      actor: 'admin',
-      rejectionReason: rejection_reason,
-      ratings,
-      interviewRatings: interview_ratings,
-    });
+    const updated = await queryProduction("SELECT ca.*, COALESCE(ca.name, CONCAT(u.first_name, ' ', u.last_name)) as name, u.phone as user_phone FROM club_application ca LEFT JOIN users u ON u.pk = ca.user_id WHERE ca.pk = $1", [id]);
+    const freshApp = mapAppRow(updated.rows[0]);
 
-    if (!validation.valid) {
-      return res.status(400).json({ success: false, error: validation.error });
-    }
-
-    const updates: string[] = ['status = $2', 'rejection_reason = $3', `rejected_from_status = $4`, 'updated_at = NOW()'];
-    const params: any[] = [id, 'REJECTED', rejection_reason, app.status];
-    let paramIdx = 5;
-
-    if (ratings) {
-      updates.push(`screening_ratings = $${paramIdx++}`);
-      params.push(JSON.stringify(ratings));
-    }
-    if (interview_ratings) {
-      updates.push(`interview_ratings = $${paramIdx++}`);
-      params.push(JSON.stringify(interview_ratings));
-    }
-
-    await queryProduction(`UPDATE club_application SET ${updates.join(', ')} WHERE pk = $1`, params);
-
-    await recordStatusEvent(id, app.status, 'REJECTED', 'admin', { rejection_reason, rejection_note, ratings, interview_ratings });
     broadcast('application_updated', { id, status: 'REJECTED' });
-    res.json({ success: true, data: { id, status: 'REJECTED' } });
+    res.json({ success: true, data: freshApp });
   } catch (error: any) {
     logger.error('Failed to reject application:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// POST /admin/bulk-archive — Archive multiple applications (ON_HOLD protected)
+// POST /admin/bulk-archive — Archive multiple applications
 router.post('/admin/bulk-archive', async (req: Request, res: Response) => {
   try {
     const { ids } = req.body;
@@ -894,29 +836,12 @@ router.post('/admin/bulk-archive', async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, error: 'No application IDs provided' });
     }
 
-    // Block archiving for high-investment statuses (Interview Phase + Selected + Onboarded)
-    const blockedStatuses = ['INTERVIEW_PENDING', 'INTERVIEW_SCHEDULED', 'INTERVIEW_DONE', 'SELECTED', 'CLUB_CREATED'];
-    const blockedCheck = await queryProduction(
-      `SELECT pk, status FROM club_application WHERE pk = ANY($1::bigint[]) AND status = ANY($2)`,
-      [ids, blockedStatuses]
-    );
+    const result = await callGrpc('SuperAdminService', 'StartYourClubBulkArchiveApplications', {
+      application_ids: ids.map(Number)
+    });
 
-    if (blockedCheck.rows.length > 0) {
-      const details = blockedCheck.rows.map((r: any) => `${r.pk} (${r.status})`).join(', ');
-      return res.status(400).json({
-        success: false,
-        error: `Cannot archive applications in active pipeline stages: ${details}. Move to ON_HOLD first.`,
-        blocked_ids: blockedCheck.rows.map((r: any) => r.pk),
-      });
-    }
-
-    const result = await queryProduction(
-      `UPDATE club_application SET archived = true, updated_at = NOW() WHERE pk = ANY($1::bigint[]) RETURNING pk as id`,
-      [ids]
-    );
-
-    broadcast('applications_archived', { ids: result.rows.map((r: any) => r.id) });
-    res.json({ success: true, data: { archived_count: result.rowCount } });
+    broadcast('applications_archived', { ids: ids.map(Number) });
+    res.json({ success: true, data: { archived_count: result.archived || ids.length } });
   } catch (error: any) {
     logger.error('Failed to bulk archive:', error);
     res.status(500).json({ success: false, error: error.message });
@@ -943,15 +868,15 @@ router.post('/admin/:id/upload-contract', contractUpload.single('contract'), asy
       return res.status(409).json({ success: false, error: 'Contracts can only be uploaded for SELECTED applications' });
     }
 
-    const contractUrl = `/api/start-club/contracts/${file.filename}`;
+    const fileUrl = `/api/start-club/contracts/${file.filename}`;
 
-    await queryProduction(
-      `UPDATE club_application SET contract_pdf_url = $2, contract_uploaded_at = NOW(), updated_at = NOW() WHERE pk = $1`,
-      [id, contractUrl]
-    );
+    await callGrpc('SuperAdminService', 'StartYourClubUploadContract', { application_id: parseInt(id), contract_pdf_url: fileUrl });
+
+    const updated = await queryProduction("SELECT ca.*, COALESCE(ca.name, CONCAT(u.first_name, ' ', u.last_name)) as name, u.phone as user_phone FROM club_application ca LEFT JOIN users u ON u.pk = ca.user_id WHERE ca.pk = $1", [id]);
+    const freshApp = mapAppRow(updated.rows[0]);
 
     broadcast('application_updated', { id, type: 'contract_uploaded' });
-    res.json({ success: true, data: { contract_url: contractUrl, filename: file.originalname } });
+    res.json({ success: true, data: { contract_url: fileUrl, filename: file.originalname, ...freshApp } });
   } catch (error: any) {
     logger.error('Failed to upload contract:', error);
     res.status(500).json({ success: false, error: error.message });
@@ -968,15 +893,15 @@ router.post('/admin/:id/upload-signed-contract', contractUpload.single('contract
       return res.status(400).json({ success: false, error: 'No file uploaded' });
     }
 
-    const signedUrl = `/api/start-club/contracts/${file.filename}`;
+    const fileUrl = `/api/start-club/contracts/${file.filename}`;
 
-    await queryProduction(
-      `UPDATE club_application SET signed_contract_url = $2, signed_contract_uploaded_at = NOW(), updated_at = NOW() WHERE pk = $1`,
-      [id, signedUrl]
-    );
+    await callGrpc('SuperAdminService', 'StartYourClubUploadSignedContract', { application_id: parseInt(id), signed_contract_url: fileUrl });
+
+    const updated = await queryProduction("SELECT ca.*, COALESCE(ca.name, CONCAT(u.first_name, ' ', u.last_name)) as name, u.phone as user_phone FROM club_application ca LEFT JOIN users u ON u.pk = ca.user_id WHERE ca.pk = $1", [id]);
+    const freshApp = mapAppRow(updated.rows[0]);
 
     broadcast('application_updated', { id, type: 'signed_contract_uploaded' });
-    res.json({ success: true, data: { signed_contract_url: signedUrl } });
+    res.json({ success: true, data: { signed_contract_url: fileUrl, ...freshApp } });
   } catch (error: any) {
     logger.error('Failed to upload signed contract:', error);
     res.status(500).json({ success: false, error: error.message });
@@ -1002,6 +927,7 @@ router.get('/contracts/:filename', (req: Request, res: Response) => {
 // ══════════════════════════════════════════
 
 // GET /admin/lookup-user — Look up a user by phone number
+// NOTE: Must be before /admin/:id to avoid Express matching "lookup-user" as an id
 router.get('/admin/lookup-user', async (req: Request, res: Response) => {
   try {
     const { phone } = req.query;
@@ -1009,9 +935,13 @@ router.get('/admin/lookup-user', async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, error: 'Valid phone number is required' });
     }
 
+    // Auto-prepend 91 country code if not present (DB stores phones as 91XXXXXXXXXX)
+    let normalizedPhone = phone.trim().replace(/\D/g, '');
+    if (normalizedPhone.length === 10) normalizedPhone = `91${normalizedPhone}`;
+
     const result = await queryProduction(
       `SELECT pk, first_name, last_name, phone FROM users WHERE phone = $1 AND is_deleted = false`,
-      [phone.trim()]
+      [normalizedPhone]
     );
 
     if (result.rows.length === 0) {
@@ -1037,106 +967,28 @@ router.get('/admin/lookup-user', async (req: Request, res: Response) => {
   }
 });
 
-// POST /admin/create-lead — Create a manual lead from admin dashboard
+// POST /admin/create-lead — Create a manual lead from admin dashboard (proxied to Go backend)
+// NOTE: Must be before /admin/:id to avoid Express matching "create-lead" as an id
 router.post('/admin/create-lead', async (req: Request, res: Response) => {
   try {
-    const { phone, first_name, last_name, city, activity, target_status } = req.body;
+    const { user_id, city_name, activity_name, name } = req.body;
 
-    // Validate required fields
-    if (!phone?.trim() || !first_name?.trim() || !city?.trim() || !activity?.trim() || !target_status) {
-      return res.status(400).json({
-        success: false,
-        error: 'Phone, first name, city, activity, and target status are required',
-      });
+    if (!user_id) {
+      return res.status(400).json({ success: false, error: 'user_id is required' });
     }
 
-    // Validate target_status
-    const allowedStatuses = ['SUBMITTED', 'UNDER_REVIEW', 'INTERVIEW_PENDING', 'INTERVIEW_SCHEDULED', 'INTERVIEW_DONE', 'SELECTED'];
-    if (!allowedStatuses.includes(target_status)) {
-      return res.status(400).json({
-        success: false,
-        error: `Target status must be one of: ${allowedStatuses.join(', ')}`,
-      });
-    }
-
-    // Look up user by phone
-    const userResult = await queryProduction(
-      `SELECT pk FROM users WHERE phone = $1 AND is_deleted = false`,
-      [phone.trim()]
-    );
-    if (userResult.rows.length === 0) {
-      return res.status(404).json({
-        success: false,
-        error: 'User not found. Ask them to download the app and log in first.',
-      });
-    }
-    const userId = userResult.rows[0].pk;
-
-    // Check for existing active application
-    const existingResult = await queryProduction(
-      `SELECT pk FROM club_application WHERE user_id = $1 AND archived = false LIMIT 1`,
-      [userId]
-    );
-    if (existingResult.rows.length > 0) {
-      return res.status(409).json({
-        success: false,
-        error: 'User already has an active application',
-        existing_id: existingResult.rows[0].pk,
-      });
-    }
-
-    // Build the INSERT with status-dependent timestamps
-    const name = `${first_name.trim()} ${(last_name || '').trim()}`.trim();
-
-    // Determine which timestamps to set based on target status
-    const statusOrder = ['SUBMITTED', 'UNDER_REVIEW', 'INTERVIEW_PENDING', 'INTERVIEW_SCHEDULED', 'INTERVIEW_DONE', 'SELECTED'];
-    const targetIdx = statusOrder.indexOf(target_status);
-
-    const extraCols: string[] = [];
-    const extraVals: string[] = [];
-    const extraParams: any[] = [];
-    let paramIdx = 7; // first 6 params are: user_id, name, city, activity, status, source
-
-    // Always set submitted_at for admin-created leads
-    extraCols.push('submitted_at');
-    extraVals.push('NOW()');
-
-    if (targetIdx >= 1) { // UNDER_REVIEW or beyond
-      extraCols.push('picked_at');
-      extraVals.push('NOW()');
-    }
-    if (targetIdx >= 2) { // INTERVIEW_PENDING or beyond
-      extraCols.push('interview_started_at');
-      extraVals.push('NOW()');
-    }
-
-    const insertResult = await queryProduction(
-      `INSERT INTO club_application (
-        user_id, name, city, activity, status, source,
-        admin_created, admin_created_by,
-        ${extraCols.join(', ')},
-        created_at, updated_at
-      ) VALUES (
-        $1, $2, $3, $4, $5, $6,
-        true, 'admin',
-        ${extraVals.join(', ')},
-        NOW(), NOW()
-      ) RETURNING *`,
-      [userId, name, city.trim(), activity.trim(), target_status, 'admin']
-    );
-
-    const created = mapAppRow(insertResult.rows[0]);
-
-    // Record status event
-    await recordStatusEvent(created.id, null, target_status, 'admin', {
-      admin_created: true,
-      first_name: first_name.trim(),
-      last_name: (last_name || '').trim(),
+    const apiRes = await misfitsApi('POST', '/start-your-club/admin/create-lead', {
+      user_id,
+      city_name: city_name || '',
+      activity_name: activity_name || '',
+      name: name || '',
     });
+    if (!apiRes.ok) {
+      return res.status(apiRes.status).json({ success: false, error: apiRes.error || apiRes.data?.message });
+    }
 
-    broadcast('application_updated', { id: created.id, status: target_status });
-
-    res.json({ success: true, data: created });
+    broadcast('application_updated', apiRes.data);
+    res.status(201).json({ success: true, data: apiRes.data });
   } catch (error: any) {
     logger.error('Failed to create lead:', error);
     res.status(500).json({ success: false, error: error.message });
@@ -1147,49 +999,18 @@ router.post('/admin/create-lead', async (req: Request, res: Response) => {
 //  RESCHEDULE
 // ══════════════════════════════════════════
 
-// PATCH /admin/:id/reschedule — Move INTERVIEW_SCHEDULED back to INTERVIEW_PENDING
+// PATCH /admin/:id/reschedule — Move INTERVIEW_SCHEDULED back to INTERVIEW_PENDING + clear Calendly data
 router.patch('/admin/:id/reschedule', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
 
-    // Fetch application
-    const appResult = await queryProduction(
-      `SELECT * FROM club_application WHERE pk = $1`,
-      [id]
-    );
-    if (appResult.rows.length === 0) {
-      return res.status(404).json({ success: false, error: 'Application not found' });
+    // Use Go reschedule endpoint which transitions status AND clears calendly fields
+    const apiRes = await misfitsApi('PATCH', `/start-your-club/admin/${id}/reschedule`, {});
+    if (!apiRes.ok) {
+      return res.status(apiRes.status).json({ success: false, error: apiRes.error || apiRes.data?.message });
     }
-
-    const app = appResult.rows[0];
-    if (app.status !== 'INTERVIEW_SCHEDULED') {
-      return res.status(400).json({
-        success: false,
-        error: `Can only reschedule from INTERVIEW_SCHEDULED, current status: ${app.status}`,
-      });
-    }
-
-    // Clear calendly fields and transition status
-    await queryProduction(
-      `UPDATE club_application
-       SET status = 'INTERVIEW_PENDING',
-           calendly_event_uri = NULL,
-           calendly_invitee_uri = NULL,
-           interview_scheduled_at = NULL,
-           calendly_meet_link = NULL,
-           updated_at = NOW()
-       WHERE pk = $1`,
-      [id]
-    );
-
-    // Record status event
-    await recordStatusEvent(id, 'INTERVIEW_SCHEDULED', 'INTERVIEW_PENDING', 'admin', {
-      reason: 'reschedule',
-      previous_scheduled_at: app.interview_scheduled_at,
-    });
 
     broadcast('application_updated', { id, status: 'INTERVIEW_PENDING' });
-
     res.json({ success: true, data: { id, status: 'INTERVIEW_PENDING' } });
   } catch (error: any) {
     logger.error('Failed to reschedule:', error);

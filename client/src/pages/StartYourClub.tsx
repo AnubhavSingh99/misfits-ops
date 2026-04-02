@@ -339,6 +339,7 @@ function RatingDisplay({ ratings, label, dims }: { ratings: Record<string, numbe
 function LeadRow({
   app, isExpanded, onToggle, sectionId,
   onRefresh, screeningDims, interviewDims,
+  isSelected, onSelect,
 }: {
   app: Application;
   isExpanded: boolean;
@@ -347,6 +348,8 @@ function LeadRow({
   onRefresh: () => void;
   screeningDims: RatingDimension[];
   interviewDims: RatingDimension[];
+  isSelected?: boolean;
+  onSelect?: (id: string, selected: boolean) => void;
 }) {
   const [detail, setDetail] = useState<DetailData | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -362,8 +365,20 @@ function LeadRow({
   const [rejectionReason, setRejectionReason] = useState('');
   const [showRejectForm, setShowRejectForm] = useState(false);
 
-  // Reviewer name (for pick flow)
+  // Reviewer name (for pick flow) with autocomplete
   const [reviewerName, setReviewerName] = useState('');
+  const [reviewerSuggestions, setReviewerSuggestions] = useState<string[]>([]);
+  const [showReviewerDropdown, setShowReviewerDropdown] = useState(false);
+
+  // Fetch past reviewer names for autocomplete
+  useEffect(() => {
+    if (isExpanded) {
+      fetch(`${API_BASE}/admin/reviewers`)
+        .then(r => r.json())
+        .then(data => { if (data.success) setReviewerSuggestions(data.reviewers || []); })
+        .catch(() => {});
+    }
+  }, [isExpanded]);
 
   // Split percentage (configurable)
   const [splitMisfits, setSplitMisfits] = useState('70');
@@ -436,7 +451,8 @@ function LeadRow({
       body: JSON.stringify({ reviewed_by: reviewerName.trim() }),
     });
     const data = await res.json();
-    if (data.success) { refetchDetail(); onRefresh(); }
+    // Don't call onRefresh() — keep the lead visible so screening form appears in-place
+    if (data.success) { refetchDetail(); }
     else alert(data.error);
   };
 
@@ -535,6 +551,12 @@ function LeadRow({
           isExpanded ? 'bg-indigo-50/40' : 'hover:bg-slate-50/80'
         }`}
       >
+        {onSelect && (
+          <td className="pl-4 pr-1 py-3" onClick={e => e.stopPropagation()}>
+            <input type="checkbox" checked={isSelected || false} onChange={e => onSelect(app.id, e.target.checked)}
+              className="rounded border-slate-300 text-indigo-600 h-3.5 w-3.5 cursor-pointer" />
+          </td>
+        )}
         <td className="px-4 py-3">
           <div className="font-medium text-slate-800">
             {app.name || 'Anonymous'}
@@ -720,7 +742,7 @@ function LeadRow({
                               if (m + l !== 100) return alert('Must add up to 100%');
                               const res = await fetch(`${API_BASE}/admin/${app.id}/split`, {
                                 method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ misfits: m, leader: l }),
+                                body: JSON.stringify({ misfits_pct: m, leader_pct: l }),
                               });
                               const data = await res.json();
                               if (data.success) refetchDetail();
@@ -759,7 +781,7 @@ function LeadRow({
                               <div className="flex items-center gap-1.5 flex-wrap">
                                 <FileText className="h-3 w-3 text-purple-500" />
                                 <a href={detail.contract_url} target="_blank" rel="noopener noreferrer" className="text-[10px] text-purple-600 underline">View</a>
-                                <button onClick={() => { navigator.clipboard.writeText(`${window.location.origin}${detail.contract_url}`); alert('Link copied!'); }} className="px-1.5 py-0.5 text-[9px] font-medium text-purple-600 bg-white border border-purple-200 rounded hover:bg-purple-50">Copy</button>
+                                <button onClick={() => { const u = detail.contract_url!; navigator.clipboard.writeText(u.startsWith('http') ? u : `${window.location.origin}${u}`); alert('Link copied!'); }} className="px-1.5 py-0.5 text-[9px] font-medium text-purple-600 bg-white border border-purple-200 rounded hover:bg-purple-50">Copy</button>
                                 <label className="px-1.5 py-0.5 text-[9px] font-medium text-orange-600 bg-white border border-orange-200 rounded hover:bg-orange-50 cursor-pointer ml-auto">
                                   Replace
                                   <input type="file" className="hidden" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png" onChange={async (e) => {
@@ -815,19 +837,37 @@ function LeadRow({
                   {/* LAUNCH DETAILS tab — CLUB_CREATED: read-only split + contract */}
                   {activeTab === 'launch_details' && detail.status === 'CLUB_CREATED' && (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                      {/* Revenue Split (read-only) */}
+                      {/* Revenue Split (editable for CLUB_CREATED too) */}
                       <div className="px-3 py-2.5 bg-indigo-50 rounded-lg border border-indigo-200">
                         <h4 className="text-xs font-bold text-indigo-700 mb-2">Revenue Split</h4>
-                        {detail.split_percentage ? (
-                          <div className="flex items-center gap-2">
-                            <span className="text-sm font-bold text-indigo-700">{detail.split_percentage.misfits}%</span>
-                            <span className="text-[9px] text-indigo-500">Misfits</span>
-                            <span className="text-slate-400 font-bold text-xs">/</span>
-                            <span className="text-sm font-bold text-indigo-700">{detail.split_percentage.leader}%</span>
-                            <span className="text-[9px] text-indigo-500">Leader</span>
-                          </div>
-                        ) : (
-                          <p className="text-[10px] text-slate-400">Not set</p>
+                        <div className="flex items-center gap-1.5">
+                          <input type="number" min="0" max="100" value={splitMisfits} onChange={e => { setSplitMisfits(e.target.value); const v = parseInt(e.target.value); if (!isNaN(v) && v >= 0 && v <= 100) setSplitLeader(String(100 - v)); }}
+                            className="w-14 px-1.5 py-0.5 text-xs border border-indigo-300 rounded text-center" />
+                          <span className="text-[9px] text-indigo-500">Misfits</span>
+                          <span className="text-slate-400 font-bold text-xs">/</span>
+                          <input type="number" min="0" max="100" value={splitLeader} onChange={e => { setSplitLeader(e.target.value); const v = parseInt(e.target.value); if (!isNaN(v) && v >= 0 && v <= 100) setSplitMisfits(String(100 - v)); }}
+                            className="w-14 px-1.5 py-0.5 text-xs border border-indigo-300 rounded text-center" />
+                          <span className="text-[9px] text-indigo-500">Leader</span>
+                          <button
+                            onClick={async () => {
+                              const m = parseInt(splitMisfits), l = parseInt(splitLeader);
+                              if (m + l !== 100) return alert('Must add up to 100%');
+                              const res = await fetch(`${API_BASE}/admin/${app.id}/split`, {
+                                method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ misfits_pct: m, leader_pct: l }),
+                              });
+                              const data = await res.json();
+                              if (data.success) refetchDetail();
+                              else alert(data.error);
+                            }}
+                            disabled={parseInt(splitMisfits) + parseInt(splitLeader) !== 100}
+                            className="px-2.5 py-1 text-[10px] font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-700 disabled:opacity-50"
+                          >
+                            Save
+                          </button>
+                        </div>
+                        {parseInt(splitMisfits) + parseInt(splitLeader) !== 100 && (
+                          <p className="text-[9px] text-red-500 mt-0.5">Must add up to 100%</p>
                         )}
                       </div>
 
@@ -850,7 +890,7 @@ function LeadRow({
                             <div className="flex items-center gap-1.5 flex-wrap">
                               <FileText className="h-3 w-3 text-purple-500" />
                               <a href={detail.contract_url} target="_blank" rel="noopener noreferrer" className="text-[10px] text-purple-600 underline">View</a>
-                              <button onClick={() => { navigator.clipboard.writeText(`${window.location.origin}${detail.contract_url}`); alert('Link copied!'); }} className="px-1.5 py-0.5 text-[9px] font-medium text-purple-600 bg-white border border-purple-200 rounded hover:bg-purple-50">Copy</button>
+                              <button onClick={() => { const u = detail.contract_url!; navigator.clipboard.writeText(u.startsWith('http') ? u : `${window.location.origin}${u}`); alert('Link copied!'); }} className="px-1.5 py-0.5 text-[9px] font-medium text-purple-600 bg-white border border-purple-200 rounded hover:bg-purple-50">Copy</button>
                               <label className="px-1.5 py-0.5 text-[9px] font-medium text-orange-600 bg-white border border-orange-200 rounded hover:bg-orange-50 cursor-pointer ml-auto">
                                 Replace
                                 <input type="file" className="hidden" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png" onChange={async (e) => {
@@ -913,9 +953,11 @@ function LeadRow({
                         <div className="space-y-2.5">
                           {detail.questionnaire_data && Object.keys(detail.questionnaire_data).length > 0 ? (
                             Object.entries(detail.questionnaire_data).map(([key, value]) => (
-                              <div key={key} className="flex">
-                                <span className="text-xs font-medium text-slate-500 w-40 flex-shrink-0">{key}</span>
-                                <span className="text-sm text-slate-800">{String(value)}</span>
+                              <div key={key} className="mb-3">
+                                <p className="text-xs font-medium text-slate-400 mb-0.5">
+                                  {detail.question_map?.[key] || `Question ${key}`}
+                                </p>
+                                <p className="text-sm text-slate-800">{String(value)}</p>
                               </div>
                             ))
                           ) : (
@@ -1037,14 +1079,38 @@ function LeadRow({
                         <div className="p-4 bg-emerald-50 rounded-xl border border-emerald-200">
                           <h4 className="text-sm font-bold text-emerald-700 mb-2">Pick for Review</h4>
                           <p className="text-xs text-emerald-600 mb-3">Enter your name and start reviewing this lead.</p>
-                          <input
-                            type="text"
-                            value={reviewerName}
-                            onChange={e => setReviewerName(e.target.value)}
-                            onKeyDown={e => e.key === 'Enter' && handlePick()}
-                            placeholder="Your name..."
-                            className="w-full px-3 py-2 text-sm border border-emerald-200 rounded-lg mb-2 focus:outline-none focus:ring-2 focus:ring-emerald-400/30 bg-white"
-                          />
+                          <div className="relative mb-2">
+                            <input
+                              type="text"
+                              value={reviewerName}
+                              onChange={e => { setReviewerName(e.target.value); setShowReviewerDropdown(true); }}
+                              onFocus={() => setShowReviewerDropdown(true)}
+                              onBlur={() => setTimeout(() => setShowReviewerDropdown(false), 150)}
+                              onKeyDown={e => e.key === 'Enter' && handlePick()}
+                              placeholder="Your name..."
+                              className="w-full px-3 py-2 text-sm border border-emerald-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-400/30 bg-white"
+                            />
+                            {showReviewerDropdown && reviewerSuggestions.filter(s => s.toLowerCase().includes(reviewerName.toLowerCase())).length > 0 && reviewerName.length > 0 && (
+                              <div className="absolute z-10 w-full mt-1 bg-white border border-emerald-200 rounded-lg shadow-lg max-h-32 overflow-y-auto">
+                                {reviewerSuggestions
+                                  .filter(s => s.toLowerCase().includes(reviewerName.toLowerCase()))
+                                  .map(s => (
+                                    <button key={s} onMouseDown={() => { setReviewerName(s); setShowReviewerDropdown(false); }}
+                                      className="w-full text-left px-3 py-2 text-sm hover:bg-emerald-50 transition-colors"
+                                    >{s}</button>
+                                  ))}
+                              </div>
+                            )}
+                            {showReviewerDropdown && reviewerName.length === 0 && reviewerSuggestions.length > 0 && (
+                              <div className="absolute z-10 w-full mt-1 bg-white border border-emerald-200 rounded-lg shadow-lg max-h-32 overflow-y-auto">
+                                {reviewerSuggestions.map(s => (
+                                  <button key={s} onMouseDown={() => { setReviewerName(s); setShowReviewerDropdown(false); }}
+                                    className="w-full text-left px-3 py-2 text-sm hover:bg-emerald-50 transition-colors"
+                                  >{s}</button>
+                                ))}
+                              </div>
+                            )}
+                          </div>
                           <button
                             onClick={handlePick}
                             disabled={!reviewerName.trim()}
@@ -1127,29 +1193,61 @@ function LeadRow({
 
                       {/* Interview actions */}
                       {detail.status === 'INTERVIEW_PENDING' && (
-                        <button onClick={() => handleStatusTransition('INTERVIEW_SCHEDULED')} className="w-full py-2 text-xs font-medium text-indigo-600 bg-indigo-50 border border-indigo-200 rounded-lg hover:bg-indigo-100">
-                          Mark Interview Scheduled
-                        </button>
+                        <div className="space-y-2">
+                          <button onClick={() => handleStatusTransition('INTERVIEW_SCHEDULED')} className="w-full py-2 text-xs font-medium text-indigo-600 bg-indigo-50 border border-indigo-200 rounded-lg hover:bg-indigo-100">
+                            Mark Interview Scheduled
+                          </button>
+                          {!showRejectForm ? (
+                            <button onClick={() => setShowRejectForm(true)} className="w-full py-2 text-xs font-medium text-red-600 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100">Reject</button>
+                          ) : (
+                            <div className="p-3 bg-red-50 rounded-lg border border-red-200">
+                              <select value={rejectionReason} onChange={e => setRejectionReason(e.target.value)} className="w-full mb-2 px-2 py-1.5 text-xs border border-red-200 rounded-lg bg-white">
+                                <option value="">Select reason...</option>
+                                {REJECTION_REASONS.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
+                              </select>
+                              <div className="flex gap-2">
+                                <button onClick={handleReject} disabled={!rejectionReason} className="flex-1 py-1.5 text-xs font-medium text-white bg-red-600 rounded-lg disabled:opacity-50">Confirm</button>
+                                <button onClick={() => { setShowRejectForm(false); setRejectionReason(''); }} className="px-3 py-1.5 text-xs text-slate-600 bg-white border rounded-lg">Cancel</button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
                       )}
                       {detail.status === 'INTERVIEW_SCHEDULED' && (
-                        <div className="flex gap-2">
-                          <button onClick={() => handleStatusTransition('INTERVIEW_DONE')} className="flex-1 py-2 text-xs font-medium text-purple-600 bg-purple-50 border border-purple-200 rounded-lg hover:bg-purple-100">
-                            Mark Interview Done
-                          </button>
-                          <button
-                            onClick={async () => {
-                              if (!confirm('Reschedule this interview? The lead will be moved back to Interview Pending.')) return;
-                              const res = await fetch(`${API_BASE}/admin/${app.id}/reschedule`, {
-                                method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-                              });
-                              const data = await res.json();
-                              if (data.success) { refetchDetail(); onRefresh(); }
-                              else alert(data.error);
-                            }}
-                            className="px-3 py-2 text-xs font-medium text-amber-600 bg-amber-50 border border-amber-200 rounded-lg hover:bg-amber-100 flex items-center gap-1"
-                          >
-                            <RotateCcw className="h-3 w-3" /> Reschedule
-                          </button>
+                        <div className="space-y-2">
+                          <div className="flex gap-2">
+                            <button onClick={() => handleStatusTransition('INTERVIEW_DONE')} className="flex-1 py-2 text-xs font-medium text-purple-600 bg-purple-50 border border-purple-200 rounded-lg hover:bg-purple-100">
+                              Mark Interview Done
+                            </button>
+                            <button
+                              onClick={async () => {
+                                if (!confirm('Reschedule this interview? The lead will be moved back to Interview Pending.')) return;
+                                const res = await fetch(`${API_BASE}/admin/${app.id}/reschedule`, {
+                                  method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+                                });
+                                const data = await res.json();
+                                if (data.success) { refetchDetail(); onRefresh(); }
+                                else alert(data.error);
+                              }}
+                              className="px-3 py-2 text-xs font-medium text-amber-600 bg-amber-50 border border-amber-200 rounded-lg hover:bg-amber-100 flex items-center gap-1"
+                            >
+                              <RotateCcw className="h-3 w-3" /> Reschedule
+                            </button>
+                          </div>
+                          {!showRejectForm ? (
+                            <button onClick={() => setShowRejectForm(true)} className="w-full py-2 text-xs font-medium text-red-600 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100">Reject</button>
+                          ) : (
+                            <div className="p-3 bg-red-50 rounded-lg border border-red-200">
+                              <select value={rejectionReason} onChange={e => setRejectionReason(e.target.value)} className="w-full mb-2 px-2 py-1.5 text-xs border border-red-200 rounded-lg bg-white">
+                                <option value="">Select reason...</option>
+                                {REJECTION_REASONS.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
+                              </select>
+                              <div className="flex gap-2">
+                                <button onClick={handleReject} disabled={!rejectionReason} className="flex-1 py-1.5 text-xs font-medium text-white bg-red-600 rounded-lg disabled:opacity-50">Confirm</button>
+                                <button onClick={() => { setShowRejectForm(false); setRejectionReason(''); }} className="px-3 py-1.5 text-xs text-slate-600 bg-white border rounded-lg">Cancel</button>
+                              </div>
+                            </div>
+                          )}
                         </div>
                       )}
 
@@ -1624,7 +1722,7 @@ function AddLeadModal({
   onCreated: () => void;
 }) {
   const [phone, setPhone] = useState('');
-  const [lookupResult, setLookupResult] = useState<{ pk: number; first_name: string; last_name: string } | null>(null);
+  const [lookupResult, setLookupResult] = useState<{ user_id: number; first_name: string; last_name: string } | null>(null);
   const [lookupError, setLookupError] = useState('');
   const [lookupLoading, setLookupLoading] = useState(false);
   const [city, setCity] = useState('');
@@ -1661,12 +1759,10 @@ function AddLeadModal({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          phone: phone.replace(/\D/g, ''),
-          first_name: lookupResult.first_name,
-          last_name: lookupResult.last_name,
-          city,
-          activity,
-          target_status: targetStatus,
+          user_id: lookupResult.user_id,
+          city_name: city,
+          activity_name: activity,
+          name: `${lookupResult.first_name} ${lookupResult.last_name}`.trim(),
         }),
       });
       const data = await res.json();
@@ -1736,7 +1832,7 @@ function AddLeadModal({
                 <div className="text-sm font-medium text-green-800">
                   {lookupResult.first_name} {lookupResult.last_name}
                 </div>
-                <div className="text-xs text-green-600">User found (ID: {lookupResult.pk})</div>
+                <div className="text-xs text-green-600">User found (ID: {lookupResult.user_id})</div>
               </div>
             )}
           </div>
@@ -2052,6 +2148,14 @@ export default function StartYourClub() {
 
   // Active section tab
   const [activeSection, setActiveSection] = useState('followup');
+  const tabsSectionRef = useRef<HTMLDivElement>(null);
+  const scrollToTabs = (section: string) => {
+    setActiveSection(section);
+    setStatusFilter('');
+    setSubsectionFilter('');
+    setMarketingFilter(false);
+    setTimeout(() => tabsSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
+  };
 
   // Sort
   const [sortField, setSortField] = useState('created_at');
@@ -2092,6 +2196,9 @@ export default function StartYourClub() {
       if (cityFilter) params.set('city', cityFilter);
       if (activityFilter) params.set('activity', activityFilter);
       if (searchQuery) params.set('search', searchQuery);
+      // Pass active section's statuses so backend returns the right applications
+      const section = SECTIONS.find(s => s.id === activeSection);
+      if (section) params.set('statuses', section.statuses.join(','));
       params.set('sort', sortField);
       params.set('order', sortDir);
       params.set('page', String(page));
@@ -2109,7 +2216,7 @@ export default function StartYourClub() {
     } finally {
       setLoading(false);
     }
-  }, [cityFilter, activityFilter, searchQuery, sortField, sortDir, page]);
+  }, [cityFilter, activityFilter, searchQuery, sortField, sortDir, page, activeSection]);
 
   const fetchAnalytics = useCallback(async () => {
     try {
@@ -2152,7 +2259,7 @@ export default function StartYourClub() {
   useEffect(() => { fetchApplications(); fetchAnalytics(); fetchFilterOptions(); fetchRatingDimensions(); }, []);
   useEffect(() => { fetchApplications(); }, [fetchApplications]);
 
-  // SSE
+  // SSE (admin actions) + polling every 30s (new user submissions)
   useEffect(() => {
     const url = import.meta.env.VITE_API_URL
       ? `${import.meta.env.VITE_API_URL}/api/start-club/events`
@@ -2160,7 +2267,8 @@ export default function StartYourClub() {
     const es = new EventSource(url);
     es.addEventListener('application_updated', () => { fetchApplications(); fetchAnalytics(); });
     es.addEventListener('activity_added', () => {});
-    return () => es.close();
+    const poll = setInterval(() => { fetchApplications(); fetchAnalytics(); }, 30000);
+    return () => { es.close(); clearInterval(poll); };
   }, [fetchApplications, fetchAnalytics]);
 
   const handleRefresh = () => { fetchApplications(); fetchAnalytics(); fetchFilterOptions(); };
@@ -2230,6 +2338,24 @@ export default function StartYourClub() {
 
   // Count per section from loaded applications (reflects filters including marketing)
   const getSectionCount = (sectionId: string, statuses: string[]) => {
+    // Use analytics funnel data for accurate global counts (not limited by pagination/filters)
+    const f = analytics?.funnel;
+    if (f) {
+      switch (sectionId) {
+        case 'followup': return (f.active_journey || 0) + (f.abandoned || 0);
+        case 'submitted': return (f.submitted || 0) + (f.under_review || 0);
+        case 'interview': return f.interview_phase || 0;
+        case 'selected': {
+          if (marketingFilter) {
+            // For marketing filter, fall back to loaded applications count
+            return applications.filter(a => a.status === 'SELECTED' && a.first_call_done && a.venue_sorted && !a.marketing_launched).length;
+          }
+          return (f.selected || 0) + (f.onboarded || 0);
+        }
+        case 'dropped': return (f.not_interested || 0) + (f.on_hold || 0) + (f.rejected || 0);
+      }
+    }
+    // Fallback to loaded applications if analytics not available
     let filtered = applications.filter(a => statuses.includes(a.status));
     if (marketingFilter && sectionId === 'selected') {
       filtered = filtered.filter(a => a.status === 'SELECTED' && a.first_call_done && a.venue_sorted && !a.marketing_launched);
@@ -2276,26 +2402,26 @@ export default function StartYourClub() {
       {/* ──── Funnel Summary Cards ──── */}
       {f && (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-5">
-          <div className="bg-orange-50 border border-orange-200 rounded-xl p-4 cursor-pointer hover:border-orange-400 transition-colors" onClick={() => { setActiveSection('followup'); setStatusFilter(''); setSubsectionFilter(''); setMarketingFilter(false); }}>
+          <div className="bg-orange-50 border border-orange-200 rounded-xl p-4 cursor-pointer hover:border-orange-400 transition-colors" onClick={() => scrollToTabs('followup')}>
             <div className="text-2xl font-bold text-orange-700">{f.active_journey + f.abandoned}</div>
             <div className="text-xs font-medium text-orange-600 mt-1">Follow Up</div>
             {f.active_journey > 0 && <div className="text-[10px] text-blue-500">{f.active_journey} active, {f.abandoned} abandoned</div>}
           </div>
-          <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 cursor-pointer hover:border-emerald-400 transition-colors" onClick={() => { setActiveSection('submitted'); setStatusFilter(''); setSubsectionFilter(''); setMarketingFilter(false); }}>
+          <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 cursor-pointer hover:border-emerald-400 transition-colors" onClick={() => scrollToTabs('submitted')}>
             <div className="text-2xl font-bold text-emerald-700">{f.submitted + f.under_review}</div>
             <div className="text-xs font-medium text-emerald-600 mt-1">Submitted</div>
             <div className="text-[10px] text-emerald-500">{f.submitted} new, {f.under_review} reviewing</div>
           </div>
-          <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-4 cursor-pointer hover:border-indigo-400 transition-colors" onClick={() => { setActiveSection('interview'); setStatusFilter(''); setSubsectionFilter(''); setMarketingFilter(false); }}>
+          <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-4 cursor-pointer hover:border-indigo-400 transition-colors" onClick={() => scrollToTabs('interview')}>
             <div className="text-2xl font-bold text-indigo-700">{f.interview_phase}</div>
             <div className="text-xs font-medium text-indigo-600 mt-1">Interview Phase</div>
           </div>
-          <div className="bg-purple-50 border border-purple-200 rounded-xl p-4 cursor-pointer hover:border-purple-400 transition-colors" onClick={() => { setActiveSection('selected'); setStatusFilter(''); setSubsectionFilter(''); setMarketingFilter(false); }}>
+          <div className="bg-purple-50 border border-purple-200 rounded-xl p-4 cursor-pointer hover:border-purple-400 transition-colors" onClick={() => scrollToTabs('selected')}>
             <div className="text-2xl font-bold text-purple-700">{f.selected + f.onboarded}</div>
             <div className="text-xs font-medium text-purple-600 mt-1">Selected</div>
             {f.onboarded > 0 && <div className="text-[10px] text-green-600">{f.onboarded} onboarded</div>}
           </div>
-          <div className="bg-red-50 border border-red-200 rounded-xl p-4 cursor-pointer hover:border-red-400 transition-colors" onClick={() => { setActiveSection('dropped'); setStatusFilter(''); setSubsectionFilter(''); setMarketingFilter(false); }}>
+          <div className="bg-red-50 border border-red-200 rounded-xl p-4 cursor-pointer hover:border-red-400 transition-colors" onClick={() => scrollToTabs('dropped')}>
             <div className="text-2xl font-bold text-red-700">{f.not_interested + f.on_hold + f.rejected}</div>
             <div className="text-xs font-medium text-red-600 mt-1">Dropped / On Hold / Not Interested</div>
             <div className="text-[10px] text-red-500">{f.rejected} rejected, {f.on_hold} on hold, {f.not_interested} not interested</div>
@@ -2527,7 +2653,7 @@ export default function StartYourClub() {
         </div>
 
         {/* 5 Section Tabs */}
-        <div className="flex border-b border-slate-200">
+        <div ref={tabsSectionRef} className="flex border-b border-slate-200">
           {SECTIONS.map(sec => {
             const count = getSectionCount(sec.id, sec.statuses);
             const isActive = activeSection === sec.id;
@@ -2570,6 +2696,16 @@ export default function StartYourClub() {
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-slate-50/80 border-b border-slate-200">
+                <th className="pl-4 pr-1 py-3 w-8">
+                  <input type="checkbox"
+                    checked={selectedIds.size > 0 && sectionApps.every(a => selectedIds.has(a.id))}
+                    onChange={e => {
+                      if (e.target.checked) setSelectedIds(new Set(sectionApps.map(a => a.id)));
+                      else setSelectedIds(new Set());
+                    }}
+                    className="rounded border-slate-300 text-indigo-600 h-3.5 w-3.5 cursor-pointer"
+                  />
+                </th>
                 <th className="px-4 py-3 text-left font-semibold text-slate-600 cursor-pointer hover:text-slate-800" onClick={() => handleSort('name')}>
                   <div className="flex items-center gap-1">Name {sortField === 'name' && (sortDir === 'asc' ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />)}</div>
                 </th>
@@ -2668,6 +2804,12 @@ export default function StartYourClub() {
                               onRefresh={handleRefresh}
                               screeningDims={screeningDims}
                               interviewDims={interviewDims}
+                              isSelected={selectedIds.has(app.id)}
+                              onSelect={(id, checked) => setSelectedIds(prev => {
+                                const next = new Set(prev);
+                                if (checked) next.add(id); else next.delete(id);
+                                return next;
+                              })}
                             />
                           ))}
                         </React.Fragment>

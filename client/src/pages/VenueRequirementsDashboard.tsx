@@ -213,6 +213,9 @@ interface Summary {
   leader_approval: number;
   done: number;
   deprioritised: number;
+  // Venue platform team counts
+  bau_count: number;
+  supply_count: number;
   // TAT statistics
   tat_stats?: {
     average_tat: number;
@@ -251,6 +254,9 @@ export default function VenueRequirementsDashboard() {
   );
   const [showDone, setShowDone] = useState(false);
   const [showDeprioritised, setShowDeprioritised] = useState(false);
+
+  // Venue platform team filter (BAU/Supply)
+  const [venuePlatformTeamFilter, setVenuePlatformTeamFilter] = useState<'bau' | 'supply' | null>(null);
 
   // Filter options from API
   const [filterOptions, setFilterOptions] = useState<{
@@ -360,6 +366,7 @@ export default function VenueRequirementsDashboard() {
       if (filters.areas.length > 0) params.append('area_ids', filters.areas.join(','));
       if (filters.clubs.length > 0) params.append('club_ids', filters.clubs.join(','));
       if (filters.teams.length > 0) params.append('teams', filters.teams.join(','));
+      if (venuePlatformTeamFilter) params.append('venue_platform_team', venuePlatformTeamFilter);
 
       // Pass hierarchy order (only enabled levels)
       const enabledOrder = hierarchyLevels.filter(l => enabledLevels.has(l));
@@ -379,7 +386,7 @@ export default function VenueRequirementsDashboard() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [filters, hierarchyLevels, enabledLevels]);
+  }, [filters, hierarchyLevels, enabledLevels, venuePlatformTeamFilter]);
 
   useEffect(() => {
     fetchData();
@@ -1122,6 +1129,14 @@ export default function VenueRequirementsDashboard() {
                 <option key={key} value={key}>{config.label}</option>
               ))}
             </select>
+            {/* BAU/Supply badge */}
+            <span className={`ml-1 inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wide ${
+              (req as any).venue_platform_team === 'supply'
+                ? 'bg-orange-100 text-orange-700 border border-orange-200'
+                : 'bg-gray-100 text-gray-500 border border-gray-200'
+            }`}>
+              {(req as any).venue_platform_team === 'supply' ? 'Supply' : 'BAU'}
+            </span>
           </td>
 
           {/* Venue Category */}
@@ -1306,6 +1321,34 @@ export default function VenueRequirementsDashboard() {
                   <span className="text-[9px] font-bold">{commentsCount}</span>
                 )}
               </button>
+              {/* Escalate BAU/Supply button */}
+              {req.status !== 'done' && req.status !== 'deprioritised' && (
+                <button
+                  onClick={async (e) => {
+                    e.stopPropagation();
+                    const targetTeam = (req as any).venue_platform_team === 'supply' ? 'bau' : 'supply';
+                    try {
+                      const res = await fetch(`${API_BASE}/requirements/venues/${req.id}/escalate`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ target_team: targetTeam })
+                      });
+                      const data = await res.json();
+                      if (data.success) fetchData(true);
+                    } catch (err) {
+                      console.error('Error escalating:', err);
+                    }
+                  }}
+                  className={`px-2 py-1 rounded-md text-[10px] font-medium transition-colors ${
+                    (req as any).venue_platform_team === 'supply'
+                      ? 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                      : 'bg-orange-50 text-orange-600 hover:bg-orange-100'
+                  }`}
+                  title={(req as any).venue_platform_team === 'supply' ? 'Send back to BAU' : 'Escalate to Supply'}
+                >
+                  {(req as any).venue_platform_team === 'supply' ? 'To BAU' : 'To Supply'}
+                </button>
+              )}
               {/* Edit/Delete - show on hover */}
               <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                 <button
@@ -1840,6 +1883,32 @@ export default function VenueRequirementsDashboard() {
 
             <div className="h-6 w-px bg-gray-200" />
 
+            {/* Venue Platform Team Filter (BAU/Supply) */}
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => setVenuePlatformTeamFilter(prev => prev === 'bau' ? null : 'bau')}
+                className={`px-3 py-1 text-xs font-medium rounded-full transition-all duration-150 ${
+                  venuePlatformTeamFilter === 'bau'
+                    ? 'bg-gray-700 text-white shadow-sm'
+                    : 'bg-white text-gray-600 hover:bg-gray-50 border border-gray-200'
+                }`}
+              >
+                BAU {summary ? `(${summary.bau_count})` : ''}
+              </button>
+              <button
+                onClick={() => setVenuePlatformTeamFilter(prev => prev === 'supply' ? null : 'supply')}
+                className={`px-3 py-1 text-xs font-medium rounded-full transition-all duration-150 ${
+                  venuePlatformTeamFilter === 'supply'
+                    ? 'bg-orange-500 text-white shadow-sm'
+                    : 'bg-white text-gray-600 hover:bg-gray-50 border border-gray-200'
+                }`}
+              >
+                Supply {summary ? `(${summary.supply_count})` : ''}
+              </button>
+            </div>
+
+            <div className="h-6 w-px bg-gray-200" />
+
             {/* Status Filter - Multi-select dropdown */}
             <div className="flex items-center gap-2">
               <MultiSelectDropdown<string>
@@ -1883,7 +1952,7 @@ export default function VenueRequirementsDashboard() {
 
             {/* Clear Filters */}
             {(filters.activities.length > 0 || filters.cities.length > 0 || filters.areas.length > 0 ||
-              filters.clubs.length > 0 || filters.teams.length > 0 ||
+              filters.clubs.length > 0 || filters.teams.length > 0 || venuePlatformTeamFilter !== null ||
               activeStatusFilters.length !== 4 || showDone || showDeprioritised) && (
               <>
                 <div className="h-6 w-px bg-gray-200" />
@@ -1893,6 +1962,7 @@ export default function VenueRequirementsDashboard() {
                     setActiveStatusFilters(['not_picked', 'picked', 'venue_aligned', 'leader_approval']);
                     setShowDone(false);
                     setShowDeprioritised(false);
+                    setVenuePlatformTeamFilter(null);
                   }}
                   className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-500 hover:text-gray-700 hover:bg-gray-50 rounded-lg transition-colors"
                 >
