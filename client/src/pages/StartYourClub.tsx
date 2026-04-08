@@ -737,16 +737,24 @@ function LeadRow({
                               className="w-16 px-1.5 py-1 text-xs border border-indigo-200 rounded-md text-center" />
                           </div>
                           <button
+                            id={`split-save-${app.id}`}
                             onClick={async () => {
+                              const btn = document.getElementById(`split-save-${app.id}`) as HTMLButtonElement;
                               const m = parseInt(splitMisfits), l = parseInt(splitLeader);
                               if (m + l !== 100) return alert('Must add up to 100%');
+                              btn.textContent = 'Saving...'; btn.disabled = true;
                               const res = await fetch(`${API_BASE}/admin/${app.id}/split`, {
                                 method: 'PATCH', headers: { 'Content-Type': 'application/json' },
                                 body: JSON.stringify({ misfits_pct: m, leader_pct: l }),
                               });
                               const data = await res.json();
-                              if (data.success) refetchDetail();
-                              else alert(data.error);
+                              if (data.success) {
+                                btn.textContent = 'Saved!'; btn.style.backgroundColor = '#16a34a';
+                                refetchDetail();
+                                setTimeout(() => { btn.textContent = 'Save'; btn.disabled = false; btn.style.backgroundColor = ''; }, 2000);
+                              } else {
+                                alert(data.error); btn.textContent = 'Save'; btn.disabled = false;
+                              }
                             }}
                             disabled={parseInt(splitMisfits) + parseInt(splitLeader) !== 100}
                             className="px-2.5 py-1 text-[10px] font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-700 disabled:opacity-50"
