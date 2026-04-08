@@ -775,14 +775,19 @@ function LeadRow({
                         ) : (
                           <>
                             {!detail.contract_url ? (
-                              <label className="flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] font-medium text-purple-600 bg-white border border-purple-200 rounded-md hover:bg-purple-50 cursor-pointer">
+                              <label id={`contract-label-${app.id}`} className="flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] font-medium text-purple-600 bg-white border border-purple-200 rounded-md hover:bg-purple-50 cursor-pointer">
                                 <Upload className="h-3 w-3" /> Upload Contract
                                 <input type="file" className="hidden" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png" onChange={async (e) => {
                                   const file = e.target.files?.[0]; if (!file) return;
+                                  const label = document.getElementById(`contract-label-${app.id}`);
+                                  if (label) label.innerHTML = '<span class="animate-pulse">Uploading...</span>';
                                   const fd = new FormData(); fd.append('contract', file);
                                   const res = await fetch(`${API_BASE}/admin/${app.id}/upload-contract`, { method: 'POST', body: fd });
                                   const data = await res.json();
-                                  if (data.success) refetchDetail(); else alert(data.error);
+                                  if (data.success) {
+                                    if (label) { label.innerHTML = '<span style="color:#16a34a">Uploaded!</span>'; }
+                                    refetchDetail();
+                                  } else { alert(data.error); if (label) label.innerHTML = '<svg class="h-3 w-3" />&nbsp;Upload Contract'; }
                                 }} />
                               </label>
                             ) : (
@@ -790,14 +795,19 @@ function LeadRow({
                                 <FileText className="h-3 w-3 text-purple-500" />
                                 <a href={detail.contract_url} target="_blank" rel="noopener noreferrer" className="text-[10px] text-purple-600 underline">View</a>
                                 <button onClick={() => { const u = detail.contract_url!; navigator.clipboard.writeText(u.startsWith('http') ? u : `${window.location.origin}${u}`); alert('Link copied!'); }} className="px-1.5 py-0.5 text-[9px] font-medium text-purple-600 bg-white border border-purple-200 rounded hover:bg-purple-50">Copy</button>
-                                <label className="px-1.5 py-0.5 text-[9px] font-medium text-orange-600 bg-white border border-orange-200 rounded hover:bg-orange-50 cursor-pointer ml-auto">
+                                <label id={`contract-replace-${app.id}`} className="px-1.5 py-0.5 text-[9px] font-medium text-orange-600 bg-white border border-orange-200 rounded hover:bg-orange-50 cursor-pointer ml-auto">
                                   Replace
                                   <input type="file" className="hidden" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png" onChange={async (e) => {
                                     const file = e.target.files?.[0]; if (!file) return;
+                                    const label = document.getElementById(`contract-replace-${app.id}`);
+                                    if (label) label.innerHTML = '<span class="animate-pulse">Uploading...</span><input type="file" class="hidden" />';
                                     const fd = new FormData(); fd.append('contract', file);
                                     const res = await fetch(`${API_BASE}/admin/${app.id}/upload-contract`, { method: 'POST', body: fd });
                                     const data = await res.json();
-                                    if (data.success) refetchDetail(); else alert(data.error);
+                                    if (data.success) {
+                                      if (label) label.innerHTML = '<span style="color:#16a34a">Replaced!</span><input type="file" class="hidden" />';
+                                      refetchDetail();
+                                    } else { alert(data.error); if (label) label.textContent = 'Replace'; }
                                   }} />
                                 </label>
                               </div>
