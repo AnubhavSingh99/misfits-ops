@@ -727,13 +727,13 @@ function LeadRow({
                         <div className="flex items-end gap-1.5">
                           <div>
                             <div className="text-[9px] font-medium text-indigo-500 mb-0.5">Misfits %</div>
-                            <input type="number" min="0" max="100" value={splitMisfits} onChange={e => { setSplitMisfits(e.target.value); const v = parseInt(e.target.value); if (!isNaN(v) && v >= 0 && v <= 100) setSplitLeader(String(100 - v)); }}
+                            <input type="number" min="0" max="100" value={splitMisfits} onChange={e => { setSplitMisfits(e.target.value); const v = parseInt(e.target.value); if (!isNaN(v) && v >= 0 && v <= 100) setSplitLeader(String(100 - v)); const btn = document.getElementById(`split-save-${app.id}`) as HTMLButtonElement; if (btn) { btn.textContent = 'Save'; btn.disabled = false; btn.style.backgroundColor = ''; } }}
                               className="w-16 px-1.5 py-1 text-xs border border-indigo-200 rounded-md text-center" />
                           </div>
                           <span className="text-slate-400 font-bold pb-1 text-xs">/</span>
                           <div>
                             <div className="text-[9px] font-medium text-indigo-500 mb-0.5">Leader %</div>
-                            <input type="number" min="0" max="100" value={splitLeader} onChange={e => { setSplitLeader(e.target.value); const v = parseInt(e.target.value); if (!isNaN(v) && v >= 0 && v <= 100) setSplitMisfits(String(100 - v)); }}
+                            <input type="number" min="0" max="100" value={splitLeader} onChange={e => { setSplitLeader(e.target.value); const v = parseInt(e.target.value); if (!isNaN(v) && v >= 0 && v <= 100) setSplitMisfits(String(100 - v)); const btn = document.getElementById(`split-save-${app.id}`) as HTMLButtonElement; if (btn) { btn.textContent = 'Save'; btn.disabled = false; btn.style.backgroundColor = ''; } }}
                               className="w-16 px-1.5 py-1 text-xs border border-indigo-200 rounded-md text-center" />
                           </div>
                           <button
@@ -749,9 +749,8 @@ function LeadRow({
                               });
                               const data = await res.json();
                               if (data.success) {
-                                btn.textContent = 'Saved!'; btn.style.backgroundColor = '#16a34a';
+                                btn.textContent = '\u2713 Saved'; btn.style.backgroundColor = '#16a34a'; btn.disabled = true;
                                 refetchDetail();
-                                setTimeout(() => { btn.textContent = 'Save'; btn.disabled = false; btn.style.backgroundColor = ''; }, 2000);
                               } else {
                                 alert(data.error); btn.textContent = 'Save'; btn.disabled = false;
                               }
@@ -759,7 +758,7 @@ function LeadRow({
                             disabled={parseInt(splitMisfits) + parseInt(splitLeader) !== 100}
                             className="px-2.5 py-1 text-[10px] font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-700 disabled:opacity-50"
                           >
-                            Save
+                            {detail.split_percentage ? '\u2713 Saved' : 'Save'}
                           </button>
                         </div>
                         {parseInt(splitMisfits) + parseInt(splitLeader) !== 100 && (
