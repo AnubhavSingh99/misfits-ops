@@ -2180,14 +2180,24 @@ export default function StartYourClub() {
   // Get statuses for current section
   const currentSection = SECTIONS.find(s => s.id === activeSection)!;
 
-  // Scheduled calls tile (INTERVIEW_SCHEDULED leads with upcoming interviews)
+  // Scheduled calls tile (INTERVIEW_SCHEDULED leads — fetched independently so it works on every tab)
   const [scheduledCallsCollapsed, setScheduledCallsCollapsed] = useState(true);
-  const scheduledCalls = useMemo(() =>
-    applications
-      .filter(a => a.status === 'INTERVIEW_SCHEDULED' && a.interview_scheduled_at)
-      .sort((a, b) => new Date(a.interview_scheduled_at!).getTime() - new Date(b.interview_scheduled_at!).getTime()),
-    [applications]
-  );
+  const [scheduledCalls, setScheduledCalls] = useState<Application[]>([]);
+  const fetchScheduledCalls = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE}/admin/all?statuses=INTERVIEW_SCHEDULED&sort=created_at&order=desc&page=1&limit=200`);
+      const data = await res.json();
+      if (data.success) {
+        setScheduledCalls(
+          (data.data as Application[])
+            .filter(a => a.interview_scheduled_at)
+            .sort((a, b) => new Date(a.interview_scheduled_at!).getTime() - new Date(b.interview_scheduled_at!).getTime())
+        );
+      }
+    } catch (err) {
+      console.error('Failed to fetch scheduled calls:', err);
+    }
+  }, []);
 
   const fetchApplications = useCallback(async () => {
     try {
@@ -2256,7 +2266,7 @@ export default function StartYourClub() {
     }
   }, []);
 
-  useEffect(() => { fetchApplications(); fetchAnalytics(); fetchFilterOptions(); fetchRatingDimensions(); }, []);
+  useEffect(() => { fetchApplications(); fetchAnalytics(); fetchFilterOptions(); fetchRatingDimensions(); fetchScheduledCalls(); }, []);
   useEffect(() => { fetchApplications(); }, [fetchApplications]);
 
   // SSE (admin actions) + polling every 30s (new user submissions)
@@ -2271,7 +2281,7 @@ export default function StartYourClub() {
     return () => { es.close(); clearInterval(poll); };
   }, [fetchApplications, fetchAnalytics]);
 
-  const handleRefresh = () => { fetchApplications(); fetchAnalytics(); fetchFilterOptions(); };
+  const handleRefresh = () => { fetchApplications(); fetchAnalytics(); fetchFilterOptions(); fetchScheduledCalls(); };
 
   const handleSort = (field: string) => {
     if (sortField === field) setSortDir(prev => prev === 'asc' ? 'desc' : 'asc');
