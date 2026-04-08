@@ -361,6 +361,7 @@ function LeadRow({
   const [screeningRatings, setScreeningRatings] = useState<Record<string, number>>({});
   // Interview ratings (post-interview)
   const [interviewRatings, setInterviewRatings] = useState<Record<string, number>>({});
+  const [showInterviewForm, setShowInterviewForm] = useState(false);
 
   const [rejectionReason, setRejectionReason] = useState('');
   const [showRejectForm, setShowRejectForm] = useState(false);
@@ -1232,36 +1233,113 @@ function LeadRow({
                       )}
                       {detail.status === 'INTERVIEW_SCHEDULED' && (
                         <div className="space-y-2">
-                          <div className="flex gap-2">
-                            <button onClick={() => handleStatusTransition('INTERVIEW_DONE')} className="flex-1 py-2 text-xs font-medium text-purple-600 bg-purple-50 border border-purple-200 rounded-lg hover:bg-purple-100">
-                              Mark Interview Done
-                            </button>
-                            <button
-                              onClick={async () => {
-                                if (!confirm('Reschedule this interview? The lead will be moved back to Interview Pending.')) return;
-                                const res = await fetch(`${API_BASE}/admin/${app.id}/reschedule`, {
-                                  method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-                                });
-                                const data = await res.json();
-                                if (data.success) { refetchDetail(); onRefresh(); }
-                                else alert(data.error);
-                              }}
-                              className="px-3 py-2 text-xs font-medium text-amber-600 bg-amber-50 border border-amber-200 rounded-lg hover:bg-amber-100 flex items-center gap-1"
-                            >
-                              <RotateCcw className="h-3 w-3" /> Reschedule
-                            </button>
-                          </div>
-                          {!showRejectForm ? (
-                            <button onClick={() => setShowRejectForm(true)} className="w-full py-2 text-xs font-medium text-red-600 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100">Reject</button>
-                          ) : (
-                            <div className="p-3 bg-red-50 rounded-lg border border-red-200">
-                              <select value={rejectionReason} onChange={e => setRejectionReason(e.target.value)} className="w-full mb-2 px-2 py-1.5 text-xs border border-red-200 rounded-lg bg-white">
-                                <option value="">Select reason...</option>
-                                {REJECTION_REASONS.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
-                              </select>
+                          {!showInterviewForm ? (
+                            <>
                               <div className="flex gap-2">
-                                <button onClick={handleReject} disabled={!rejectionReason} className="flex-1 py-1.5 text-xs font-medium text-white bg-red-600 rounded-lg disabled:opacity-50">Confirm</button>
-                                <button onClick={() => { setShowRejectForm(false); setRejectionReason(''); }} className="px-3 py-1.5 text-xs text-slate-600 bg-white border rounded-lg">Cancel</button>
+                                <button onClick={() => setShowInterviewForm(true)} className="flex-1 py-2 text-xs font-medium text-purple-600 bg-purple-50 border border-purple-200 rounded-lg hover:bg-purple-100">
+                                  Mark Interview Done
+                                </button>
+                                <button
+                                  onClick={async () => {
+                                    if (!confirm('Reschedule this interview? The lead will be moved back to Interview Pending.')) return;
+                                    const res = await fetch(`${API_BASE}/admin/${app.id}/reschedule`, {
+                                      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+                                    });
+                                    const data = await res.json();
+                                    if (data.success) { refetchDetail(); onRefresh(); }
+                                    else alert(data.error);
+                                  }}
+                                  className="px-3 py-2 text-xs font-medium text-amber-600 bg-amber-50 border border-amber-200 rounded-lg hover:bg-amber-100 flex items-center gap-1"
+                                >
+                                  <RotateCcw className="h-3 w-3" /> Reschedule
+                                </button>
+                              </div>
+                              {!showRejectForm ? (
+                                <button onClick={() => setShowRejectForm(true)} className="w-full py-2 text-xs font-medium text-red-600 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100">Reject</button>
+                              ) : (
+                                <div className="p-3 bg-red-50 rounded-lg border border-red-200">
+                                  <select value={rejectionReason} onChange={e => setRejectionReason(e.target.value)} className="w-full mb-2 px-2 py-1.5 text-xs border border-red-200 rounded-lg bg-white">
+                                    <option value="">Select reason...</option>
+                                    {REJECTION_REASONS.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
+                                  </select>
+                                  <div className="flex gap-2">
+                                    <button onClick={handleReject} disabled={!rejectionReason} className="flex-1 py-1.5 text-xs font-medium text-white bg-red-600 rounded-lg disabled:opacity-50">Confirm</button>
+                                    <button onClick={() => { setShowRejectForm(false); setRejectionReason(''); }} className="px-3 py-1.5 text-xs text-slate-600 bg-white border rounded-lg">Cancel</button>
+                                  </div>
+                                </div>
+                              )}
+                            </>
+                          ) : (
+                            /* Inline interview completion form — rate + decide in one go */
+                            <div className="p-4 bg-purple-50 rounded-xl border border-purple-200">
+                              <div className="flex items-center justify-between mb-3">
+                                <h4 className="text-xs font-bold text-purple-700">Interview Complete — Rate & Decide</h4>
+                                <button onClick={() => { setShowInterviewForm(false); setInterviewRatings({}); }} className="text-[10px] text-slate-400 hover:text-slate-600">Cancel</button>
+                              </div>
+                              <RatingForm ratings={interviewRatings} setRatings={setInterviewRatings} label="Interview Ratings" dims={interviewDims} />
+                              {!allInterviewRated && (
+                                <p className="text-[10px] text-amber-600 mt-2 flex items-center gap-1">
+                                  <AlertTriangle className="h-3 w-3" /> Rate all dimensions to unlock actions
+                                </p>
+                              )}
+                              <div className="space-y-2 mt-4">
+                                <div className="space-y-1.5 mb-2">
+                                  <div className="text-xs font-medium text-purple-600">Revenue Split</div>
+                                  <div className="flex items-center gap-2">
+                                    <div className="flex-1">
+                                      <label className="text-[10px] text-slate-500">Misfits %</label>
+                                      <input type="number" min="0" max="100" value={splitMisfits}
+                                        onChange={e => { setSplitMisfits(e.target.value); const v = parseInt(e.target.value); if (!isNaN(v) && v >= 0 && v <= 100) setSplitLeader(String(100 - v)); }}
+                                        className="w-full px-2 py-1.5 text-sm border border-purple-200 rounded-lg text-center bg-white" />
+                                    </div>
+                                    <span className="text-slate-400 font-bold mt-4">/</span>
+                                    <div className="flex-1">
+                                      <label className="text-[10px] text-slate-500">Leader %</label>
+                                      <input type="number" min="0" max="100" value={splitLeader}
+                                        onChange={e => { setSplitLeader(e.target.value); const v = parseInt(e.target.value); if (!isNaN(v) && v >= 0 && v <= 100) setSplitMisfits(String(100 - v)); }}
+                                        className="w-full px-2 py-1.5 text-sm border border-purple-200 rounded-lg text-center bg-white" />
+                                    </div>
+                                  </div>
+                                  {parseInt(splitMisfits) + parseInt(splitLeader) !== 100 && (
+                                    <p className="text-[10px] text-red-500">Must add up to 100%</p>
+                                  )}
+                                </div>
+                                <button
+                                  onClick={async () => {
+                                    // First transition to INTERVIEW_DONE, then select
+                                    await handleStatusTransition('INTERVIEW_DONE');
+                                    await handleSelect();
+                                    setShowInterviewForm(false);
+                                  }}
+                                  disabled={!allInterviewRated || parseInt(splitMisfits) + parseInt(splitLeader) !== 100}
+                                  className="w-full py-2 text-xs font-medium text-white bg-purple-600 rounded-lg hover:bg-purple-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                                >
+                                  Select & Assign Split
+                                </button>
+                                {!showRejectForm ? (
+                                  <button
+                                    onClick={() => setShowRejectForm(true)}
+                                    disabled={!allInterviewRated}
+                                    className="w-full py-2 text-xs font-medium text-red-600 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100 disabled:opacity-40 disabled:cursor-not-allowed"
+                                  >
+                                    Reject
+                                  </button>
+                                ) : (
+                                  <div className="p-3 bg-red-50 rounded-lg border border-red-200 mt-2">
+                                    <select value={rejectionReason} onChange={e => setRejectionReason(e.target.value)} className="w-full mb-2 px-2 py-1.5 text-xs border border-red-200 rounded-lg bg-white">
+                                      <option value="">Select reason...</option>
+                                      {REJECTION_REASONS.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
+                                    </select>
+                                    <div className="flex gap-2">
+                                      <button onClick={async () => {
+                                        await handleStatusTransition('INTERVIEW_DONE');
+                                        await handleReject();
+                                        setShowInterviewForm(false);
+                                      }} disabled={!rejectionReason} className="flex-1 py-1.5 text-xs font-medium text-white bg-red-600 rounded-lg disabled:opacity-50">Confirm Reject</button>
+                                      <button onClick={() => { setShowRejectForm(false); setRejectionReason(''); }} className="px-3 py-1.5 text-xs text-slate-600 bg-white border rounded-lg">Cancel</button>
+                                    </div>
+                                  </div>
+                                )}
                               </div>
                             </div>
                           )}
@@ -1822,12 +1900,13 @@ function AddLeadModal({
               <input
                 type="text"
                 value={phone}
-                onChange={e => { setPhone(e.target.value); setLookupResult(null); setLookupError(''); }}
+                onChange={e => { const v = e.target.value; setPhone(v); setLookupResult(null); setLookupError(''); const digits = v.replace(/\D/g, ''); if (digits.length === 10) { setTimeout(() => { const btn = document.querySelector('[data-lookup-btn]') as HTMLButtonElement; if (btn) btn.click(); }, 100); } }}
                 onKeyDown={e => e.key === 'Enter' && handleLookup()}
                 placeholder="10-digit phone number"
                 className="flex-1 px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400"
               />
               <button
+                data-lookup-btn
                 onClick={handleLookup}
                 disabled={lookupLoading || phone.replace(/\D/g, '').length < 10}
                 className="px-4 py-2 text-sm font-medium text-indigo-600 bg-indigo-50 border border-indigo-200 rounded-lg hover:bg-indigo-100 disabled:opacity-50 flex items-center gap-1.5"
