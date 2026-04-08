@@ -2183,6 +2183,25 @@ export default function StartYourClub() {
   // Scheduled calls tile (INTERVIEW_SCHEDULED leads — fetched independently so it works on every tab)
   const [scheduledCallsCollapsed, setScheduledCallsCollapsed] = useState(true);
   const [scheduledCalls, setScheduledCalls] = useState<Application[]>([]);
+  const [expandedScheduledId, setExpandedScheduledId] = useState<string | null>(null);
+  const [scheduledDetail, setScheduledDetail] = useState<any>(null);
+  const [scheduledDetailLoading, setScheduledDetailLoading] = useState(false);
+
+  // Fetch detail when a scheduled call is expanded
+  useEffect(() => {
+    if (expandedScheduledId) {
+      setScheduledDetailLoading(true);
+      setScheduledDetail(null);
+      fetch(`${API_BASE}/admin/${expandedScheduledId}`)
+        .then(r => r.json())
+        .then(data => { if (data.success) setScheduledDetail(data.data); })
+        .catch(console.error)
+        .finally(() => setScheduledDetailLoading(false));
+    } else {
+      setScheduledDetail(null);
+    }
+  }, [expandedScheduledId]);
+
   const fetchScheduledCalls = useCallback(async () => {
     try {
       const res = await fetch(`${API_BASE}/admin/all?statuses=INTERVIEW_SCHEDULED&sort=created_at&order=desc&page=1&limit=200`);
@@ -2477,59 +2496,106 @@ export default function StartYourClub() {
                     <div className="space-y-1.5">
                       {apps.map(app => {
                         const time = new Date(app.interview_scheduled_at!).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
+                        const isExpanded = expandedScheduledId === String(app.id);
                         return (
-                          <div key={app.id} className="flex items-center gap-3 px-3 py-2.5 bg-slate-50 rounded-lg border border-slate-100 hover:border-teal-200 transition-colors">
-                            <div className="flex-1 min-w-0 cursor-pointer" onClick={() => { setActiveSection('interview'); setStatusFilter(''); setSubsectionFilter(''); setCollapsedSubsections(prev => { const next = new Set(prev); next.delete('scheduled'); return next; }); setExpandedId(String(app.id)); }}>
-                              <div className="flex items-center gap-2">
-                                <span className="text-sm font-medium text-slate-800 truncate">{app.name || 'Unnamed'}</span>
-                                {app.admin_created && <span className="text-[9px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full">Admin</span>}
+                          <div key={app.id} className={`rounded-lg border transition-colors ${isExpanded ? 'border-teal-300 bg-white' : 'border-slate-100 bg-slate-50 hover:border-teal-200'}`}>
+                            <div className="flex items-center gap-3 px-3 py-2.5">
+                              <div className="flex-1 min-w-0 cursor-pointer" onClick={() => setExpandedScheduledId(isExpanded ? null : String(app.id))}>
+                                <div className="flex items-center gap-2">
+                                  <span className="text-sm font-medium text-slate-800 truncate">{app.name || 'Unnamed'}</span>
+                                  {app.user_phone && <span className="text-[10px] text-slate-400">{app.user_phone}</span>}
+                                  {app.admin_created && <span className="text-[9px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full">Admin</span>}
+                                </div>
+                                <div className="text-xs text-slate-500">{app.city} · {app.activity}</div>
                               </div>
-                              <div className="text-xs text-slate-500">{app.city} · {app.activity}</div>
-                            </div>
-                            <div className="text-xs font-medium text-slate-600 whitespace-nowrap">{time}</div>
-                            <div className="flex items-center gap-1.5">
-                              {app.calendly_meet_link ? (
-                                <a
-                                  href={app.calendly_meet_link}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-white bg-teal-600 rounded-lg hover:bg-teal-700"
-                                  onClick={e => e.stopPropagation()}
+                              <div className="text-xs font-medium text-slate-600 whitespace-nowrap">{time}</div>
+                              <div className="flex items-center gap-1.5">
+                                {app.calendly_meet_link ? (
+                                  <a
+                                    href={app.calendly_meet_link}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-white bg-teal-600 rounded-lg hover:bg-teal-700"
+                                    onClick={e => e.stopPropagation()}
+                                  >
+                                    <Video className="h-3 w-3" /> Join
+                                  </a>
+                                ) : (
+                                  <span className="px-2.5 py-1.5 text-xs text-slate-400 bg-slate-100 rounded-lg">No link</span>
+                                )}
+                                <button
+                                  onClick={async () => {
+                                    const res = await fetch(`${API_BASE}/admin/${app.id}/status`, {
+                                      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+                                      body: JSON.stringify({ to_status: 'INTERVIEW_DONE' }),
+                                    });
+                                    const data = await res.json();
+                                    if (data.success) { handleRefresh(); setExpandedScheduledId(null); }
+                                    else alert(data.error || 'Failed');
+                                  }}
+                                  className="px-2 py-1.5 text-xs font-medium text-purple-600 bg-purple-50 border border-purple-200 rounded-lg hover:bg-purple-100"
                                 >
-                                  <Video className="h-3 w-3" /> Join
-                                </a>
-                              ) : (
-                                <span className="px-2.5 py-1.5 text-xs text-slate-400 bg-slate-100 rounded-lg">No link</span>
-                              )}
-                              <button
-                                onClick={async () => {
-                                  const res = await fetch(`${API_BASE}/admin/${app.id}/status`, {
-                                    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-                                    body: JSON.stringify({ to_status: 'INTERVIEW_DONE' }),
-                                  });
-                                  const data = await res.json();
-                                  if (data.success) handleRefresh();
-                                  else alert(data.error || 'Failed');
-                                }}
-                                className="px-2 py-1.5 text-xs font-medium text-purple-600 bg-purple-50 border border-purple-200 rounded-lg hover:bg-purple-100"
-                              >
-                                Done
-                              </button>
-                              <button
-                                onClick={async () => {
-                                  if (!confirm('Reschedule this interview?')) return;
-                                  const res = await fetch(`${API_BASE}/admin/${app.id}/reschedule`, {
-                                    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-                                  });
-                                  const data = await res.json();
-                                  if (data.success) handleRefresh();
-                                  else alert(data.error || 'Failed');
-                                }}
-                                className="px-2 py-1.5 text-xs font-medium text-amber-600 bg-amber-50 border border-amber-200 rounded-lg hover:bg-amber-100"
-                              >
-                                <RotateCcw className="h-3 w-3" />
-                              </button>
+                                  Done
+                                </button>
+                                <button
+                                  onClick={async () => {
+                                    if (!confirm('Reschedule this interview?')) return;
+                                    const res = await fetch(`${API_BASE}/admin/${app.id}/reschedule`, {
+                                      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+                                    });
+                                    const data = await res.json();
+                                    if (data.success) { handleRefresh(); setExpandedScheduledId(null); }
+                                    else alert(data.error || 'Failed');
+                                  }}
+                                  className="px-2 py-1.5 text-xs font-medium text-amber-600 bg-amber-50 border border-amber-200 rounded-lg hover:bg-amber-100"
+                                >
+                                  <RotateCcw className="h-3 w-3" />
+                                </button>
+                                <button onClick={() => setExpandedScheduledId(isExpanded ? null : String(app.id))} className="px-1 py-1.5 text-slate-400 hover:text-slate-600">
+                                  {isExpanded ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+                                </button>
+                              </div>
                             </div>
+                            {/* Expanded detail panel */}
+                            {isExpanded && (
+                              <div className="px-4 pb-4 border-t border-slate-100">
+                                {scheduledDetailLoading ? (
+                                  <div className="py-4 text-center text-xs text-slate-400">Loading...</div>
+                                ) : scheduledDetail ? (
+                                  <div className="pt-3 grid grid-cols-1 md:grid-cols-3 gap-4">
+                                    {/* Responses */}
+                                    <div className="md:col-span-2 space-y-2">
+                                      <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wide">Responses</h4>
+                                      {scheduledDetail.questionnaire_data && Object.entries(scheduledDetail.questionnaire_data).map(([key, value]: [string, any]) => (
+                                        <div key={key}>
+                                          <p className="text-[11px] font-medium text-slate-400">{scheduledDetail.question_map?.[key] || `Question ${key}`}</p>
+                                          <p className="text-xs text-slate-700">{String(value)}</p>
+                                        </div>
+                                      ))}
+                                    </div>
+                                    {/* Screening ratings + actions */}
+                                    <div className="space-y-3">
+                                      {scheduledDetail.screening_ratings && (
+                                        <div>
+                                          <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Screening Ratings</h4>
+                                          {Object.entries(scheduledDetail.screening_ratings).map(([dim, score]: [string, any]) => (
+                                            <div key={dim} className="flex justify-between text-xs py-0.5">
+                                              <span className="text-slate-600 capitalize">{dim.replace(/_/g, ' ')}</span>
+                                              <span className="font-medium text-slate-800">{score}/5</span>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      )}
+                                      {scheduledDetail.reviewed_by && (
+                                        <p className="text-[10px] text-slate-400">Reviewed by: <span className="font-medium text-slate-600">{scheduledDetail.reviewed_by}</span></p>
+                                      )}
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <div className="py-4 text-center text-xs text-slate-400">Failed to load details</div>
+                                )}
+                              </div>
+                            )}
                           </div>
                         );
                       })}
