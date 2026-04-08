@@ -453,6 +453,17 @@ router.post('/admin/create-lead', async (req: Request, res: Response) => {
   }
 });
 
+// GET /admin/reviewers — Get past reviewer names for autocomplete (MUST be before /admin/:id)
+router.get('/admin/reviewers', async (req: Request, res: Response) => {
+  try {
+    const result = await queryLocal('SELECT name FROM syc_reviewers ORDER BY last_used_at DESC');
+    res.json({ success: true, reviewers: result.rows.map((r: any) => r.name) });
+  } catch (error: any) {
+    logger.error('Failed to fetch reviewers:', error);
+    res.json({ success: true, reviewers: [] });
+  }
+});
+
 // GET /admin/:id — Full detail for one application
 router.get('/admin/:id', async (req: Request, res: Response) => {
   try {
@@ -524,16 +535,7 @@ router.get('/admin/:id', async (req: Request, res: Response) => {
   }
 });
 
-// GET /admin/reviewers — Get past reviewer names for autocomplete
-router.get('/admin/reviewers', async (req: Request, res: Response) => {
-  try {
-    const result = await queryLocal('SELECT name FROM syc_reviewers ORDER BY last_used_at DESC');
-    res.json({ success: true, reviewers: result.rows.map((r: any) => r.name) });
-  } catch (error: any) {
-    logger.error('Failed to fetch reviewers:', error);
-    res.json({ success: true, reviewers: [] });
-  }
-});
+// (reviewers route moved before /admin/:id)
 
 // PATCH /admin/:id/pick — "Pick" a submitted application for review (SUBMITTED → UNDER_REVIEW)
 router.patch('/admin/:id/pick', async (req: Request, res: Response) => {
