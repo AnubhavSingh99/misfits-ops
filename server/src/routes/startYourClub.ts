@@ -404,6 +404,55 @@ router.get('/admin/activities', async (req: Request, res: Response) => {
   }
 });
 
+// GET /admin/lookup-user — Look up a user by phone number (MUST be before /admin/:id)
+router.get('/admin/lookup-user', async (req: Request, res: Response) => {
+  try {
+    const { phone } = req.query;
+    if (!phone || typeof phone !== 'string' || phone.trim().length < 10) {
+      return res.status(400).json({ success: false, error: 'Valid phone number is required' });
+    }
+
+    let normalizedPhone = phone.trim().replace(/\D/g, '');
+    if (normalizedPhone.length === 10) normalizedPhone = `91${normalizedPhone}`;
+
+    const result = await queryProduction(
+      `SELECT pk, first_name, last_name, phone FROM users WHERE phone = $1 AND is_deleted = false`,
+      [normalizedPhone]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'User not found. Ask them to download the app and log in first.' });
+    }
+
+    const user = result.rows[0];
+    res.json({ success: true, data: { user_id: user.pk, first_name: user.first_name, last_name: user.last_name || '', phone: user.phone } });
+  } catch (error: any) {
+    logger.error('Failed to look up user:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// POST /admin/create-lead — Create a manual lead (MUST be before /admin/:id)
+router.post('/admin/create-lead', async (req: Request, res: Response) => {
+  try {
+    const { user_id, city_name, activity_name, name } = req.body;
+    if (!user_id) {
+      return res.status(400).json({ success: false, error: 'user_id is required' });
+    }
+    const apiRes = await misfitsApi('POST', '/start-your-club/admin/create-lead', {
+      user_id, city_name: city_name || '', activity_name: activity_name || '', name: name || '',
+    });
+    if (!apiRes.ok) {
+      return res.status(apiRes.status).json({ success: false, error: apiRes.error || apiRes.data?.message });
+    }
+    broadcast('application_updated', apiRes.data);
+    res.status(201).json({ success: true, data: apiRes.data });
+  } catch (error: any) {
+    logger.error('Failed to create lead:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // GET /admin/:id — Full detail for one application
 router.get('/admin/:id', async (req: Request, res: Response) => {
   try {
@@ -926,74 +975,7 @@ router.get('/contracts/:filename', (req: Request, res: Response) => {
 //  MANUAL LEAD CREATION
 // ══════════════════════════════════════════
 
-// GET /admin/lookup-user — Look up a user by phone number
-// NOTE: Must be before /admin/:id to avoid Express matching "lookup-user" as an id
-router.get('/admin/lookup-user', async (req: Request, res: Response) => {
-  try {
-    const { phone } = req.query;
-    if (!phone || typeof phone !== 'string' || phone.trim().length < 10) {
-      return res.status(400).json({ success: false, error: 'Valid phone number is required' });
-    }
-
-    // Auto-prepend 91 country code if not present (DB stores phones as 91XXXXXXXXXX)
-    let normalizedPhone = phone.trim().replace(/\D/g, '');
-    if (normalizedPhone.length === 10) normalizedPhone = `91${normalizedPhone}`;
-
-    const result = await queryProduction(
-      `SELECT pk, first_name, last_name, phone FROM users WHERE phone = $1 AND is_deleted = false`,
-      [normalizedPhone]
-    );
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({
-        success: false,
-        error: 'User not found. Ask them to download the app and log in first.',
-      });
-    }
-
-    const user = result.rows[0];
-    res.json({
-      success: true,
-      data: {
-        user_id: user.pk,
-        first_name: user.first_name,
-        last_name: user.last_name || '',
-        phone: user.phone,
-      },
-    });
-  } catch (error: any) {
-    logger.error('Failed to look up user:', error);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// POST /admin/create-lead — Create a manual lead from admin dashboard (proxied to Go backend)
-// NOTE: Must be before /admin/:id to avoid Express matching "create-lead" as an id
-router.post('/admin/create-lead', async (req: Request, res: Response) => {
-  try {
-    const { user_id, city_name, activity_name, name } = req.body;
-
-    if (!user_id) {
-      return res.status(400).json({ success: false, error: 'user_id is required' });
-    }
-
-    const apiRes = await misfitsApi('POST', '/start-your-club/admin/create-lead', {
-      user_id,
-      city_name: city_name || '',
-      activity_name: activity_name || '',
-      name: name || '',
-    });
-    if (!apiRes.ok) {
-      return res.status(apiRes.status).json({ success: false, error: apiRes.error || apiRes.data?.message });
-    }
-
-    broadcast('application_updated', apiRes.data);
-    res.status(201).json({ success: true, data: apiRes.data });
-  } catch (error: any) {
-    logger.error('Failed to create lead:', error);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
+// (lookup-user and create-lead moved before /admin/:id to prevent Express route shadowing)
 
 // ══════════════════════════════════════════
 //  RESCHEDULE
