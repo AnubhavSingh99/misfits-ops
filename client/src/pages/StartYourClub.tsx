@@ -1216,7 +1216,7 @@ function LeadRow({
                             Mark Interview Scheduled
                           </button>
                           {!showRejectForm ? (
-                            <button onClick={() => setShowRejectForm(true)} className="w-full py-2 text-xs font-medium text-red-600 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100">Reject</button>
+                            <button onClick={() => setShowRejectForm(true)} disabled={!allInterviewRated} className="w-full py-2 text-xs font-medium text-red-600 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100 disabled:opacity-40 disabled:cursor-not-allowed" title={!allInterviewRated ? "Rate all dimensions before rejecting" : ""}>Reject</button>
                           ) : (
                             <div className="p-3 bg-red-50 rounded-lg border border-red-200">
                               <select value={rejectionReason} onChange={e => setRejectionReason(e.target.value)} className="w-full mb-2 px-2 py-1.5 text-xs border border-red-200 rounded-lg bg-white">
@@ -1255,7 +1255,7 @@ function LeadRow({
                                 </button>
                               </div>
                               {!showRejectForm ? (
-                                <button onClick={() => setShowRejectForm(true)} className="w-full py-2 text-xs font-medium text-red-600 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100">Reject</button>
+                                <button onClick={() => setShowRejectForm(true)} disabled={!allInterviewRated} className="w-full py-2 text-xs font-medium text-red-600 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100 disabled:opacity-40 disabled:cursor-not-allowed" title={!allInterviewRated ? "Rate all dimensions before rejecting" : ""}>Reject</button>
                               ) : (
                                 <div className="p-3 bg-red-50 rounded-lg border border-red-200">
                                   <select value={rejectionReason} onChange={e => setRejectionReason(e.target.value)} className="w-full mb-2 px-2 py-1.5 text-xs border border-red-200 rounded-lg bg-white">
