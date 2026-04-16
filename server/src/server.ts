@@ -50,6 +50,7 @@ import { runVmsSync } from './routes/venueRepository';
 import { logger } from './utils/logger';
 import { errorHandler } from './middleware/errorHandler';
 
+dotenv.config({ path: path.resolve(__dirname, '../../.env') });
 dotenv.config();
 
 const app = express();
