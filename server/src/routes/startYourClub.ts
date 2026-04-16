@@ -36,6 +36,87 @@ function mapAppRows(rows: any[]) {
   return rows.map(mapAppRow);
 }
 
+const STATUS_EVENT_TABLE = 'club_application_status_event';
+
+const APP_ENRICHED_SELECT = `
+  ca.*,
+  COALESCE(ca.name, CONCAT(u.first_name, ' ', u.last_name)) as name,
+  u.phone as user_phone,
+  ('SYC-' || LPAD(ca.pk::text, 8, '0')) as application_ref,
+  COALESCE(
+    (
+      SELECT MAX(se.created_at)
+      FROM ${STATUS_EVENT_TABLE} se
+      WHERE se.application_id = ca.pk
+        AND se.to_status::text = ca.status::text
+    ),
+    ca.updated_at,
+    ca.created_at
+  ) as stage_entered_at,
+  ROUND(
+    (
+      EXTRACT(
+        EPOCH FROM (
+          NOW() - COALESCE(
+            (
+              SELECT MAX(se.created_at)
+              FROM ${STATUS_EVENT_TABLE} se
+              WHERE se.application_id = ca.pk
+                AND se.to_status::text = ca.status::text
+            ),
+            ca.updated_at,
+            ca.created_at
+          )
+        )
+      ) / 3600.0
+    )::numeric,
+    1
+  ) as stage_age_hours,
+  EXISTS(
+    SELECT 1
+    FROM club_application dup
+    WHERE dup.pk <> ca.pk
+      AND dup.archived = false
+      AND (
+        (ca.user_id IS NOT NULL AND dup.user_id = ca.user_id)
+        OR (
+          ca.user_id IS NULL
+          AND u.phone IS NOT NULL
+          AND EXISTS (
+            SELECT 1
+            FROM users dup_u
+            WHERE dup_u.pk = dup.user_id
+              AND dup_u.phone = u.phone
+          )
+        )
+      )
+      AND COALESCE(dup.city_name, '') = COALESCE(ca.city_name, '')
+      AND COALESCE(dup.activity_name, '') = COALESCE(ca.activity_name, '')
+  ) as is_duplicate_lead,
+  EXISTS(
+    SELECT 1
+    FROM club_application prev
+    WHERE prev.pk <> ca.pk
+      AND (
+        (ca.user_id IS NOT NULL AND prev.user_id = ca.user_id)
+        OR (
+          ca.user_id IS NULL
+          AND u.phone IS NOT NULL
+          AND EXISTS (
+            SELECT 1
+            FROM users prev_u
+            WHERE prev_u.pk = prev.user_id
+              AND prev_u.phone = u.phone
+          )
+        )
+      )
+      AND (
+        prev.archived = true
+        OR prev.status IN ('REJECTED', 'NOT_INTERESTED', 'CLUB_CREATED')
+      )
+  ) as is_repeat_application
+`;
+
 // Contract file upload setup
 const UPLOADS_DIR = path.join(__dirname, '../../uploads/contracts');
 if (!fs.existsSync(UPLOADS_DIR)) {
@@ -62,6 +143,55 @@ const contractUpload = multer({
 });
 
 const router = Router();
+
+const ALLOWED_REJECTION_REASONS = new Set([
+  'insufficient_experience',
+  'low_commitment',
+  'unclear_motivation',
+  'city_not_available',
+  'incomplete_responses',
+  'potential_lead',
+  'other',
+]);
+
+function normalizeRejectionInput(rawReason: any, rawNote?: any): { reason: string; note: string } {
+  const reasonInput = String(rawReason || '').trim();
+  const noteInput = String(rawNote || '').trim();
+
+  // Backward compatibility: accept "other: custom note" payloads from older clients.
+  const match = reasonInput.match(/^other\s*:\s*(.+)$/i);
+  if (match) {
+    return {
+      reason: 'other',
+      note: noteInput || match[1].trim(),
+    };
+  }
+
+  if (!reasonInput) {
+    return { reason: '', note: noteInput };
+  }
+
+  if (ALLOWED_REJECTION_REASONS.has(reasonInput)) {
+    return { reason: reasonInput, note: noteInput };
+  }
+
+  // If an unexpected value is provided, preserve it in note and use a valid enum reason.
+  return {
+    reason: 'other',
+    note: noteInput || reasonInput,
+  };
+}
+
+async function appendRejectionNote(applicationId: number, note: string) {
+  const content = String(note || '').trim();
+  if (!content) return;
+
+  await callGrpc('SuperAdminService', 'StartYourClubAddNote', {
+    application_id: applicationId,
+    content: `Rejection note: ${content}`,
+    metadata_json: JSON.stringify({ kind: 'rejection_note' })
+  });
+}
 
 // GET /admin/all — List all applications (filterable, sortable, paginated)
 router.get('/admin/all', async (req: Request, res: Response) => {
@@ -109,10 +239,14 @@ router.get('/admin/all', async (req: Request, res: Response) => {
 
     const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
-    const allowedSorts = ['created_at', 'updated_at', 'submitted_at', 'name', 'city_name', 'activity_name', 'status'];
+    const allowedSorts = ['created_at', 'updated_at', 'submitted_at', 'name', 'city_name', 'activity_name', 'status', 'stage_entered_at'];
     const sortCol = allowedSorts.includes(sort as string) ? sort : 'created_at';
     const sortOrder = order === 'asc' ? 'ASC' : 'DESC';
-    const sortPrefix = sortCol === 'name' ? "COALESCE(ca.name, CONCAT(u.first_name, ' ', u.last_name))" : `ca.${sortCol}`;
+    const sortPrefix = sortCol === 'name'
+      ? "COALESCE(ca.name, CONCAT(u.first_name, ' ', u.last_name))"
+      : sortCol === 'stage_entered_at'
+        ? `COALESCE((SELECT MAX(se.created_at) FROM ${STATUS_EVENT_TABLE} se WHERE se.application_id = ca.pk AND se.to_status::text = ca.status::text), ca.updated_at, ca.created_at)`
+        : `ca.${sortCol}`;
 
     const pageNum = Math.max(1, parseInt(page as string, 10) || 1);
     const limitNum = Math.min(500, Math.max(1, parseInt(limit as string, 10) || 50));
@@ -124,7 +258,10 @@ router.get('/admin/all', async (req: Request, res: Response) => {
     const total = parseInt(countResult.rows[0].count, 10);
 
     const dataResult = await queryProduction(
-      `SELECT ca.*, COALESCE(ca.name, CONCAT(u.first_name, ' ', u.last_name)) as name, u.phone as user_phone FROM club_application ca LEFT JOIN users u ON u.pk = ca.user_id ${where}
+      `SELECT ${APP_ENRICHED_SELECT}
+       FROM club_application ca
+       LEFT JOIN users u ON u.pk = ca.user_id
+       ${where}
        ORDER BY ${sortPrefix} ${sortOrder}
        LIMIT $${paramIdx++} OFFSET $${paramIdx++}`,
       [...params, limitNum, offset]
@@ -231,6 +368,35 @@ router.get('/admin/analytics', async (req: Request, res: Response) => {
       ORDER BY count DESC
     `);
 
+    const stageAnalyticsResult = await queryProduction(`
+      SELECT
+        ca.status,
+        COUNT(*)::int as count,
+        ROUND(
+          AVG(
+            EXTRACT(
+              EPOCH FROM (
+                NOW() - COALESCE(
+                  (
+                    SELECT MAX(se.created_at)
+                    FROM ${STATUS_EVENT_TABLE} se
+                    WHERE se.application_id = ca.pk
+                      AND se.to_status::text = ca.status::text
+                  ),
+                  ca.updated_at,
+                  ca.created_at
+                )
+              )
+            ) / 3600.0
+          )::numeric,
+          1
+        ) as avg_stage_age_hrs
+      FROM club_application ca
+      WHERE ca.archived = false
+      GROUP BY ca.status
+      ORDER BY count DESC
+    `);
+
     const funnel = funnelResult.rows[0];
     const tat = tatResult.rows[0];
 
@@ -286,6 +452,7 @@ router.get('/admin/analytics', async (req: Request, res: Response) => {
         dropped_analysis: {
           rejection_reasons: rejectionReasonsResult.rows,
         },
+        stage_analytics: stageAnalyticsResult.rows,
       },
     });
   } catch (error: any) {
@@ -439,6 +606,30 @@ router.post('/admin/create-lead', async (req: Request, res: Response) => {
     if (!user_id) {
       return res.status(400).json({ success: false, error: 'user_id is required' });
     }
+    const duplicateCheck = await queryProduction(
+      `SELECT pk, status
+       FROM club_application
+       WHERE archived = false
+         AND user_id = $1
+         AND COALESCE(city_name, '') = COALESCE($2, '')
+         AND COALESCE(activity_name, '') = COALESCE($3, '')
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [user_id, city_name || '', activity_name || '']
+    );
+
+    if (duplicateCheck.rows.length > 0) {
+      const existing = duplicateCheck.rows[0];
+      return res.status(409).json({
+        success: false,
+        error: 'Duplicate lead detected for this user, city, and activity.',
+        data: {
+          existing_application_id: existing.pk,
+          existing_status: existing.status,
+        },
+      });
+    }
+
     const apiRes = await misfitsApi('POST', '/start-your-club/admin/create-lead', {
       user_id, city_name: city_name || '', activity_name: activity_name || '', name: name || '',
     });
@@ -470,7 +661,11 @@ router.get('/admin/:id', async (req: Request, res: Response) => {
     const { id } = req.params;
 
     const appResult = await queryProduction(
-      "SELECT ca.*, COALESCE(ca.name, CONCAT(u.first_name, ' ', u.last_name)) as name, u.phone as user_phone FROM club_application ca LEFT JOIN users u ON u.pk = ca.user_id WHERE ca.pk = $1", [id]
+      `SELECT ${APP_ENRICHED_SELECT}
+       FROM club_application ca
+       LEFT JOIN users u ON u.pk = ca.user_id
+       WHERE ca.pk = $1`,
+      [id]
     );
     if (appResult.rows.length === 0) {
       return res.status(404).json({ success: false, error: 'Application not found' });
@@ -569,7 +764,13 @@ router.patch('/admin/:id/pick', async (req: Request, res: Response) => {
       );
     } catch (e) { /* ignore — autocomplete is non-critical */ }
 
-    const updated = await queryProduction("SELECT ca.*, COALESCE(ca.name, CONCAT(u.first_name, ' ', u.last_name)) as name, u.phone as user_phone FROM club_application ca LEFT JOIN users u ON u.pk = ca.user_id WHERE ca.pk = $1", [id]);
+    const updated = await queryProduction(
+      `SELECT ${APP_ENRICHED_SELECT}
+       FROM club_application ca
+       LEFT JOIN users u ON u.pk = ca.user_id
+       WHERE ca.pk = $1`,
+      [id]
+    );
     const freshApp = mapAppRow(updated.rows[0]);
 
     broadcast('application_updated', { id, status: 'UNDER_REVIEW' });
@@ -585,6 +786,7 @@ router.patch('/admin/:id/review', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const { action, ratings, rejection_reason, rejection_note, reviewed_by } = req.body;
+    const normalizedRejection = normalizeRejectionInput(rejection_reason, rejection_note);
 
     if (!['select_for_interview', 'reject', 'on_hold'].includes(action)) {
       return res.status(400).json({ success: false, error: 'Invalid action. Must be select_for_interview, reject, or on_hold' });
@@ -595,10 +797,20 @@ router.patch('/admin/:id/review', async (req: Request, res: Response) => {
       application_id: parseInt(id),
       outcome: outcomeMap[action] || 0,
       screening_ratings: ratings || {},
-      rejection_reason: rejection_reason || ''
+      rejection_reason: action === 'reject' ? normalizedRejection.reason : ''
     });
 
-    const updated = await queryProduction("SELECT ca.*, COALESCE(ca.name, CONCAT(u.first_name, ' ', u.last_name)) as name, u.phone as user_phone FROM club_application ca LEFT JOIN users u ON u.pk = ca.user_id WHERE ca.pk = $1", [id]);
+    if (action === 'reject' && normalizedRejection.note) {
+      await appendRejectionNote(parseInt(id), normalizedRejection.note);
+    }
+
+    const updated = await queryProduction(
+      `SELECT ${APP_ENRICHED_SELECT}
+       FROM club_application ca
+       LEFT JOIN users u ON u.pk = ca.user_id
+       WHERE ca.pk = $1`,
+      [id]
+    );
     const freshApp = mapAppRow(updated.rows[0]);
 
     const statusMap: Record<string, string> = {
@@ -621,6 +833,7 @@ router.patch('/admin/:id/status', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const { to_status, actor = 'admin', metadata = {} } = req.body;
+    const normalizedRejection = normalizeRejectionInput(metadata.rejection_reason, metadata.rejection_note);
 
     if (!to_status) {
       return res.status(400).json({ success: false, error: 'to_status is required' });
@@ -634,7 +847,7 @@ router.patch('/admin/:id/status', async (req: Request, res: Response) => {
     // Map target status to the appropriate gRPC call
     const statusToGrpc: Record<string, { method: string; data: any }> = {
       'UNDER_REVIEW': { method: 'StartYourClubPickApplication', data: { application_id: parseInt(id) } },
-      'REJECTED': { method: 'StartYourClubRejectApplication', data: { application_id: parseInt(id), rejection_reason: metadata.rejection_reason || '' } },
+      'REJECTED': { method: 'StartYourClubRejectApplication', data: { application_id: parseInt(id), rejection_reason: normalizedRejection.reason || '' } },
       'INTERVIEW_PENDING': { method: 'StartYourClubReviewApplication', data: { application_id: parseInt(id), outcome: 1, screening_ratings: metadata.ratings || {}, rejection_reason: '' } },
       'ON_HOLD': { method: 'StartYourClubReviewApplication', data: { application_id: parseInt(id), outcome: 2, screening_ratings: metadata.ratings || {}, rejection_reason: '' } },
       'SELECTED': { method: 'StartYourClubSelectApplication', data: { application_id: parseInt(id), misfits_pct: 70, leader_pct: 30, interview_ratings: { dimensions: metadata.interview_ratings || {} } } },
@@ -643,6 +856,9 @@ router.patch('/admin/:id/status', async (req: Request, res: Response) => {
     const grpcCall = statusToGrpc[to_status];
     if (grpcCall) {
       await callGrpc('SuperAdminService', grpcCall.method, grpcCall.data);
+      if (to_status === 'REJECTED' && normalizedRejection.note) {
+        await appendRejectionNote(parseInt(id), normalizedRejection.note);
+      }
     } else {
       // Fallback: use the misfitsApi for statuses not mapped to gRPC
       const apiRes = await misfitsApi('PATCH', `/start-your-club/admin/${id}/status`, { status: to_status });
@@ -651,7 +867,13 @@ router.patch('/admin/:id/status', async (req: Request, res: Response) => {
       }
     }
 
-    const updated = await queryProduction("SELECT ca.*, COALESCE(ca.name, CONCAT(u.first_name, ' ', u.last_name)) as name, u.phone as user_phone FROM club_application ca LEFT JOIN users u ON u.pk = ca.user_id WHERE ca.pk = $1", [id]);
+    const updated = await queryProduction(
+      `SELECT ${APP_ENRICHED_SELECT}
+       FROM club_application ca
+       LEFT JOIN users u ON u.pk = ca.user_id
+       WHERE ca.pk = $1`,
+      [id]
+    );
     const freshApp = mapAppRow(updated.rows[0]);
 
     broadcast('application_updated', { id, status: to_status });
@@ -694,7 +916,13 @@ router.post('/admin/:id/select', async (req: Request, res: Response) => {
       interview_ratings: { dimensions: ratings || {} }
     });
 
-    const updated = await queryProduction("SELECT ca.*, COALESCE(ca.name, CONCAT(u.first_name, ' ', u.last_name)) as name, u.phone as user_phone FROM club_application ca LEFT JOIN users u ON u.pk = ca.user_id WHERE ca.pk = $1", [id]);
+    const updated = await queryProduction(
+      `SELECT ${APP_ENRICHED_SELECT}
+       FROM club_application ca
+       LEFT JOIN users u ON u.pk = ca.user_id
+       WHERE ca.pk = $1`,
+      [id]
+    );
     const freshApp = mapAppRow(updated.rows[0]);
 
     broadcast('application_updated', { id, status: 'SELECTED' });
@@ -728,7 +956,13 @@ router.patch('/admin/:id/split', async (req: Request, res: Response) => {
       leader_pct: leader
     });
 
-    const updated = await queryProduction("SELECT ca.*, COALESCE(ca.name, CONCAT(u.first_name, ' ', u.last_name)) as name, u.phone as user_phone FROM club_application ca LEFT JOIN users u ON u.pk = ca.user_id WHERE ca.pk = $1", [id]);
+    const updated = await queryProduction(
+      `SELECT ${APP_ENRICHED_SELECT}
+       FROM club_application ca
+       LEFT JOIN users u ON u.pk = ca.user_id
+       WHERE ca.pk = $1`,
+      [id]
+    );
     const freshApp = mapAppRow(updated.rows[0]);
 
     broadcast('application_updated', { id, type: 'split_updated' });
@@ -765,7 +999,13 @@ router.patch('/admin/:id/milestones', async (req: Request, res: Response) => {
       marketing_launched: marketing_launched !== undefined ? !!marketing_launched : !!app.marketing_launched
     });
 
-    const updated = await queryProduction("SELECT ca.*, COALESCE(ca.name, CONCAT(u.first_name, ' ', u.last_name)) as name, u.phone as user_phone FROM club_application ca LEFT JOIN users u ON u.pk = ca.user_id WHERE ca.pk = $1", [id]);
+    const updated = await queryProduction(
+      `SELECT ${APP_ENRICHED_SELECT}
+       FROM club_application ca
+       LEFT JOIN users u ON u.pk = ca.user_id
+       WHERE ca.pk = $1`,
+      [id]
+    );
     const freshApp = mapAppRow(updated.rows[0]);
 
     // Check if auto-transitioned to CLUB_CREATED
@@ -842,9 +1082,10 @@ router.post('/admin/:id/call-log', async (req: Request, res: Response) => {
 router.patch('/admin/:id/reject', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const { rejection_reason, ratings, interview_ratings } = req.body;
+    const { rejection_reason, rejection_note, ratings, interview_ratings } = req.body;
+    const normalizedRejection = normalizeRejectionInput(rejection_reason, rejection_note);
 
-    if (!rejection_reason) {
+    if (!normalizedRejection.reason) {
       return res.status(400).json({ success: false, error: 'Rejection reason is required' });
     }
 
@@ -855,19 +1096,34 @@ router.patch('/admin/:id/reject', async (req: Request, res: Response) => {
           application_id: parseInt(id),
           outcome: 3, // REJECT
           screening_ratings: ratings,
-          rejection_reason
+          rejection_reason: normalizedRejection.reason
         });
+        if (normalizedRejection.note) {
+          await appendRejectionNote(parseInt(id), normalizedRejection.note);
+        }
         // Review already handled rejection — skip the separate reject call
       } catch (reviewErr: any) {
         // If review fails (e.g., wrong status), fall back to direct reject
         logger.warn('Review-reject failed, falling back to direct reject:', reviewErr.message);
-        await callGrpc('SuperAdminService', 'StartYourClubRejectApplication', { application_id: parseInt(id), rejection_reason });
+        await callGrpc('SuperAdminService', 'StartYourClubRejectApplication', { application_id: parseInt(id), rejection_reason: normalizedRejection.reason });
+        if (normalizedRejection.note) {
+          await appendRejectionNote(parseInt(id), normalizedRejection.note);
+        }
       }
     } else {
-      await callGrpc('SuperAdminService', 'StartYourClubRejectApplication', { application_id: parseInt(id), rejection_reason });
+      await callGrpc('SuperAdminService', 'StartYourClubRejectApplication', { application_id: parseInt(id), rejection_reason: normalizedRejection.reason });
+      if (normalizedRejection.note) {
+        await appendRejectionNote(parseInt(id), normalizedRejection.note);
+      }
     }
 
-    const updated = await queryProduction("SELECT ca.*, COALESCE(ca.name, CONCAT(u.first_name, ' ', u.last_name)) as name, u.phone as user_phone FROM club_application ca LEFT JOIN users u ON u.pk = ca.user_id WHERE ca.pk = $1", [id]);
+    const updated = await queryProduction(
+      `SELECT ${APP_ENRICHED_SELECT}
+       FROM club_application ca
+       LEFT JOIN users u ON u.pk = ca.user_id
+       WHERE ca.pk = $1`,
+      [id]
+    );
     const freshApp = mapAppRow(updated.rows[0]);
 
     broadcast('application_updated', { id, status: 'REJECTED' });
@@ -923,7 +1179,13 @@ router.post('/admin/:id/upload-contract', contractUpload.single('contract'), asy
 
     await callGrpc('SuperAdminService', 'StartYourClubUploadContract', { application_id: parseInt(id), contract_pdf_url: fileUrl });
 
-    const updated = await queryProduction("SELECT ca.*, COALESCE(ca.name, CONCAT(u.first_name, ' ', u.last_name)) as name, u.phone as user_phone FROM club_application ca LEFT JOIN users u ON u.pk = ca.user_id WHERE ca.pk = $1", [id]);
+    const updated = await queryProduction(
+      `SELECT ${APP_ENRICHED_SELECT}
+       FROM club_application ca
+       LEFT JOIN users u ON u.pk = ca.user_id
+       WHERE ca.pk = $1`,
+      [id]
+    );
     const freshApp = mapAppRow(updated.rows[0]);
 
     broadcast('application_updated', { id, type: 'contract_uploaded' });
@@ -948,7 +1210,13 @@ router.post('/admin/:id/upload-signed-contract', contractUpload.single('contract
 
     await callGrpc('SuperAdminService', 'StartYourClubUploadSignedContract', { application_id: parseInt(id), signed_contract_url: fileUrl });
 
-    const updated = await queryProduction("SELECT ca.*, COALESCE(ca.name, CONCAT(u.first_name, ' ', u.last_name)) as name, u.phone as user_phone FROM club_application ca LEFT JOIN users u ON u.pk = ca.user_id WHERE ca.pk = $1", [id]);
+    const updated = await queryProduction(
+      `SELECT ${APP_ENRICHED_SELECT}
+       FROM club_application ca
+       LEFT JOIN users u ON u.pk = ca.user_id
+       WHERE ca.pk = $1`,
+      [id]
+    );
     const freshApp = mapAppRow(updated.rows[0]);
 
     broadcast('application_updated', { id, type: 'signed_contract_uploaded' });

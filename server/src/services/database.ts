@@ -1,51 +1,136 @@
 import { Pool, PoolClient } from 'pg';
 import { logger } from '../utils/logger';
+import { execFileSync } from 'child_process';
+import * as net from 'net';
 import * as fs from 'fs';
 import * as path from 'path';
 
-let pool: Pool; // Local operations database
+let pool: Pool | undefined; // Local operations database
 let prodPool: Pool; // Production database (read-only, direct connection)
+let prodDbReady = false;
 
-export async function initializeDatabase() {
-  // Initialize local operations database
-  pool = new Pool({
-    host: process.env.LOCAL_DB_HOST || 'localhost',
-    port: parseInt(process.env.LOCAL_DB_PORT || '5432'),
-    database: process.env.LOCAL_DB_NAME || 'misfits_ops',
-    user: process.env.LOCAL_DB_USER || 'postgres',
-    password: process.env.LOCAL_DB_PASSWORD || '',
-    max: 20,
-    idleTimeoutMillis: 30000,
-    connectionTimeoutMillis: 2000,
+function isPortReachable(host: string, port: number, timeoutMs: number = 1500): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = new net.Socket();
+    let settled = false;
+
+    const done = (ok: boolean) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      resolve(ok);
+    };
+
+    socket.setTimeout(timeoutMs);
+    socket.once('connect', () => done(true));
+    socket.once('timeout', () => done(false));
+    socket.once('error', () => done(false));
+    socket.connect(port, host);
   });
+}
+
+async function ensureProductionTunnelIfNeeded() {
+  const prodHost = process.env.PROD_DB_HOST || '';
+  const prodPort = parseInt(process.env.PROD_DB_PORT || '5432', 10);
+  const isLocalTunnelTarget = prodHost === 'localhost' || prodHost === '127.0.0.1';
+  if (!isLocalTunnelTarget) return;
+
+  const alreadyReachable = await isPortReachable(prodHost, prodPort);
+  if (alreadyReachable) return;
+
+  const sshKeyPath = process.env.SSH_KEY_PATH || '';
+  const sshHost = process.env.SSH_HOST || '';
+  const sshUser = process.env.SSH_USER || '';
+  const remoteDbHost = process.env.DB_HOST || '';
+  const remoteDbPort = process.env.DB_PORT || '5432';
+
+  if (!sshKeyPath || !sshHost || !sshUser || !remoteDbHost) {
+    logger.warn('Production DB tunnel is down and SSH tunnel config is incomplete');
+    return;
+  }
+
+  if (!fs.existsSync(sshKeyPath)) {
+    logger.warn(`SSH key file not found at ${sshKeyPath}; cannot re-establish DB tunnel`);
+    return;
+  }
 
   try {
-    // Test local operations database connection
-    const client = await pool.connect();
-    await client.query('SELECT NOW()');
-    client.release();
+    execFileSync('ssh', [
+      '-f',
+      '-o', 'StrictHostKeyChecking=accept-new',
+      '-i', sshKeyPath,
+      '-N',
+      '-L', `${prodPort}:${remoteDbHost}:${remoteDbPort}`,
+      `${sshUser}@${sshHost}`,
+    ], { stdio: 'ignore' });
 
-    logger.info('Local operations database connection established');
+    const tunnelReady = await isPortReachable(prodHost, prodPort, 2500);
+    if (tunnelReady) {
+      logger.info(`Re-established production DB SSH tunnel on ${prodHost}:${prodPort}`);
+    } else {
+      logger.warn(`Attempted to establish DB tunnel but ${prodHost}:${prodPort} is still unreachable`);
+    }
+  } catch (error: any) {
+    logger.warn(`Failed to establish production DB SSH tunnel: ${error?.message || 'unknown error'}`);
+  }
+}
 
-    // Run migrations for local database
-    await runMigrations();
+export async function initializeDatabase() {
+  const localDbPassword = typeof process.env.LOCAL_DB_PASSWORD === 'string'
+    ? process.env.LOCAL_DB_PASSWORD
+    : '';
+  const prodDbPassword = typeof process.env.PROD_DB_PASSWORD === 'string'
+    ? process.env.PROD_DB_PASSWORD
+    : 'postgres';
+  const shouldInitializeLocalDb = process.env.LOCAL_DB_ENABLED !== 'false';
 
-  } catch (error) {
-    logger.error('Local operations database connection failed:', error);
-    throw error;
+  if (shouldInitializeLocalDb) {
+    // Initialize local operations database
+    pool = new Pool({
+      host: process.env.LOCAL_DB_HOST || 'localhost',
+      port: parseInt(process.env.LOCAL_DB_PORT || '5432'),
+      database: process.env.LOCAL_DB_NAME || 'misfits_ops',
+      user: process.env.LOCAL_DB_USER || 'postgres',
+      password: localDbPassword,
+      max: 20,
+      idleTimeoutMillis: 30000,
+      connectionTimeoutMillis: 2000,
+    });
+
+    try {
+      // Test local operations database connection
+      const client = await pool.connect();
+      await client.query('SELECT NOW()');
+      client.release();
+
+      logger.info('Local operations database connection established');
+
+      // Run migrations for local database
+      await runMigrations();
+
+    } catch (error) {
+      logger.error('Local operations database connection failed:', error);
+      pool = undefined;
+    }
+  } else {
+    logger.warn('Local operations database skipped because LOCAL_DB_ENABLED is false');
   }
 
   // Initialize production database with direct connection (no SSH tunnel)
   if (process.env.PROD_DB_HOST) {
+    await ensureProductionTunnelIfNeeded();
+
     prodPool = new Pool({
       host: process.env.PROD_DB_HOST,
       port: parseInt(process.env.PROD_DB_PORT || '5432'),
       database: process.env.PROD_DB_NAME || 'misfits',
       user: process.env.PROD_DB_USER || 'dev',
-      password: process.env.PROD_DB_PASSWORD || 'postgres',
+      password: prodDbPassword,
       max: 20,
       idleTimeoutMillis: 30000,
       connectionTimeoutMillis: 10000,
+      query_timeout: 5000,
+      statement_timeout: 5000,
     });
 
     try {
@@ -53,9 +138,11 @@ export async function initializeDatabase() {
       const prodClient = await prodPool.connect();
       await prodClient.query('SELECT NOW()');
       prodClient.release();
+      prodDbReady = true;
 
       logger.info('Production database direct connection established');
     } catch (error) {
+      prodDbReady = false;
       logger.error('Production database connection failed:', error);
       // Don't throw - allow server to start without production DB
     }
@@ -63,11 +150,21 @@ export async function initializeDatabase() {
 }
 
 export async function getClient(): Promise<PoolClient> {
+  if (!pool) {
+    throw new Error('Local operations database is not initialized');
+  }
   return pool.connect();
 }
 
 export function getLocalPool(): Pool {
+  if (!pool) {
+    throw new Error('Local operations database is not initialized');
+  }
   return pool;
+}
+
+export function hasLocalPool(): boolean {
+  return Boolean(pool);
 }
 
 // Query local operations database (for POC, tasks, etc.)
@@ -85,6 +182,10 @@ export async function queryLocal(text: string, params?: any[]) {
 export async function queryProduction(text: string, params?: any[]) {
   if (!prodPool) {
     throw new Error('Production database not initialized');
+  }
+
+  if (!prodDbReady) {
+    throw new Error('Production database unavailable');
   }
 
   const client = await prodPool.connect();
