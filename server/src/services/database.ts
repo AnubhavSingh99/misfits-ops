@@ -32,7 +32,7 @@ export async function initializeDatabase() {
 
   } catch (error) {
     logger.error('Local operations database connection failed:', error);
-    throw error;
+    // Continue startup so production-read features (e.g. Start Your Club) can still work.
   }
 
   // Initialize production database with direct connection (no SSH tunnel)
