@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import * as XLSX from 'xlsx';
 import {
   RefreshCw, Search, ChevronDown, ChevronUp, ChevronRight,
   CheckCircle, Calendar, Phone, PhoneCall,
@@ -124,8 +125,18 @@ const REJECTION_REASONS = [
   { value: 'unclear_motivation', label: 'Unclear motivation or objective' },
   { value: 'city_not_available', label: 'City not available for expansion' },
   { value: 'incomplete_responses', label: 'Incomplete or unclear responses' },
+  { value: 'potential_lead', label: 'A Potential lead' },
   { value: 'other', label: 'Other' },
 ];
+
+const REJECTION_REASON_LABEL_MAP: Record<string, string> = Object.fromEntries(
+  REJECTION_REASONS.map((reason) => [reason.value, reason.label])
+);
+
+function getRejectionReasonLabel(reason: string | null | undefined): string {
+  if (!reason) return '-';
+  return REJECTION_REASON_LABEL_MAP[reason] || reason.replace(/_/g, ' ');
+}
 
 interface RatingDimension {
   id: string;
@@ -138,6 +149,7 @@ interface RatingDimension {
 
 interface Application {
   id: string;
+  application_ref?: string | null;
   user_id: number | null;
   user_phone: string | null;
   name: string | null;
@@ -163,9 +175,13 @@ interface Application {
   marketing_launched: boolean;
   created_at: string;
   updated_at: string;
+  stage_entered_at?: string | null;
+  stage_age_hours?: number | null;
   submitted_at: string | null;
   selected_at: string | null;
   club_created_at: string | null;
+  is_duplicate_lead?: boolean;
+  is_repeat_application?: boolean;
   rejected_from_status: string | null;
   last_screen: string | null;
   last_story_slide: number | null;
@@ -218,6 +234,7 @@ interface AnalyticsData {
 
 interface DetailData extends Omit<Application, 'activity'> {
   activity: string | null;
+  question_map?: Record<string, string>;
   timeline: any[];
   activity_log: any[];
   past_applications: any[];
@@ -245,10 +262,13 @@ function formatTimeAgo(dateStr: string): string {
   return `${days}d ago`;
 }
 
-function computeDays(createdAt: string, clubCreatedAt: string | null): string {
-  const start = new Date(createdAt);
-  const end = clubCreatedAt ? new Date(clubCreatedAt) : new Date();
-  const days = Math.max(0, Math.floor((end.getTime() - start.getTime()) / 86400000));
+function computeLeadAge(stageEnteredAt: string | null | undefined, fallbackCreatedAt: string): string {
+  const start = new Date(stageEnteredAt || fallbackCreatedAt);
+  if (Number.isNaN(start.getTime())) return '-';
+  const end = new Date();
+  const hours = Math.max(0, Math.floor((end.getTime() - start.getTime()) / 3600000));
+  if (hours < 24) return `${hours}h`;
+  const days = Math.floor(hours / 24);
   return `${days}d`;
 }
 
@@ -364,6 +384,7 @@ function LeadRow({
   const [showInterviewForm, setShowInterviewForm] = useState(false);
 
   const [rejectionReason, setRejectionReason] = useState('');
+  const [rejectionComment, setRejectionComment] = useState('');
   const [showRejectForm, setShowRejectForm] = useState(false);
 
   // Reviewer name (for pick flow) with autocomplete
@@ -418,6 +439,7 @@ function LeadRow({
       setScreeningRatings({});
       setInterviewRatings({});
       setRejectionReason('');
+      setRejectionComment('');
       setShowRejectForm(false);
       setReviewerName('');
       setSplitMisfits('70');
@@ -433,10 +455,59 @@ function LeadRow({
       .catch(console.error);
   };
 
+  const handleRejectionReasonChange = (value: string) => {
+    setRejectionReason(value);
+    if (value !== 'other') {
+      setRejectionComment('');
+    }
+  };
+
+  const requiresRejectionComment = rejectionReason === 'other';
+  const normalizedRejectionReason = rejectionReason;
+  const normalizedRejectionNote = requiresRejectionComment
+    ? rejectionComment.trim()
+    : '';
+  const canSubmitRejection = Boolean(rejectionReason) && (!requiresRejectionComment || rejectionComment.trim().length > 0);
+  const rejectionCommentFromLog = useMemo(() => {
+    if (!detail?.activity_log?.length) return '';
+    const noteEntry = detail.activity_log.find((act: any) => {
+      if (act?.type !== 'note') return false;
+      if (act?.metadata?.kind === 'rejection_note') return true;
+      return typeof act?.content === 'string' && act.content.startsWith('Rejection note:');
+    });
+    if (!noteEntry || typeof noteEntry.content !== 'string') return '';
+    return noteEntry.content.replace(/^Rejection note:\s*/i, '').trim();
+  }, [detail?.activity_log]);
+
+  const renderRejectionFields = () => (
+    <>
+      <select
+        value={rejectionReason}
+        onChange={e => handleRejectionReasonChange(e.target.value)}
+        className="w-full mb-2 px-2 py-1.5 text-xs border border-red-200 rounded-lg bg-white"
+      >
+        <option value="">Select reason...</option>
+        {REJECTION_REASONS.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
+      </select>
+      {requiresRejectionComment && (
+        <textarea
+          value={rejectionComment}
+          onChange={e => setRejectionComment(e.target.value)}
+          placeholder="Add rejection comment"
+          rows={3}
+          className="w-full mb-2 px-2 py-1.5 text-xs border border-red-200 rounded-lg bg-white"
+        />
+      )}
+    </>
+  );
+
   // Review action (with screening ratings)
   const handleReview = async (action: string) => {
     const body: any = { action, ratings: screeningRatings };
-    if (action === 'reject') body.rejection_reason = rejectionReason;
+    if (action === 'reject') {
+      body.rejection_reason = normalizedRejectionReason;
+      if (normalizedRejectionNote) body.rejection_note = normalizedRejectionNote;
+    }
     const res = await fetch(`${API_BASE}/admin/${app.id}/review`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
     });
@@ -493,8 +564,9 @@ function LeadRow({
   };
 
   const handleReject = async () => {
-    if (!rejectionReason) return;
-    const body: any = { rejection_reason: rejectionReason };
+    if (!canSubmitRejection) return;
+    const body: any = { rejection_reason: normalizedRejectionReason };
+    if (normalizedRejectionNote) body.rejection_note = normalizedRejectionNote;
     // Include ratings if we're in review states
     if (['UNDER_REVIEW', 'ON_HOLD'].includes(detail?.status || '')) {
       body.ratings = screeningRatings;
@@ -507,7 +579,7 @@ function LeadRow({
       method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
     });
     const data = await res.json();
-    if (data.success) { setShowRejectForm(false); setRejectionReason(''); refetchDetail(); onRefresh(); } else alert(data.error);
+    if (data.success) { setShowRejectForm(false); setRejectionReason(''); setRejectionComment(''); refetchDetail(); onRefresh(); } else alert(data.error);
   };
 
   const handleAddNote = async () => {
@@ -561,7 +633,14 @@ function LeadRow({
         <td className="px-4 py-3">
           <div className="font-medium text-slate-800">
             {app.name || 'Anonymous'}
+            {app.application_ref && (
+              <span className="ml-1.5 text-[9px] font-medium text-indigo-600 bg-indigo-50 border border-indigo-200 rounded px-1 py-0.5">
+                {app.application_ref}
+              </span>
+            )}
             {app.admin_created && <span className="ml-1.5 text-[9px] font-medium text-amber-600 bg-amber-50 border border-amber-200 rounded px-1 py-0.5">Admin</span>}
+            {app.is_duplicate_lead && <span className="ml-1.5 text-[9px] font-medium text-red-600 bg-red-50 border border-red-200 rounded px-1 py-0.5">Duplicate</span>}
+            {!app.is_duplicate_lead && app.is_repeat_application && <span className="ml-1.5 text-[9px] font-medium text-violet-600 bg-violet-50 border border-violet-200 rounded px-1 py-0.5">Repeat</span>}
           </div>
         </td>
         <td className="px-4 py-3 text-slate-500 text-xs">{app.user_phone || '-'}</td>
@@ -606,7 +685,10 @@ function LeadRow({
             </td>
           </>
         ) : (
-          <td className="px-4 py-3 text-slate-500 text-xs font-medium">{computeDays(app.created_at, app.club_created_at)}</td>
+          <td className="px-4 py-3 text-slate-500 text-xs font-medium">
+            <div>{computeLeadAge(app.stage_entered_at, app.created_at)}</div>
+            <div className="text-[10px] text-slate-400">in current stage</div>
+          </td>
         )}
         {sectionId === 'selected' && (
           <td className="px-4 py-3">
@@ -649,8 +731,11 @@ function LeadRow({
                       <div className="flex items-center gap-2 mt-0.5 text-xs text-slate-500">
                         <span>{detail.city}</span><span>·</span><span>{detail.activity}</span>
                         <span>·</span><span>Source: {detail.source}</span>
+                        {detail.application_ref && (<><span>·</span><span className="font-medium text-indigo-600">{detail.application_ref}</span></>)}
                         {detail.user_phone && (<><span>·</span><Phone className="h-3 w-3 inline" /> {detail.user_phone}</>)}
                         {detail.reviewed_by && (<><span>·</span><User className="h-3 w-3 inline" /> Reviewed by: {detail.reviewed_by}</>)}
+                        {detail.is_duplicate_lead && (<><span>·</span><span className="text-red-600">Duplicate lead</span></>)}
+                        {!detail.is_duplicate_lead && detail.is_repeat_application && (<><span>·</span><span className="text-violet-600">Repeat application</span></>)}
                       </div>
                     </div>
                     <div className="text-right space-y-1">
@@ -1003,6 +1088,9 @@ function LeadRow({
                             <div className="p-3 bg-red-50 rounded-lg border border-red-200">
                               <div className="text-xs font-medium text-red-600">Rejection Reason</div>
                               <div className="text-sm text-red-700">{REJECTION_REASONS.find(r => r.value === detail.rejection_reason)?.label || detail.rejection_reason}</div>
+                              {detail.rejection_reason === 'other' && rejectionCommentFromLog && (
+                                <div className="mt-1.5 text-xs text-red-700/90">Comment: {rejectionCommentFromLog}</div>
+                              )}
                             </div>
                           )}
                         </div>
@@ -1160,13 +1248,10 @@ function LeadRow({
                               <button onClick={() => setShowRejectForm(true)} disabled={!allScreeningRated} className="w-full py-2 text-xs font-medium text-red-600 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100 disabled:opacity-40 disabled:cursor-not-allowed">Reject</button>
                             ) : (
                               <div className="p-3 bg-red-50 rounded-lg border border-red-200">
-                                <select value={rejectionReason} onChange={e => setRejectionReason(e.target.value)} className="w-full mb-2 px-2 py-1.5 text-xs border border-red-200 rounded-lg bg-white">
-                                  <option value="">Select reason...</option>
-                                  {REJECTION_REASONS.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
-                                </select>
+                                {renderRejectionFields()}
                                 <div className="flex gap-2">
-                                  <button onClick={handleReject} disabled={!rejectionReason} className="flex-1 py-1.5 text-xs font-medium text-white bg-red-600 rounded-lg disabled:opacity-50">Confirm</button>
-                                  <button onClick={() => { setShowRejectForm(false); setRejectionReason(''); }} className="px-3 py-1.5 text-xs text-slate-600 bg-white border rounded-lg">Cancel</button>
+                                  <button onClick={handleReject} disabled={!canSubmitRejection} className="flex-1 py-1.5 text-xs font-medium text-white bg-red-600 rounded-lg disabled:opacity-50">Confirm</button>
+                                  <button onClick={() => { setShowRejectForm(false); setRejectionReason(''); setRejectionComment(''); }} className="px-3 py-1.5 text-xs text-slate-600 bg-white border rounded-lg">Cancel</button>
                                 </div>
                               </div>
                             )}
@@ -1195,13 +1280,10 @@ function LeadRow({
                               <button onClick={() => setShowRejectForm(true)} disabled={!allScreeningRated} className="w-full py-2 text-xs font-medium text-red-600 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100 disabled:opacity-40 disabled:cursor-not-allowed">Reject</button>
                             ) : (
                               <div className="p-3 bg-red-50 rounded-lg border border-red-200">
-                                <select value={rejectionReason} onChange={e => setRejectionReason(e.target.value)} className="w-full mb-2 px-2 py-1.5 text-xs border border-red-200 rounded-lg bg-white">
-                                  <option value="">Select reason...</option>
-                                  {REJECTION_REASONS.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
-                                </select>
+                                {renderRejectionFields()}
                                 <div className="flex gap-2">
-                                  <button onClick={handleReject} disabled={!rejectionReason} className="flex-1 py-1.5 text-xs font-medium text-white bg-red-600 rounded-lg disabled:opacity-50">Confirm</button>
-                                  <button onClick={() => { setShowRejectForm(false); setRejectionReason(''); }} className="px-3 py-1.5 text-xs text-slate-600 bg-white border rounded-lg">Cancel</button>
+                                  <button onClick={handleReject} disabled={!canSubmitRejection} className="flex-1 py-1.5 text-xs font-medium text-white bg-red-600 rounded-lg disabled:opacity-50">Confirm</button>
+                                  <button onClick={() => { setShowRejectForm(false); setRejectionReason(''); setRejectionComment(''); }} className="px-3 py-1.5 text-xs text-slate-600 bg-white border rounded-lg">Cancel</button>
                                 </div>
                               </div>
                             )}
@@ -1219,13 +1301,10 @@ function LeadRow({
                             <button onClick={() => setShowRejectForm(true)} disabled={!allInterviewRated} className="w-full py-2 text-xs font-medium text-red-600 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100 disabled:opacity-40 disabled:cursor-not-allowed" title={!allInterviewRated ? "Rate all dimensions before rejecting" : ""}>Reject</button>
                           ) : (
                             <div className="p-3 bg-red-50 rounded-lg border border-red-200">
-                              <select value={rejectionReason} onChange={e => setRejectionReason(e.target.value)} className="w-full mb-2 px-2 py-1.5 text-xs border border-red-200 rounded-lg bg-white">
-                                <option value="">Select reason...</option>
-                                {REJECTION_REASONS.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
-                              </select>
+                              {renderRejectionFields()}
                               <div className="flex gap-2">
-                                <button onClick={handleReject} disabled={!rejectionReason} className="flex-1 py-1.5 text-xs font-medium text-white bg-red-600 rounded-lg disabled:opacity-50">Confirm</button>
-                                <button onClick={() => { setShowRejectForm(false); setRejectionReason(''); }} className="px-3 py-1.5 text-xs text-slate-600 bg-white border rounded-lg">Cancel</button>
+                                <button onClick={handleReject} disabled={!canSubmitRejection} className="flex-1 py-1.5 text-xs font-medium text-white bg-red-600 rounded-lg disabled:opacity-50">Confirm</button>
+                                <button onClick={() => { setShowRejectForm(false); setRejectionReason(''); setRejectionComment(''); }} className="px-3 py-1.5 text-xs text-slate-600 bg-white border rounded-lg">Cancel</button>
                               </div>
                             </div>
                           )}
@@ -1258,13 +1337,10 @@ function LeadRow({
                                 <button onClick={() => setShowRejectForm(true)} disabled={!allInterviewRated} className="w-full py-2 text-xs font-medium text-red-600 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100 disabled:opacity-40 disabled:cursor-not-allowed" title={!allInterviewRated ? "Rate all dimensions before rejecting" : ""}>Reject</button>
                               ) : (
                                 <div className="p-3 bg-red-50 rounded-lg border border-red-200">
-                                  <select value={rejectionReason} onChange={e => setRejectionReason(e.target.value)} className="w-full mb-2 px-2 py-1.5 text-xs border border-red-200 rounded-lg bg-white">
-                                    <option value="">Select reason...</option>
-                                    {REJECTION_REASONS.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
-                                  </select>
+                                  {renderRejectionFields()}
                                   <div className="flex gap-2">
-                                    <button onClick={handleReject} disabled={!rejectionReason} className="flex-1 py-1.5 text-xs font-medium text-white bg-red-600 rounded-lg disabled:opacity-50">Confirm</button>
-                                    <button onClick={() => { setShowRejectForm(false); setRejectionReason(''); }} className="px-3 py-1.5 text-xs text-slate-600 bg-white border rounded-lg">Cancel</button>
+                                    <button onClick={handleReject} disabled={!canSubmitRejection} className="flex-1 py-1.5 text-xs font-medium text-white bg-red-600 rounded-lg disabled:opacity-50">Confirm</button>
+                                    <button onClick={() => { setShowRejectForm(false); setRejectionReason(''); setRejectionComment(''); }} className="px-3 py-1.5 text-xs text-slate-600 bg-white border rounded-lg">Cancel</button>
                                   </div>
                                 </div>
                               )}
@@ -1326,17 +1402,14 @@ function LeadRow({
                                   </button>
                                 ) : (
                                   <div className="p-3 bg-red-50 rounded-lg border border-red-200 mt-2">
-                                    <select value={rejectionReason} onChange={e => setRejectionReason(e.target.value)} className="w-full mb-2 px-2 py-1.5 text-xs border border-red-200 rounded-lg bg-white">
-                                      <option value="">Select reason...</option>
-                                      {REJECTION_REASONS.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
-                                    </select>
+                                    {renderRejectionFields()}
                                     <div className="flex gap-2">
                                       <button onClick={async () => {
                                         await handleStatusTransition('INTERVIEW_DONE');
                                         await handleReject();
                                         setShowInterviewForm(false);
-                                      }} disabled={!rejectionReason} className="flex-1 py-1.5 text-xs font-medium text-white bg-red-600 rounded-lg disabled:opacity-50">Confirm Reject</button>
-                                      <button onClick={() => { setShowRejectForm(false); setRejectionReason(''); }} className="px-3 py-1.5 text-xs text-slate-600 bg-white border rounded-lg">Cancel</button>
+                                      }} disabled={!canSubmitRejection} className="flex-1 py-1.5 text-xs font-medium text-white bg-red-600 rounded-lg disabled:opacity-50">Confirm Reject</button>
+                                      <button onClick={() => { setShowRejectForm(false); setRejectionReason(''); setRejectionComment(''); }} className="px-3 py-1.5 text-xs text-slate-600 bg-white border rounded-lg">Cancel</button>
                                     </div>
                                   </div>
                                 )}
@@ -1395,13 +1468,10 @@ function LeadRow({
                               </button>
                             ) : (
                               <div className="p-3 bg-red-50 rounded-lg border border-red-200 mt-2">
-                                <select value={rejectionReason} onChange={e => setRejectionReason(e.target.value)} className="w-full mb-2 px-2 py-1.5 text-xs border border-red-200 rounded-lg bg-white">
-                                  <option value="">Select reason...</option>
-                                  {REJECTION_REASONS.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
-                                </select>
+                                {renderRejectionFields()}
                                 <div className="flex gap-2">
-                                  <button onClick={handleReject} disabled={!rejectionReason} className="flex-1 py-1.5 text-xs font-medium text-white bg-red-600 rounded-lg disabled:opacity-50">Confirm</button>
-                                  <button onClick={() => { setShowRejectForm(false); setRejectionReason(''); }} className="px-3 py-1.5 text-xs text-slate-600 bg-white border rounded-lg">Cancel</button>
+                                  <button onClick={handleReject} disabled={!canSubmitRejection} className="flex-1 py-1.5 text-xs font-medium text-white bg-red-600 rounded-lg disabled:opacity-50">Confirm</button>
+                                  <button onClick={() => { setShowRejectForm(false); setRejectionReason(''); setRejectionComment(''); }} className="px-3 py-1.5 text-xs text-slate-600 bg-white border rounded-lg">Cancel</button>
                                 </div>
                               </div>
                             )}
@@ -1538,6 +1608,9 @@ function LeadRow({
                             <div className="p-3 bg-red-50 rounded-lg border border-red-200">
                               <div className="text-xs font-medium text-red-600 mb-0.5">Rejection Reason</div>
                               <div className="text-sm text-red-700">{REJECTION_REASONS.find(r => r.value === detail.rejection_reason)?.label || detail.rejection_reason}</div>
+                              {detail.rejection_reason === 'other' && rejectionCommentFromLog && (
+                                <div className="mt-1.5 text-xs text-red-700/90">Comment: {rejectionCommentFromLog}</div>
+                              )}
                             </div>
                           )}
                           {!detail.screening_ratings && !detail.interview_ratings && (
@@ -1784,7 +1857,7 @@ function DroppedAnalysisModal({ onClose, analytics }: { onClose: () => void; ana
                   <tbody>
                     {da.rejection_reasons.map((r, i) => (
                       <tr key={i} className="border-b border-slate-100 last:border-0">
-                        <td className="px-3 py-2 text-slate-700">{r.reason}</td>
+                        <td className="px-3 py-2 text-slate-700">{getRejectionReasonLabel(r.reason)}</td>
                         <td className="px-3 py-2 text-right font-bold text-slate-800">{r.count}</td>
                       </tr>
                     ))}
@@ -1864,7 +1937,11 @@ function AddLeadModal({
       if (data.success) {
         onCreated();
       } else {
-        alert(data.error || 'Failed to create lead');
+        if (res.status === 409 && data?.data?.existing_application_id) {
+          alert(`Duplicate lead already exists (ID: ${data.data.existing_application_id}, status: ${data.data.existing_status || 'unknown'}).`);
+        } else {
+          alert(data.error || 'Failed to create lead');
+        }
       }
     } catch {
       alert('Failed to create lead');
@@ -2268,6 +2345,7 @@ export default function StartYourClub() {
 
   // Info modal
   const [showInfo, setShowInfo] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
   // Filter dropdowns data
   const [cities, setCities] = useState<string[]>([]);
@@ -2398,6 +2476,112 @@ export default function StartYourClub() {
 
   const handleRefresh = () => { fetchApplications(); fetchAnalytics(); fetchFilterOptions(); fetchScheduledCalls(); };
 
+  const getSubsectionLabelForApp = useCallback((app: Application) => {
+    const subs = SECTION_SUBSECTIONS[activeSection] || [];
+    const match = subs.find(s => !s.isGroup && s.filter(app));
+    return match?.label || '';
+  }, [activeSection]);
+
+  const applyClientFilters = useCallback((apps: Application[]) => {
+    let filtered = apps.filter(a => currentSection.statuses.includes(a.status));
+
+    if (statusFilter) {
+      filtered = filtered.filter(a => a.status === statusFilter);
+    }
+    if (subsectionFilter) {
+      const sub = (SECTION_SUBSECTIONS[activeSection] || []).find(s => s.id === subsectionFilter);
+      if (sub) filtered = filtered.filter(sub.filter);
+    }
+    if (marketingFilter) {
+      filtered = filtered.filter(a => a.status === 'SELECTED' && a.first_call_done && a.venue_sorted && !a.marketing_launched);
+    }
+
+    return filtered;
+  }, [activeSection, currentSection, statusFilter, subsectionFilter, marketingFilter]);
+
+  const handleExportExcel = useCallback(async () => {
+    try {
+      setExporting(true);
+
+      const section = SECTIONS.find(s => s.id === activeSection);
+      if (!section) return;
+
+      const effectiveStatuses = statusFilter ? [statusFilter] : section.statuses;
+      const baseParams = new URLSearchParams();
+      if (cityFilter) baseParams.set('city', cityFilter);
+      if (activityFilter) baseParams.set('activity', activityFilter);
+      if (searchQuery) baseParams.set('search', searchQuery);
+      if (effectiveStatuses.length > 0) baseParams.set('statuses', effectiveStatuses.join(','));
+      baseParams.set('sort', sortField);
+      baseParams.set('order', sortDir);
+      baseParams.set('limit', '500');
+
+      const allRows: Application[] = [];
+      let currentPage = 1;
+      let pages = 1;
+
+      do {
+        const pageParams = new URLSearchParams(baseParams);
+        pageParams.set('page', String(currentPage));
+        const res = await fetch(`${API_BASE}/admin/all?${pageParams.toString()}`);
+        const data = await res.json();
+        if (!data.success) {
+          throw new Error(data.error || 'Failed to fetch export data');
+        }
+
+        allRows.push(...(data.data as Application[]));
+        pages = Number(data.totalPages || 1);
+        currentPage += 1;
+      } while (currentPage <= pages);
+
+      const filteredRows = applyClientFilters(allRows);
+      if (filteredRows.length === 0) {
+        alert('No rows available to export for current filters.');
+        return;
+      }
+
+      const exportRows = filteredRows.map((app, idx) => ({
+        'S. No.': idx + 1,
+        'Application ID': app.id,
+        'Application Ref': app.application_ref || '',
+        'Name': app.name || '',
+        'Phone': app.user_phone || '',
+        'City': app.city || '',
+        'Activity': app.activity || '',
+        'Status': STATUS_CONFIG[app.status]?.label || app.status,
+        'Current Stage Age': computeLeadAge(app.stage_entered_at, app.created_at),
+        'Stage Entered At': app.stage_entered_at ? new Date(app.stage_entered_at).toLocaleString() : '',
+        'Duplicate Lead': app.is_duplicate_lead ? 'Yes' : 'No',
+        'Repeat Application': app.is_repeat_application ? 'Yes' : 'No',
+        'Subsection': getSubsectionLabelForApp(app),
+        'Reviewed By': app.reviewed_by || '',
+        'Rejection Reason': app.rejection_reason ? (REJECTION_REASONS.find(r => r.value === app.rejection_reason)?.label || app.rejection_reason) : '',
+        'Rejected From Status': app.rejected_from_status ? (STATUS_CONFIG[app.rejected_from_status]?.label || app.rejected_from_status) : '',
+        'First Call Done': app.first_call_done ? 'Yes' : 'No',
+        'Venue Sorted': app.venue_sorted ? 'Yes' : 'No',
+        'Toolkit Shared': app.toolkit_shared ? 'Yes' : 'No',
+        'Marketing Launched': app.marketing_launched ? 'Yes' : 'No',
+        'Created At': app.created_at ? new Date(app.created_at).toLocaleString() : '',
+        'Updated At': app.updated_at ? new Date(app.updated_at).toLocaleString() : '',
+        'Submitted At': app.submitted_at ? new Date(app.submitted_at).toLocaleString() : '',
+        'Selected At': app.selected_at ? new Date(app.selected_at).toLocaleString() : '',
+        'Club Created At': app.club_created_at ? new Date(app.club_created_at).toLocaleString() : '',
+      }));
+
+      const worksheet = XLSX.utils.json_to_sheet(exportRows);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, 'StartYourClub');
+
+      const today = new Date().toISOString().slice(0, 10);
+      XLSX.writeFile(workbook, `start-your-club-${activeSection}-${today}.xlsx`);
+    } catch (err: any) {
+      console.error('Export failed:', err);
+      alert(err?.message || 'Failed to export Excel file');
+    } finally {
+      setExporting(false);
+    }
+  }, [activeSection, activityFilter, applyClientFilters, cityFilter, getSubsectionLabelForApp, marketingFilter, searchQuery, sortDir, sortField, statusFilter]);
+
   const handleSort = (field: string) => {
     if (sortField === field) setSortDir(prev => prev === 'asc' ? 'desc' : 'asc');
     else { setSortField(field); setSortDir('desc'); }
@@ -2499,6 +2683,13 @@ export default function StartYourClub() {
           <p className="text-sm text-slate-500 mt-0.5">Leader application screening pipeline</p>
         </div>
         <div className="flex items-center gap-2">
+          <button
+            onClick={handleExportExcel}
+            disabled={exporting}
+            className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg hover:bg-emerald-100 disabled:opacity-60"
+          >
+            {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />} Export Excel
+          </button>
           <button
             onClick={() => setShowAddLead(true)}
             className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700"
@@ -2896,8 +3087,8 @@ export default function StartYourClub() {
                   </>
                 )}
                 {activeSection !== 'followup' && (
-                  <th className="px-4 py-3 text-left font-semibold text-slate-600 cursor-pointer hover:text-slate-800" onClick={() => handleSort('created_at')}>
-                    <div className="flex items-center gap-1">Days {sortField === 'created_at' && (sortDir === 'asc' ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />)}</div>
+                  <th className="px-4 py-3 text-left font-semibold text-slate-600 cursor-pointer hover:text-slate-800" onClick={() => handleSort('stage_entered_at')}>
+                    <div className="flex items-center gap-1">Stage Age {sortField === 'stage_entered_at' && (sortDir === 'asc' ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />)}</div>
                   </th>
                 )}
                 {activeSection === 'selected' && (
