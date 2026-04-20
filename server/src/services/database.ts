@@ -6,6 +6,11 @@ import * as path from 'path';
 let pool: Pool; // Local operations database
 let prodPool: Pool; // Production database (read-only, direct connection)
 
+function resolvePassword(value: string | undefined, fallback: string): string {
+  const normalized = value?.trim();
+  return normalized && normalized.length > 0 ? normalized : fallback;
+}
+
 export async function initializeDatabase() {
   // Initialize local operations database
   pool = new Pool({
@@ -13,7 +18,8 @@ export async function initializeDatabase() {
     port: parseInt(process.env.LOCAL_DB_PORT || '5432'),
     database: process.env.LOCAL_DB_NAME || 'misfits_ops',
     user: process.env.LOCAL_DB_USER || 'postgres',
-    password: process.env.LOCAL_DB_PASSWORD || '',
+    // SCRAM auth requires a non-empty string; default to common local postgres password.
+    password: resolvePassword(process.env.LOCAL_DB_PASSWORD, 'postgres'),
     max: 20,
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: 2000,
@@ -42,7 +48,7 @@ export async function initializeDatabase() {
       port: parseInt(process.env.PROD_DB_PORT || '5432'),
       database: process.env.PROD_DB_NAME || 'misfits',
       user: process.env.PROD_DB_USER || 'dev',
-      password: process.env.PROD_DB_PASSWORD || 'postgres',
+      password: resolvePassword(process.env.PROD_DB_PASSWORD, 'postgres'),
       max: 20,
       idleTimeoutMillis: 30000,
       connectionTimeoutMillis: 10000,
