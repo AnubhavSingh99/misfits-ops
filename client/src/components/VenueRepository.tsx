@@ -1315,6 +1315,7 @@ function VenueModal({ venue, options, onClose, onSave }: VenueModalProps) {
   const [selectedCity, setSelectedCity] = useState<number | '' | 'custom'>('');
   const [isCustomCity, setIsCustomCity] = useState(false);
   const [isCustomArea, setIsCustomArea] = useState(false);
+  const [citySearchQuery, setCitySearchQuery] = useState('');
 
   // Set initial city based on area_id or custom values
   useEffect(() => {
@@ -1335,6 +1336,11 @@ function VenueModal({ venue, options, onClose, onSave }: VenueModalProps) {
   }, [venue, options]);
 
   const currentCity = options.cities.find(c => String(c.id) === String(selectedCity));
+  const filteredCities = useMemo(() => {
+    const query = citySearchQuery.trim().toLowerCase();
+    if (!query) return options.cities;
+    return options.cities.filter(city => city.name.toLowerCase().includes(query));
+  }, [citySearchQuery, options.cities]);
 
   const validateUrl = (url: string): string | null => {
     if (!url) return null;
@@ -1471,28 +1477,41 @@ function VenueModal({ venue, options, onClose, onSave }: VenueModalProps) {
                     </button>
                   </div>
                 ) : (
-                  <select
-                    value={selectedCity}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      if (val === 'custom') {
-                        setIsCustomCity(true);
-                        setIsCustomArea(true);
-                        setSelectedCity('custom');
-                        setFormData(f => ({ ...f, area_id: '', custom_city: '', custom_area: '' }));
-                      } else {
-                        setSelectedCity(val ? Number(val) : '');
-                        setFormData(f => ({ ...f, area_id: '', custom_city: '', custom_area: '' }));
-                      }
-                    }}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  >
-                    <option value="">Select city</option>
-                    {options.cities.map(city => (
-                      <option key={city.id} value={city.id}>{city.name}</option>
-                    ))}
-                    <option value="custom" className="text-amber-600 font-medium">+ Add new city</option>
-                  </select>
+                  <div className="space-y-2">
+                    <input
+                      type="text"
+                      value={citySearchQuery}
+                      onChange={(e) => setCitySearchQuery(e.target.value)}
+                      placeholder="Search city..."
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    />
+                    <select
+                      value={selectedCity}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        if (val === 'custom') {
+                          setIsCustomCity(true);
+                          setIsCustomArea(true);
+                          setSelectedCity('custom');
+                          setCitySearchQuery('');
+                          setFormData(f => ({ ...f, area_id: '', custom_city: '', custom_area: '' }));
+                        } else {
+                          setSelectedCity(val ? Number(val) : '');
+                          setFormData(f => ({ ...f, area_id: '', custom_city: '', custom_area: '' }));
+                        }
+                      }}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    >
+                      <option value="">Select city</option>
+                      {filteredCities.map(city => (
+                        <option key={city.id} value={city.id}>{city.name}</option>
+                      ))}
+                      {filteredCities.length === 0 && citySearchQuery.trim().length > 0 && (
+                        <option value="" disabled>No city found</option>
+                      )}
+                      <option value="custom" className="text-amber-600 font-medium">+ Add new city</option>
+                    </select>
+                  </div>
                 )}
               </div>
               <div>

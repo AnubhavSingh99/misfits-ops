@@ -123,9 +123,9 @@ const REJECTION_REASONS = [
   { value: 'insufficient_experience', label: 'Insufficient experience with the activity' },
   { value: 'low_commitment', label: 'Low time commitment or availability' },
   { value: 'unclear_motivation', label: 'Unclear motivation or objective' },
+  { value: 'potential_lead', label: 'Potential lead' },
   { value: 'city_not_available', label: 'City not available for expansion' },
   { value: 'incomplete_responses', label: 'Incomplete or unclear responses' },
-  { value: 'potential_lead', label: 'A Potential lead' },
   { value: 'other', label: 'Other' },
 ];
 
@@ -135,6 +135,7 @@ const REJECTION_REASON_LABEL_MAP: Record<string, string> = Object.fromEntries(
 
 function getRejectionReasonLabel(reason: string | null | undefined): string {
   if (!reason) return '-';
+  if (reason === 'potential_lead') return 'Potential lead';
   return REJECTION_REASON_LABEL_MAP[reason] || reason.replace(/_/g, ' ');
 }
 
@@ -358,7 +359,7 @@ function RatingDisplay({ ratings, label, dims }: { ratings: Record<string, numbe
 // ─── Lead Row Component ─────────────────────────────────────────
 function LeadRow({
   app, isExpanded, onToggle, sectionId,
-  onRefresh, screeningDims, interviewDims,
+  onRefresh, screeningDims, interviewDims, onPickedForReview,
   isSelected, onSelect,
 }: {
   app: Application;
@@ -368,6 +369,7 @@ function LeadRow({
   onRefresh: () => void;
   screeningDims: RatingDimension[];
   interviewDims: RatingDimension[];
+  onPickedForReview?: (id: string, reviewer: string) => void;
   isSelected?: boolean;
   onSelect?: (id: string, selected: boolean) => void;
 }) {
@@ -518,13 +520,18 @@ function LeadRow({
   // Pick for review (SUBMITTED → UNDER_REVIEW)
   const handlePick = async () => {
     if (!reviewerName.trim()) return;
+    const reviewer = reviewerName.trim();
     const res = await fetch(`${API_BASE}/admin/${app.id}/pick`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ reviewed_by: reviewerName.trim() }),
+      body: JSON.stringify({ reviewed_by: reviewer }),
     });
     const data = await res.json();
-    // Don't call onRefresh() — keep the lead visible so screening form appears in-place
-    if (data.success) { refetchDetail(); }
+    if (data.success) {
+      // Keep reviewer in the same context: move filters to Under Review and keep row expanded.
+      onPickedForReview?.(app.id, reviewer);
+      refetchDetail();
+      onRefresh();
+    }
     else alert(data.error);
   };
 
@@ -2476,6 +2483,29 @@ export default function StartYourClub() {
 
   const handleRefresh = () => { fetchApplications(); fetchAnalytics(); fetchFilterOptions(); fetchScheduledCalls(); };
 
+  const handlePickedForReview = useCallback((id: string, reviewer: string) => {
+    setApplications(prev => prev.map(app => (
+      app.id === id
+        ? {
+            ...app,
+            status: 'UNDER_REVIEW',
+            reviewed_by: reviewer,
+            stage_entered_at: new Date().toISOString(),
+          }
+        : app
+    )));
+
+    setActiveSection('submitted');
+    setStatusFilter('UNDER_REVIEW');
+    setSubsectionFilter('under_review');
+    setExpandedId(id);
+    setCollapsedSubsections(prev => {
+      const next = new Set(prev);
+      next.delete('under_review');
+      return next;
+    });
+  }, []);
+
   const getSubsectionLabelForApp = useCallback((app: Application) => {
     const subs = SECTION_SUBSECTIONS[activeSection] || [];
     const match = subs.find(s => !s.isGroup && s.filter(app));
@@ -3167,6 +3197,7 @@ export default function StartYourClub() {
                               onRefresh={handleRefresh}
                               screeningDims={screeningDims}
                               interviewDims={interviewDims}
+                              onPickedForReview={handlePickedForReview}
                               isSelected={selectedIds.has(app.id)}
                               onSelect={(id, checked) => setSelectedIds(prev => {
                                 const next = new Set(prev);

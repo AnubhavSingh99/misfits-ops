@@ -6,15 +6,53 @@
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { logger } from '../utils/logger';
+import * as fs from 'fs';
+import * as path from 'path';
 
 const execAsync = promisify(exec);
 
-const GRPC_API_KEY = '024d77dd28d21f0a99bfc2bb1c6ce9089d9273772c8319848d0a34f9ff9ae3d3';
-const GRPC_HOST = '15.207.255.212:8001';
+const DEFAULT_GRPC_HOST = '15.207.255.212:8001';
+const PROD_GRPCURL_BIN = '/home/ec2-user/go/bin/grpcurl';
+const LOCAL_GRPCURL_BIN = path.resolve(__dirname, '../../bin/grpcurl');
+const CWD_GRPCURL_BIN = path.resolve(process.cwd(), 'bin/grpcurl');
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
+function redactSensitiveCommand(cmd: string): string {
+  return cmd.replace(/x-api-key:\s*[^'\s]+/gi, 'x-api-key: [REDACTED]');
+}
+
+function getGrpcApiKey(): string {
+  return process.env.GRPC_API_KEY?.trim() || '';
+}
+
+function getGrpcHost(): string {
+  return process.env.GRPC_HOST?.trim() || DEFAULT_GRPC_HOST;
+}
 
 // Evaluate at runtime (after dotenv loads), not at module load time
 function getGrpcurlBin(): string {
-  return process.env.NODE_ENV === 'production' ? '/home/ec2-user/go/bin/grpcurl' : 'grpcurl';
+  const fromEnv = process.env.GRPCURL_BIN?.trim();
+  if (fromEnv && fs.existsSync(fromEnv)) {
+    return fromEnv;
+  }
+
+  // Most local runs start the server from /server, where bundled binary lives in /server/bin.
+  if (fs.existsSync(CWD_GRPCURL_BIN)) {
+    return CWD_GRPCURL_BIN;
+  }
+
+  if (process.env.NODE_ENV === 'production' && fs.existsSync(PROD_GRPCURL_BIN)) {
+    return PROD_GRPCURL_BIN;
+  }
+
+  if (fs.existsSync(LOCAL_GRPCURL_BIN)) {
+    return LOCAL_GRPCURL_BIN;
+  }
+
+  return 'grpcurl';
 }
 
 /**
@@ -25,10 +63,16 @@ function getGrpcurlBin(): string {
  * @returns parsed response object
  */
 export async function callGrpc(service: string, method: string, data: any): Promise<any> {
+  const apiKey = getGrpcApiKey();
+  if (!apiKey) {
+    throw new Error('GRPC_API_KEY is not configured');
+  }
+
+  const grpcHost = getGrpcHost();
   const bin = getGrpcurlBin();
   const jsonData = JSON.stringify(data);
   const escaped = jsonData.replace(/'/g, "'\\''");
-  const cmd = `${bin} -plaintext -H 'x-api-key: ${GRPC_API_KEY}' -d '${escaped}' ${GRPC_HOST} ${service}.${method}`;
+  const cmd = `${shellQuote(bin)} -plaintext -H 'x-api-key: ${apiKey}' -d '${escaped}' ${grpcHost} ${service}.${method}`;
 
   logger.info(`gRPC call: ${service}.${method}`, { data });
 
@@ -42,11 +86,11 @@ export async function callGrpc(service: string, method: string, data: any): Prom
     logger.error(`gRPC ${service}.${method} failed:`, {
       error: error.message,
       stderr: error.stderr,
-      cmd: cmd.substring(0, 200) + '...'
+      cmd: redactSensitiveCommand(cmd.substring(0, 200) + '...')
     });
     throw new Error(`gRPC ${method} failed: ${error.stderr || error.message}`);
   }
 }
 
 // Re-export constants for venueRepository.ts backward compat
-export { GRPC_API_KEY, GRPC_HOST, getGrpcurlBin };
+export { getGrpcApiKey, getGrpcHost, getGrpcurlBin };

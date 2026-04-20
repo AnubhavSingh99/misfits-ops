@@ -150,13 +150,20 @@ const ALLOWED_REJECTION_REASONS = new Set([
   'unclear_motivation',
   'city_not_available',
   'incomplete_responses',
-  'potential_lead',
   'other',
 ]);
 
 function normalizeRejectionInput(rawReason: any, rawNote?: any): { reason: string; note: string } {
   const reasonInput = String(rawReason || '').trim();
   const noteInput = String(rawNote || '').trim();
+
+  // Compatibility for deprecated client value that is not accepted by gRPC enums.
+  if (reasonInput === 'potential_lead') {
+    return {
+      reason: 'other',
+      note: noteInput || 'Potential lead',
+    };
+  }
 
   // Backward compatibility: accept "other: custom note" payloads from older clients.
   const match = reasonInput.match(/^other\s*:\s*(.+)$/i);
