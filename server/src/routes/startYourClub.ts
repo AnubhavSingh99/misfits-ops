@@ -115,6 +115,69 @@ const APP_ENRICHED_SELECT = `
         OR prev.status IN ('REJECTED', 'NOT_INTERESTED', 'CLUB_CREATED')
       )
   ) as is_repeat_application
+  ,(
+    SELECT COUNT(*)::int
+    FROM club_application rej
+    WHERE rej.status = 'REJECTED'
+      AND COALESCE(rej.city_name, '') = COALESCE(ca.city_name, '')
+      AND COALESCE(rej.activity_name, '') = COALESCE(ca.activity_name, '')
+      AND (
+        (ca.user_id IS NOT NULL AND rej.user_id = ca.user_id)
+        OR (
+          ca.user_id IS NULL
+          AND u.phone IS NOT NULL
+          AND EXISTS (
+            SELECT 1
+            FROM users rej_u
+            WHERE rej_u.pk = rej.user_id
+              AND rej_u.phone = u.phone
+          )
+        )
+      )
+      AND (rej.pk <> ca.pk OR ca.status = 'REJECTED')
+  ) as repeat_rejection_count
+  ,(
+    SELECT prev.activity_name
+    FROM club_application prev
+    WHERE prev.pk <> ca.pk
+      AND prev.activity_name IS NOT NULL
+      AND (
+        (ca.user_id IS NOT NULL AND prev.user_id = ca.user_id)
+        OR (
+          ca.user_id IS NULL
+          AND u.phone IS NOT NULL
+          AND EXISTS (
+            SELECT 1
+            FROM users prev_u
+            WHERE prev_u.pk = prev.user_id
+              AND prev_u.phone = u.phone
+          )
+        )
+      )
+    ORDER BY prev.created_at DESC
+    LIMIT 1
+  ) as last_applied_activity
+  ,COALESCE(
+    (
+      SELECT ARRAY_AGG(hist.activity_name ORDER BY hist.created_at DESC)
+      FROM club_application hist
+      WHERE hist.activity_name IS NOT NULL
+        AND (
+          (ca.user_id IS NOT NULL AND hist.user_id = ca.user_id)
+          OR (
+            ca.user_id IS NULL
+            AND u.phone IS NOT NULL
+            AND EXISTS (
+              SELECT 1
+              FROM users hist_u
+              WHERE hist_u.pk = hist.user_id
+                AND hist_u.phone = u.phone
+            )
+          )
+        )
+    ),
+    ARRAY[]::text[]
+  ) as applied_activities_history
 `;
 
 // Contract file upload setup
@@ -189,6 +252,16 @@ function normalizeRejectionInput(rawReason: any, rawNote?: any): { reason: strin
   };
 }
 
+function isPotentialLeadDecision(rawPotentialLead: any, rawReason: any): boolean {
+  const reasonInput = String(rawReason || '').trim();
+  if (reasonInput === 'potential_lead') return true;
+
+  if (typeof rawPotentialLead === 'boolean') return rawPotentialLead;
+
+  const flag = String(rawPotentialLead || '').trim().toLowerCase();
+  return ['true', '1', 'yes', 'y'].includes(flag);
+}
+
 async function appendRejectionNote(applicationId: number, note: string) {
   const content = String(note || '').trim();
   if (!content) return;
@@ -197,6 +270,17 @@ async function appendRejectionNote(applicationId: number, note: string) {
     application_id: applicationId,
     content: `Rejection note: ${content}`,
     metadata_json: JSON.stringify({ kind: 'rejection_note' })
+  });
+}
+
+async function appendPotentialLeadNote(applicationId: number, note: string) {
+  const content = String(note || '').trim();
+  if (!content) return;
+
+  await callGrpc('SuperAdminService', 'StartYourClubAddNote', {
+    application_id: applicationId,
+    content: `Potential lead note: ${content}`,
+    metadata_json: JSON.stringify({ kind: 'potential_lead_note' })
   });
 }
 
@@ -792,8 +876,12 @@ router.patch('/admin/:id/pick', async (req: Request, res: Response) => {
 router.patch('/admin/:id/review', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const { action, ratings, rejection_reason, rejection_note, reviewed_by } = req.body;
+    const { action, ratings, rejection_reason, rejection_note, potential_lead, reviewed_by } = req.body;
     const normalizedRejection = normalizeRejectionInput(rejection_reason, rejection_note);
+    const potentialLead = action === 'reject'
+      && normalizedRejection.reason === 'other'
+      && isPotentialLeadDecision(potential_lead, rejection_reason);
+    const effectiveAction = potentialLead ? 'on_hold' : action;
 
     if (!['select_for_interview', 'reject', 'on_hold'].includes(action)) {
       return res.status(400).json({ success: false, error: 'Invalid action. Must be select_for_interview, reject, or on_hold' });
@@ -802,13 +890,16 @@ router.patch('/admin/:id/review', async (req: Request, res: Response) => {
     const outcomeMap: Record<string, number> = { 'select_for_interview': 1, 'on_hold': 2, 'reject': 3 };
     await callGrpc('SuperAdminService', 'StartYourClubReviewApplication', {
       application_id: parseInt(id),
-      outcome: outcomeMap[action] || 0,
+      outcome: outcomeMap[effectiveAction] || 0,
       screening_ratings: ratings || {},
-      rejection_reason: action === 'reject' ? normalizedRejection.reason : ''
+      rejection_reason: effectiveAction === 'reject' ? normalizedRejection.reason : ''
     });
 
-    if (action === 'reject' && normalizedRejection.note) {
+    if (effectiveAction === 'reject' && normalizedRejection.note) {
       await appendRejectionNote(parseInt(id), normalizedRejection.note);
+    }
+    if (potentialLead && normalizedRejection.note) {
+      await appendPotentialLeadNote(parseInt(id), normalizedRejection.note);
     }
 
     const updated = await queryProduction(
@@ -825,7 +916,7 @@ router.patch('/admin/:id/review', async (req: Request, res: Response) => {
       'reject': 'REJECTED',
       'on_hold': 'ON_HOLD',
     };
-    const toStatus = statusMap[action] || 'UNDER_REVIEW';
+    const toStatus = statusMap[effectiveAction] || 'UNDER_REVIEW';
 
     broadcast('application_updated', { id, status: toStatus });
     res.json({ success: true, data: freshApp });
@@ -1089,15 +1180,36 @@ router.post('/admin/:id/call-log', async (req: Request, res: Response) => {
 router.patch('/admin/:id/reject', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const { rejection_reason, rejection_note, ratings, interview_ratings } = req.body;
+    const { rejection_reason, rejection_note, ratings, interview_ratings, potential_lead } = req.body;
     const normalizedRejection = normalizeRejectionInput(rejection_reason, rejection_note);
+    const potentialLead = normalizedRejection.reason === 'other'
+      && isPotentialLeadDecision(potential_lead, rejection_reason);
 
     if (!normalizedRejection.reason) {
       return res.status(400).json({ success: false, error: 'Rejection reason is required' });
     }
 
-    // If ratings are provided, save them via the review endpoint (reject outcome) to preserve them
-    if (ratings && Object.keys(ratings).length > 0) {
+    if (potentialLead) {
+      try {
+        await callGrpc('SuperAdminService', 'StartYourClubReviewApplication', {
+          application_id: parseInt(id),
+          outcome: 2, // ON_HOLD
+          screening_ratings: ratings || {},
+          rejection_reason: ''
+        });
+      } catch (holdErr: any) {
+        logger.warn('Review-on-hold failed, falling back to direct status patch:', holdErr.message);
+        const apiRes = await misfitsApi('PATCH', `/start-your-club/admin/${id}/status`, { status: 'ON_HOLD' });
+        if (!apiRes.ok) {
+          return res.status(apiRes.status || 500).json({ success: false, error: apiRes.error || apiRes.data?.message || holdErr.message });
+        }
+      }
+
+      if (normalizedRejection.note) {
+        await appendPotentialLeadNote(parseInt(id), normalizedRejection.note);
+      }
+    } else if (ratings && Object.keys(ratings).length > 0) {
+      // If ratings are provided, save them via the review endpoint (reject outcome) to preserve them
       try {
         await callGrpc('SuperAdminService', 'StartYourClubReviewApplication', {
           application_id: parseInt(id),
@@ -1133,7 +1245,8 @@ router.patch('/admin/:id/reject', async (req: Request, res: Response) => {
     );
     const freshApp = mapAppRow(updated.rows[0]);
 
-    broadcast('application_updated', { id, status: 'REJECTED' });
+    const nextStatus = potentialLead ? 'ON_HOLD' : 'REJECTED';
+    broadcast('application_updated', { id, status: nextStatus });
     res.json({ success: true, data: freshApp });
   } catch (error: any) {
     logger.error('Failed to reject application:', error);
