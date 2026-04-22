@@ -2635,7 +2635,11 @@ export default function StartYourClub() {
       params.set('page', String(page));
       params.set('limit', '200');
 
-      const res = await fetch(`${API_BASE}/admin/all?${params}`);
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000);
+      const res = await fetch(`${API_BASE}/admin/all?${params}`, { signal: controller.signal });
+      clearTimeout(timeoutId);
+
       const data = await res.json();
       if (data.success) {
         setApplications(data.data);
@@ -2651,32 +2655,47 @@ export default function StartYourClub() {
 
   const fetchAnalytics = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE}/admin/analytics`);
+      // Add 5 second timeout to prevent hanging on slow DB queries
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000);
+      
+      const res = await fetch(`${API_BASE}/admin/analytics`, { signal: controller.signal });
+      clearTimeout(timeoutId);
       const data = await res.json();
       if (data.success) setAnalytics(data.data);
     } catch (err) {
       console.error('Failed to fetch analytics:', err);
+      // Continue rendering even if analytics fails
     }
   }, []);
 
   const fetchFilterOptions = useCallback(async () => {
     try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000);
+      
       const [citiesRes, activitiesRes] = await Promise.all([
-        fetch(`${API_BASE}/admin/cities`),
-        fetch(`${API_BASE}/admin/activities`),
+        fetch(`${API_BASE}/admin/cities`, { signal: controller.signal }),
+        fetch(`${API_BASE}/admin/activities`, { signal: controller.signal }),
       ]);
+      clearTimeout(timeoutId);
       const citiesData = await citiesRes.json();
       const activitiesData = await activitiesRes.json();
       if (citiesData.success) setCities(citiesData.data);
       if (activitiesData.success) setActivities(activitiesData.data);
     } catch (err) {
       console.error('Failed to fetch filter options:', err);
+      // Continue rendering even if filter options fail
     }
   }, []);
 
   const fetchRatingDimensions = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE}/admin/rating-dimensions`);
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000);
+      
+      const res = await fetch(`${API_BASE}/admin/rating-dimensions`, { signal: controller.signal });
+      clearTimeout(timeoutId);
       const data = await res.json();
       if (data.success) {
         setScreeningDims(data.data.screening);

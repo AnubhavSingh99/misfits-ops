@@ -34,6 +34,9 @@ export default defineConfig({
     alias: {
       '@': path.resolve(__dirname, './src'),
     },
+    // Prefer TS sources when both .ts and compiled .js exist side by side.
+    // This avoids pulling CommonJS artifacts (e.g., shared/teamConfig.js) into the browser bundle.
+    extensions: ['.mjs', '.ts', '.tsx', '.js', '.jsx', '.json'],
   },
   server: {
     port: 3000,
