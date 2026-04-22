@@ -777,24 +777,23 @@ export function VenueRepository() {
   return (
     <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
       {/* Header - Always visible, styled like Done & Deprioritised */}
-      <button
-        onClick={() => setIsExpanded(!isExpanded)}
-        className="w-full px-4 py-3 flex items-center justify-between bg-gray-50/80 hover:bg-gray-100 transition-colors"
-      >
-        <div className="flex items-center gap-2">
+      <div className="w-full px-4 py-3 flex items-center justify-between bg-gray-50/80 hover:bg-gray-100 transition-colors">
+        <button
+          type="button"
+          onClick={() => setIsExpanded(!isExpanded)}
+          className="flex items-center gap-2 text-left"
+        >
           <Building2 className="h-5 w-5 text-indigo-500" />
           <span className="font-medium text-gray-700">
             Venue Repository ({stats?.total || 0})
           </span>
-        </div>
+        </button>
         <div className="flex items-center gap-2">
           {isExpanded && (
             <>
               <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleVmsSync();
-                }}
+                type="button"
+                onClick={handleVmsSync}
                 disabled={syncing}
                 className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors disabled:opacity-50"
               >
@@ -802,7 +801,8 @@ export function VenueRepository() {
                 Sync from VMS
               </button>
               <button
-                onClick={(e) => { e.stopPropagation(); openCreateModal(); }}
+                type="button"
+                onClick={openCreateModal}
                 className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors"
               >
                 <Plus className="h-4 w-4" />
@@ -810,9 +810,16 @@ export function VenueRepository() {
               </button>
             </>
           )}
-          {isExpanded ? <ChevronUp size={20} className="text-gray-400" /> : <ChevronDown size={20} className="text-gray-400" />}
+          <button
+            type="button"
+            onClick={() => setIsExpanded(!isExpanded)}
+            className="p-1 rounded hover:bg-gray-200 transition-colors"
+            aria-label={isExpanded ? 'Collapse venue repository' : 'Expand venue repository'}
+          >
+            {isExpanded ? <ChevronUp size={20} className="text-gray-400" /> : <ChevronDown size={20} className="text-gray-400" />}
+          </button>
         </div>
-      </button>
+      </div>
 
       {/* Expanded Content */}
       {isExpanded && (

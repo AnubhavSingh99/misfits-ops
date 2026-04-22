@@ -2,9 +2,130 @@ import { Pool, PoolClient } from 'pg';
 import { logger } from '../utils/logger';
 import * as fs from 'fs';
 import * as path from 'path';
+import { spawnSync } from 'child_process';
+import * as net from 'net';
 
 let pool: Pool; // Local operations database
 let prodPool: Pool; // Production database (read-only, direct connection)
+
+const TUNNEL_CHECK_TIMEOUT_MS = 1500;
+const TUNNEL_READY_RETRIES = 10;
+const TUNNEL_READY_DELAY_MS = 500;
+
+function getProdDbPort(): number {
+  return parseInt(process.env.PROD_DB_PORT || '5432', 10);
+}
+
+function shouldUseSshTunnel(): boolean {
+  const host = (process.env.PROD_DB_HOST || '').trim();
+  return ['localhost', '127.0.0.1', '::1'].includes(host) && !!process.env.SSH_HOST && !!process.env.DB_HOST;
+}
+
+function sleep(ms: number) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function isPortReachable(host: string, port: number, timeoutMs = TUNNEL_CHECK_TIMEOUT_MS): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = net.createConnection({ host, port });
+
+    const finish = (reachable: boolean) => {
+      socket.removeAllListeners();
+      socket.destroy();
+      resolve(reachable);
+    };
+
+    socket.setTimeout(timeoutMs);
+    socket.once('connect', () => finish(true));
+    socket.once('timeout', () => finish(false));
+    socket.once('error', () => finish(false));
+  });
+}
+
+async function ensureProductionTunnel(): Promise<boolean> {
+  if (!shouldUseSshTunnel()) {
+    return false;
+  }
+
+  const prodHost = process.env.PROD_DB_HOST || 'localhost';
+  const prodPort = getProdDbPort();
+
+  if (await isPortReachable(prodHost, prodPort)) {
+    return true;
+  }
+
+  const dbHost = process.env.DB_HOST?.trim();
+  const dbPort = process.env.DB_PORT?.trim() || '5432';
+  const sshHost = process.env.SSH_HOST?.trim();
+  const sshUser = process.env.SSH_USER?.trim() || 'ec2-user';
+  const sshKeyPath = process.env.SSH_KEY_PATH?.trim();
+
+  if (!dbHost || !sshHost) {
+    logger.warn('SSH tunnel settings are incomplete; skipping tunnel startup');
+    return false;
+  }
+
+  const args = [
+    '-f',
+    '-N',
+    '-L',
+    `${prodPort}:${dbHost}:${dbPort}`,
+    '-o',
+    'ExitOnForwardFailure=yes',
+    '-o',
+    'StrictHostKeyChecking=no',
+    '-o',
+    'ServerAliveInterval=30',
+    '-o',
+    'ServerAliveCountMax=3',
+  ];
+
+  if (sshKeyPath) {
+    args.push('-i', sshKeyPath);
+  }
+
+  args.push(`${sshUser}@${sshHost}`);
+
+  logger.info(`Production DB tunnel not detected on ${prodHost}:${prodPort}; starting SSH tunnel`);
+
+  const sshResult = spawnSync('ssh', args, { stdio: 'ignore' });
+  if (sshResult.status !== 0) {
+    logger.error('Failed to start SSH tunnel for production DB', {
+      status: sshResult.status,
+      signal: sshResult.signal,
+    });
+    return false;
+  }
+
+  for (let attempt = 0; attempt < TUNNEL_READY_RETRIES; attempt += 1) {
+    if (await isPortReachable(prodHost, prodPort)) {
+      logger.info(`Production DB tunnel established on ${prodHost}:${prodPort}`);
+      return true;
+    }
+    await sleep(TUNNEL_READY_DELAY_MS);
+  }
+
+  logger.error(`SSH tunnel command ran but ${prodHost}:${prodPort} never became reachable`);
+  return false;
+}
+
+async function getProductionClient(): Promise<PoolClient> {
+  if (!prodPool) {
+    throw new Error('Production database not initialized');
+  }
+
+  try {
+    return await prodPool.connect();
+  } catch (error) {
+    const tunnelReady = await ensureProductionTunnel();
+    if (!tunnelReady) {
+      throw error;
+    }
+
+    logger.warn('Retrying production DB connection after re-establishing SSH tunnel');
+    return await prodPool.connect();
+  }
+}
 
 export async function initializeDatabase() {
   // Initialize local operations database
@@ -37,9 +158,11 @@ export async function initializeDatabase() {
 
   // Initialize production database with direct connection (no SSH tunnel)
   if (process.env.PROD_DB_HOST) {
+    await ensureProductionTunnel();
+
     prodPool = new Pool({
       host: process.env.PROD_DB_HOST,
-      port: parseInt(process.env.PROD_DB_PORT || '5432'),
+      port: getProdDbPort(),
       database: process.env.PROD_DB_NAME || 'misfits',
       user: process.env.PROD_DB_USER || 'dev',
       password: process.env.PROD_DB_PASSWORD || 'postgres',
@@ -87,7 +210,7 @@ export async function queryProduction(text: string, params?: any[]) {
     throw new Error('Production database not initialized');
   }
 
-  const client = await prodPool.connect();
+  const client = await getProductionClient();
   try {
     const result = await client.query(text, params);
     return result;

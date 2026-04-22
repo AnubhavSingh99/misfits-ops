@@ -5,6 +5,60 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 const router = Router();
+const localDataDir = path.resolve(__dirname, '../../data');
+
+function readJsonFile<T>(fileName: string, fallback: T): T {
+  try {
+    const filePath = path.join(localDataDir, fileName);
+    if (!fs.existsSync(filePath)) return fallback;
+    return JSON.parse(fs.readFileSync(filePath, 'utf-8')) as T;
+  } catch (error) {
+    logger.warn(`Failed to read fallback data file ${fileName}:`, error);
+    return fallback;
+  }
+}
+
+function buildLocalLocationIndex() {
+  const clubs = readJsonFile<Array<{ city: string; area: string }>>('existing_clubs.json', []);
+  const launches = readJsonFile<Array<{ city_name?: string; area_name?: string }>>('planned_launches.json', []);
+  const cityMap = new Map<string, { id: number; name: string; state: string; areas: Map<string, { id: number; name: string }> }>();
+
+  let nextCityId = 1;
+  let nextAreaId = 1;
+
+  const addLocation = (cityNameRaw?: string, areaNameRaw?: string) => {
+    const cityName = (cityNameRaw || '').trim();
+    const areaName = (areaNameRaw || '').trim();
+    if (!cityName || !areaName) return;
+
+    const cityKey = cityName.toLowerCase();
+    let city = cityMap.get(cityKey);
+    if (!city) {
+      city = { id: nextCityId++, name: cityName, state: '', areas: new Map() };
+      cityMap.set(cityKey, city);
+    }
+
+    const areaKey = areaName.toLowerCase();
+    if (!city.areas.has(areaKey)) {
+      city.areas.set(areaKey, { id: nextAreaId++, name: areaName });
+    }
+  };
+
+  for (const club of clubs) addLocation(club.city, club.area);
+  for (const launch of launches) addLocation(launch.city_name, launch.area_name);
+
+  const cities = Array.from(cityMap.values()).map(city => ({
+    id: city.id,
+    name: city.name,
+    city_name: city.name,
+    state: city.state,
+    areas: Array.from(city.areas.values())
+  }));
+
+  const areasByCityId = new Map<number, Array<{ id: number; name: string }>>();
+  for (const city of cities) areasByCityId.set(city.id, city.areas);
+  return { cities, areasByCityId };
+}
 
 // Get cities and areas for scaling planner dropdowns
 router.get('/cities', async (req, res) => {
@@ -45,12 +99,13 @@ router.get('/cities', async (req, res) => {
 
   } catch (error) {
     logger.error('Cities data fetch failed:', error);
-
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch cities data from database',
-      message: 'Database connection failed. RDS connection unavailable.',
-      details: error instanceof Error ? error.message : 'Unknown error'
+    const fallback = buildLocalLocationIndex();
+    res.json({
+      success: true,
+      cities: fallback.cities,
+      source: 'local_fallback',
+      generated_at: new Date().toISOString(),
+      warning: error instanceof Error ? error.message : 'Unknown database error'
     });
   }
 });
@@ -109,24 +164,30 @@ router.get('/areas/:cityId', async (req, res) => {
 
     } else {
       logger.info(`No areas found for city ID: ${cityId}`);
+      const fallback = buildLocalLocationIndex();
+      const localAreas = fallback.areasByCityId.get(cityId) || [];
       res.json({
         success: true,
-        areas: [],
+        areas: localAreas,
         city_id: cityId,
-        message: 'No areas found for this city',
-        source: 'database',
+        message: localAreas.length > 0 ? 'Loaded fallback areas for this city' : 'No areas found for this city',
+        source: localAreas.length > 0 ? 'local_fallback' : 'database',
         generated_at: new Date().toISOString()
       });
     }
 
   } catch (error) {
     logger.error(`Areas data fetch failed for city ${req.params.cityId}:`, error);
-
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch areas data from database',
-      message: 'Database connection failed. RDS connection unavailable.',
-      details: error instanceof Error ? error.message : 'Unknown error'
+    const fallback = buildLocalLocationIndex();
+    const fallbackCityId = parseInt(req.params.cityId);
+    const localAreas = Number.isNaN(fallbackCityId) ? [] : (fallback.areasByCityId.get(fallbackCityId) || []);
+    res.json({
+      success: true,
+      areas: localAreas,
+      city_id: fallbackCityId,
+      source: 'local_fallback',
+      generated_at: new Date().toISOString(),
+      warning: error instanceof Error ? error.message : 'Unknown database error'
     });
   }
 });
@@ -208,12 +269,21 @@ router.get('/areas', async (req, res) => {
 
   } catch (error) {
     logger.error('All areas data fetch failed:', error);
-
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch areas data from database',
-      message: 'Database connection failed. RDS connection unavailable.',
-      details: error instanceof Error ? error.message : 'Unknown error'
+    const fallback = buildLocalLocationIndex();
+    const allAreas = fallback.cities.flatMap(city => city.areas.map(area => ({
+      id: area.id,
+      name: area.name,
+      postal_code: null,
+      coordinates: { lat: null, lng: null },
+      city: { id: city.id, name: city.name, state: city.state },
+      display_name: `${area.name}, ${city.name}`
+    })));
+    res.json({
+      success: true,
+      areas: allAreas,
+      source: 'local_fallback',
+      generated_at: new Date().toISOString(),
+      warning: error instanceof Error ? error.message : 'Unknown database error'
     });
   }
 });

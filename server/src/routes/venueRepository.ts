@@ -77,6 +77,57 @@ const AMENITIES = [
   'Smoking Area'
 ];
 
+async function buildLocalVenueFilterFallback() {
+  const customCitiesResult = await queryLocal(`
+    SELECT DISTINCT custom_city FROM venue_repository
+    WHERE custom_city IS NOT NULL AND custom_city != ''
+    ORDER BY custom_city
+  `);
+
+  const customAreasResult = await queryLocal(`
+    SELECT DISTINCT custom_area, custom_city FROM venue_repository
+    WHERE custom_area IS NOT NULL AND custom_area != ''
+    ORDER BY custom_area
+  `);
+
+  let customCityId = -1;
+  const customCityMap = new Map<string, number>();
+  const cities = customCitiesResult.rows.map(r => {
+    const id = customCityId--;
+    customCityMap.set((r.custom_city || '').toLowerCase(), id);
+    return { id, name: r.custom_city };
+  });
+
+  let customAreaId = -1;
+  const areas = customAreasResult.rows.map(r => ({
+    id: customAreaId--,
+    name: r.custom_area,
+    city_id: customCityMap.get((r.custom_city || '').toLowerCase()) || 0
+  }));
+
+  const activitiesResult = await queryLocal(`
+    SELECT DISTINCT ps->>'preferred_activity' as activity
+    FROM venue_repository,
+         jsonb_array_elements(
+           CASE
+             WHEN jsonb_typeof(COALESCE(venue_info->'preferred_schedules', '[]'::jsonb)) = 'array'
+             THEN COALESCE(venue_info->'preferred_schedules', '[]'::jsonb)
+             ELSE '[]'::jsonb
+           END
+         ) as ps
+    WHERE ps->>'preferred_activity' IS NOT NULL
+      AND ps->>'preferred_activity' != ''
+    ORDER BY activity
+  `);
+
+  const activities = activitiesResult.rows.map((r, index) => ({
+    id: -(1000 + index),
+    name: r.activity
+  }));
+
+  return { cities, areas, activities };
+}
+
 // ============================================
 // DROPDOWN OPTIONS
 // ============================================
@@ -129,7 +180,27 @@ router.get('/options', async (req: Request, res: Response) => {
     });
   } catch (error) {
     logger.error('Error fetching venue repository options:', error);
-    res.status(500).json({ error: 'Failed to fetch options' });
+    const fallback = await buildLocalVenueFilterFallback();
+    const fallbackCities = fallback.cities.map(city => ({
+      id: city.id,
+      name: city.name,
+      areas: fallback.areas
+        .filter(area => area.city_id === city.id)
+        .map(area => ({ id: area.id, name: area.name }))
+    }));
+
+    res.json({
+      success: true,
+      options: {
+        statuses: VALID_STATUSES,
+        venueCategories: VENUE_CATEGORIES,
+        seatingCategories: SEATING_CATEGORIES,
+        capacityCategories: CAPACITY_CATEGORIES,
+        amenities: AMENITIES,
+        cities: fallbackCities
+      },
+      source: 'local_fallback'
+    });
   }
 });
 
@@ -215,7 +286,23 @@ router.get('/filter-options', async (req: Request, res: Response) => {
     });
   } catch (error) {
     logger.error('Error fetching venue repository filter options:', error);
-    res.status(500).json({ error: 'Failed to fetch filter options' });
+    const fallback = await buildLocalVenueFilterFallback();
+    const capacities = [
+      { id: 1, name: 'LESS_THAN_25', label: '<25' },
+      { id: 2, name: 'CAPACITY_25_TO_50', label: '25-50' },
+      { id: 3, name: 'CAPACITY_50_PLUS', label: '50+' }
+    ];
+
+    res.json({
+      success: true,
+      options: {
+        cities: fallback.cities,
+        areas: fallback.areas,
+        activities: fallback.activities,
+        capacities
+      },
+      source: 'local_fallback'
+    });
   }
 });
 
@@ -259,11 +346,16 @@ async function buildFilterClauses(query: Record<string, any>, startIndex: number
   if (city_names) {
     const names = (city_names as string).split(',');
     // Get area IDs from production for matching cities
-    const cityAreasResult = await queryProduction(
-      `SELECT a.id FROM area a JOIN city c ON a.city_id = c.id WHERE c.name = ANY($1)`,
-      [names]
-    );
-    const matchingAreaIds = cityAreasResult.rows.map(r => r.id);
+    let matchingAreaIds: number[] = [];
+    try {
+      const cityAreasResult = await queryProduction(
+        `SELECT a.id FROM area a JOIN city c ON a.city_id = c.id WHERE c.name = ANY($1)`,
+        [names]
+      );
+      matchingAreaIds = cityAreasResult.rows.map(r => r.id);
+    } catch (error) {
+      logger.warn('Failed to resolve production city filters, falling back to custom_city only', { error });
+    }
 
     const conditions: string[] = [];
     if (matchingAreaIds.length > 0) {
@@ -278,10 +370,15 @@ async function buildFilterClauses(query: Record<string, any>, startIndex: number
 
   if (area_names) {
     const names = (area_names as string).split(',');
-    const areaResult = await queryProduction(
-      `SELECT id FROM area WHERE name = ANY($1)`, [names]
-    );
-    const matchingAreaIds = areaResult.rows.map(r => r.id);
+    let matchingAreaIds: number[] = [];
+    try {
+      const areaResult = await queryProduction(
+        `SELECT id FROM area WHERE name = ANY($1)`, [names]
+      );
+      matchingAreaIds = areaResult.rows.map(r => r.id);
+    } catch (error) {
+      logger.warn('Failed to resolve production area filters, falling back to custom_area only', { error });
+    }
 
     const conditions: string[] = [];
     if (matchingAreaIds.length > 0) {
@@ -346,15 +443,21 @@ router.get('/', async (req: Request, res: Response) => {
     let areaMap = new Map<number, { area_name: string; city_name: string }>();
 
     if (venueAreaIds.length > 0) {
-      const areaQuery = `
-        SELECT a.id, a.name as area_name, c.name as city_name
-        FROM area a
-        JOIN city c ON a.city_id = c.id
-        WHERE a.id = ANY($1)
-      `;
-      const areaResult = await queryProduction(areaQuery, [venueAreaIds]);
-      for (const row of areaResult.rows) {
-        areaMap.set(row.id, { area_name: row.area_name, city_name: row.city_name });
+      try {
+        const areaQuery = `
+          SELECT a.id, a.name as area_name, c.name as city_name
+          FROM area a
+          JOIN city c ON a.city_id = c.id
+          WHERE a.id = ANY($1)
+        `;
+        const areaResult = await queryProduction(areaQuery, [venueAreaIds]);
+        for (const row of areaResult.rows) {
+          areaMap.set(row.id, { area_name: row.area_name, city_name: row.city_name });
+        }
+      } catch (areaError) {
+        logger.warn('Area/city enrichment unavailable; returning venues without production names', {
+          error: areaError instanceof Error ? areaError.message : String(areaError)
+        });
       }
     }
 
@@ -383,6 +486,51 @@ router.get('/', async (req: Request, res: Response) => {
   } catch (error) {
     logger.error('Error fetching venue repository:', error);
     res.status(500).json({ error: 'Failed to fetch venues' });
+  }
+});
+
+/**
+ * GET /api/venue-repository/venues
+ * Backward-compatible alias for list endpoint.
+ */
+router.get('/venues', async (req: Request, res: Response) => {
+  try {
+    const { limit = 50, offset = 0 } = req.query;
+
+    const { clauses, params, nextIndex } = await buildFilterClauses(req.query, 1);
+
+    let query = `SELECT vr.* FROM venue_repository vr WHERE 1=1`;
+    if (clauses.length > 0) {
+      query += ' AND ' + clauses.join(' AND ');
+    }
+    query += ` ORDER BY vr.created_at DESC LIMIT $${nextIndex} OFFSET $${nextIndex + 1}`;
+    params.push(limit, offset);
+
+    const result = await queryLocal(query, params);
+    const countFilter = await buildFilterClauses(req.query, 1);
+    let countQuery = `SELECT COUNT(*) FROM venue_repository vr WHERE 1=1`;
+    if (countFilter.clauses.length > 0) {
+      countQuery += ' AND ' + countFilter.clauses.join(' AND ');
+    }
+    const countResult = await queryLocal(countQuery, countFilter.params);
+
+    const venues = result.rows.map(venue => ({
+      ...venue,
+      area_name: venue.custom_area || null,
+      city_name: venue.custom_city || null
+    }));
+
+    return res.json({
+      success: true,
+      venues,
+      total: parseInt(countResult.rows[0].count),
+      limit: parseInt(limit as string),
+      offset: parseInt(offset as string),
+      source: 'local_fallback'
+    });
+  } catch (error) {
+    logger.error('Error fetching venue repository (alias route):', error);
+    return res.status(500).json({ error: 'Failed to fetch venues' });
   }
 });
 
@@ -426,15 +574,22 @@ router.get('/:id', async (req: Request, res: Response) => {
 
     // Get area/city info
     if (venue.area_id) {
-      const areaResult = await queryProduction(
-        `SELECT a.name as area_name, c.name as city_name
-         FROM area a JOIN city c ON a.city_id = c.id
-         WHERE a.id = $1`,
-        [venue.area_id]
-      );
-      if (areaResult.rows.length > 0) {
-        venue.area_name = areaResult.rows[0].area_name;
-        venue.city_name = areaResult.rows[0].city_name;
+      try {
+        const areaResult = await queryProduction(
+          `SELECT a.name as area_name, c.name as city_name
+           FROM area a JOIN city c ON a.city_id = c.id
+           WHERE a.id = $1`,
+          [venue.area_id]
+        );
+        if (areaResult.rows.length > 0) {
+          venue.area_name = areaResult.rows[0].area_name;
+          venue.city_name = areaResult.rows[0].city_name;
+        }
+      } catch (areaError) {
+        logger.warn('Single venue area/city enrichment unavailable', {
+          error: areaError instanceof Error ? areaError.message : String(areaError),
+          venueId: id
+        });
       }
     }
 

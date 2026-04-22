@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { logger } from '../utils/logger';
-import { queryProduction } from '../services/database';
+import { queryLocal, queryProduction } from '../services/database';
 
 const router = Router();
 
@@ -54,15 +54,43 @@ router.get('/activities', async (req, res) => {
     }
 
   } catch (error) {
-    logger.error('Database query failed:', error.message);
-
-    // No fallback - return error
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch activities from database',
-      message: 'Database connection required. Please verify RDS credentials and network access.',
-      details: error.message
+    logger.warn('Primary activities query failed; falling back to local clubs table', {
+      error: error instanceof Error ? error.message : String(error)
     });
+
+    try {
+      const localResult = await queryLocal(`
+        SELECT
+          activity,
+          COUNT(*)::int as club_count
+        FROM clubs
+        WHERE activity IS NOT NULL AND activity != ''
+        GROUP BY activity
+        ORDER BY COUNT(*) DESC, activity ASC
+      `);
+
+      const activities = localResult.rows.map(row => ({
+        name: row.activity,
+        type: Number(row.club_count) >= 15 ? 'scale' : 'long_tail',
+        clubs: Number(row.club_count) || 0,
+        revenue: 0
+      }));
+
+      return res.json({
+        success: true,
+        data: activities,
+        source: 'local_fallback',
+        message: 'Activities fetched from local fallback data'
+      });
+    } catch (fallbackError) {
+      logger.error('Activities local fallback failed:', fallbackError);
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to fetch activities from database',
+        message: 'Both production and local fallbacks failed.',
+        details: fallbackError instanceof Error ? fallbackError.message : String(fallbackError)
+      });
+    }
   }
 });
 
@@ -241,12 +269,73 @@ router.get('/', async (req, res) => {
     });
 
   } catch (error) {
-    logger.error('Error fetching clubs:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch clubs',
-      details: error.message
+    logger.warn('Primary clubs query failed; falling back to local clubs table', {
+      error: error instanceof Error ? error.message : String(error)
     });
+
+    try {
+      const fallbackResult = await queryLocal(`
+        SELECT
+          id as club_id,
+          name,
+          city,
+          activity,
+          created_at
+        FROM clubs
+        ORDER BY created_at DESC
+      `);
+
+      const clubs = fallbackResult.rows.map(club => ({
+        id: club.club_id,
+        name: club.name,
+        city: club.city,
+        activity: club.activity,
+        createdAt: club.created_at,
+        ageMonths: 0,
+        totalRevenue: 0,
+        totalEvents: 0,
+        activeWeeks: 0,
+        eventsPerWeek: 0,
+        recent7dayEvents: 0,
+        recentEvents: 0,
+        recentRevenue: 0,
+        previousRevenue: 0,
+        revenueGrowthPercent: 0,
+        detailedStatus: 'assessment_needed',
+        clubLevel: 'Inactive',
+        statusCategory: getStatusCategory('assessment_needed')
+      }));
+
+      const summary = {
+        total: clubs.length,
+        byLevel: {
+          L2: 0,
+          L1: 0,
+          Inactive: clubs.length
+        },
+        byDetailedStatus: {
+          assessment_needed: clubs.length
+        },
+        byStatusCategory: {
+          'Assessment Needed': clubs.length
+        }
+      };
+
+      return res.json({
+        success: true,
+        data: clubs,
+        summary,
+        statusCategories: getStatusCategories(),
+        source: 'local_fallback'
+      });
+    } catch (fallbackError) {
+      logger.error('Clubs local fallback failed:', fallbackError);
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to fetch clubs',
+        details: fallbackError instanceof Error ? fallbackError.message : String(fallbackError)
+      });
+    }
   }
 });
 

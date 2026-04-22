@@ -2,8 +2,79 @@ import express from 'express';
 import { logger } from '../utils/logger';
 import { calculateClubHealth, calculateSystemHealth } from '../services/healthEngine';
 import { queryProduction } from '../services/database';
+import * as fs from 'fs';
+import * as path from 'path';
 
 const router = express.Router();
+const localDataDir = path.resolve(__dirname, '../../data');
+
+function readJsonFile<T>(fileName: string, fallback: T): T {
+  try {
+    const filePath = path.join(localDataDir, fileName);
+    if (!fs.existsSync(filePath)) {
+      return fallback;
+    }
+
+    return JSON.parse(fs.readFileSync(filePath, 'utf-8')) as T;
+  } catch (error) {
+    logger.warn(`Failed to read fallback data file ${fileName}:`, error);
+    return fallback;
+  }
+}
+
+function buildHealthFallback() {
+  const clubs = readJsonFile<Array<{ id: number; name: string; activity: string; city: string; area: string; currentMeetups?: number; currentRevenue?: number; status?: string }>>('existing_clubs.json', []);
+
+  const clubsWithHealth = clubs.map((club, index) => {
+    const meetups = club.currentMeetups || 0;
+    const revenue = club.currentRevenue || 0;
+    let healthStatus: 'healthy' | 'at_risk' | 'critical' = 'critical';
+
+    if (meetups >= 10 || revenue >= 35000) {
+      healthStatus = 'healthy';
+    } else if (meetups >= 6 || revenue >= 20000) {
+      healthStatus = 'at_risk';
+    }
+
+    return {
+      club_id: club.id,
+      club_name: club.name,
+      activity_name: club.activity,
+      city_name: club.city,
+      area_name: club.area,
+      health_status: healthStatus,
+      health_score: healthStatus === 'healthy' ? 82 : healthStatus === 'at_risk' ? 58 : 28,
+      current_meetups: meetups,
+      current_revenue: revenue,
+      rank: index + 1
+    };
+  });
+
+  const healthyClubs = clubsWithHealth.filter(club => club.health_status === 'healthy').length;
+  const atRiskClubs = clubsWithHealth.filter(club => club.health_status === 'at_risk').length;
+  const criticalClubs = clubsWithHealth.filter(club => club.health_status === 'critical').length;
+  const activeClubs = clubsWithHealth.length;
+
+  return {
+    success: true,
+    clubs: clubsWithHealth,
+    metrics: {
+      healthy_clubs: healthyClubs,
+      at_risk_clubs: atRiskClubs,
+      critical_clubs: criticalClubs,
+      active_clubs: activeClubs,
+      total_meetups: clubsWithHealth.reduce((sum, club) => sum + club.current_meetups, 0),
+      active_meetups: clubsWithHealth.reduce((sum, club) => sum + club.current_meetups, 0),
+      meetup_target: Math.max(activeClubs * 10, 1),
+      meetup_achievement_pct: Math.round((clubsWithHealth.reduce((sum, club) => sum + club.current_meetups, 0) / Math.max(activeClubs * 10, 1)) * 100),
+      total_events: clubsWithHealth.reduce((sum, club) => sum + club.current_meetups, 0),
+      filtered_by: 'all',
+      filter_applied: false
+    },
+    source: 'local_fallback',
+    generated_at: new Date().toISOString()
+  };
+}
 
 // GET /api/health - Basic health summary
 router.get('/', async (req, res) => {
@@ -380,12 +451,9 @@ router.get('/clubs', async (req, res) => {
   } catch (error) {
     logger.error('Health data fetch failed:', error);
 
-    // Return error with suggestion to use fallback
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch health data from database',
-      message: 'Database connection failed. Frontend will use mock data.',
-      details: error instanceof Error ? error.message : 'Unknown error'
+    res.json({
+      ...buildHealthFallback(),
+      warning: error instanceof Error ? error.message : 'Unknown database error'
     });
   }
 });

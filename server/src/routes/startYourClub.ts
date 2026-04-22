@@ -367,8 +367,104 @@ router.get('/admin/all', async (req: Request, res: Response) => {
       totalPages: Math.ceil(total / limitNum),
     });
   } catch (error: any) {
-    logger.error('Failed to list applications:', error);
-    res.status(500).json({ success: false, error: error.message });
+    logger.error('Failed to list applications from production, trying local fallback:', error);
+
+    try {
+      const q = req.query as Record<string, any>;
+      const fallbackArchived = q.archived;
+      const fallbackStatuses = q.statuses;
+      const fallbackStatus = q.status;
+      const fallbackCity = q.city;
+      const fallbackActivity = q.activity;
+      const fallbackSearch = q.search;
+      const fallbackPage = q.page || '1';
+      const fallbackLimit = q.limit || '50';
+
+      const localConditions: string[] = [];
+      const localParams: any[] = [];
+      let localIdx = 1;
+
+      if (fallbackArchived !== 'true') {
+        localConditions.push(`ca.archived = false`);
+      }
+      if (fallbackStatuses) {
+        const statusList = String(fallbackStatuses).split(',').filter(s => s.trim());
+        if (statusList.length > 0) {
+          localConditions.push(`ca.status = ANY($${localIdx++})`);
+          localParams.push(statusList);
+        }
+      } else if (fallbackStatus) {
+        localConditions.push(`ca.status = $${localIdx++}`);
+        localParams.push(fallbackStatus);
+      }
+      if (fallbackCity) {
+        localConditions.push(`ca.city = $${localIdx++}`);
+        localParams.push(fallbackCity);
+      }
+      if (fallbackActivity) {
+        localConditions.push(`ca.activity = $${localIdx++}`);
+        localParams.push(fallbackActivity);
+      }
+      if (fallbackSearch) {
+        localConditions.push(`(ca.name ILIKE $${localIdx} OR ca.city ILIKE $${localIdx} OR ca.activity ILIKE $${localIdx})`);
+        localParams.push(`%${String(fallbackSearch)}%`);
+        localIdx++;
+      }
+
+      const localWhere = localConditions.length > 0 ? `WHERE ${localConditions.join(' AND ')}` : '';
+      const localPageNum = Math.max(1, parseInt(String(fallbackPage), 10) || 1);
+      const localLimitNum = Math.min(500, Math.max(1, parseInt(String(fallbackLimit), 10) || 50));
+      const localOffset = (localPageNum - 1) * localLimitNum;
+
+      const localCount = await queryLocal(`SELECT COUNT(*)::int as count FROM club_applications ca ${localWhere}`, localParams);
+      const localTotal = parseInt(localCount.rows?.[0]?.count || 0, 10);
+
+      const localResult = await queryLocal(
+        `SELECT
+          ca.*,
+          ca.id as pk,
+          ca.city as city_name,
+          ca.activity as activity_name,
+          ca.contract_url as contract_pdf_url,
+          ('SYC-' || LPAD(ca.id::text, 8, '0')) as application_ref,
+          COALESCE(ca.updated_at, ca.created_at) as stage_entered_at,
+          ROUND((EXTRACT(EPOCH FROM (NOW() - COALESCE(ca.updated_at, ca.created_at))) / 3600.0)::numeric, 1) as stage_age_hours,
+          false as is_duplicate_lead,
+          false as is_repeat_application,
+          0::int as repeat_rejection_count,
+          NULL::text as last_applied_activity,
+          ARRAY[]::text[] as applied_activities_history
+        FROM club_applications ca
+        ${localWhere}
+        ORDER BY COALESCE(ca.created_at, NOW()) DESC
+        LIMIT $${localIdx++} OFFSET $${localIdx++}`,
+        [...localParams, localLimitNum, localOffset]
+      );
+
+      const mapped = mapAppRows(localResult.rows || []);
+      return res.json({
+        success: true,
+        data: mapped,
+        total: localTotal,
+        page: localPageNum,
+        limit: localLimitNum,
+        totalPages: Math.ceil(localTotal / localLimitNum),
+        source: 'local_fallback',
+        warning: error?.message || 'Production database unavailable'
+      });
+    } catch (localError: any) {
+      logger.error('Local fallback for applications failed, returning empty set:', localError);
+      return res.json({
+        success: true,
+        data: [],
+        total: 0,
+        page: 1,
+        limit: 50,
+        totalPages: 0,
+        source: 'empty_fallback',
+        warning: error?.message || 'Production database unavailable'
+      });
+    }
   }
 });
 
@@ -547,8 +643,136 @@ router.get('/admin/analytics', async (req: Request, res: Response) => {
       },
     });
   } catch (error: any) {
-    logger.error('Failed to get analytics:', error);
-    res.status(500).json({ success: false, error: error.message });
+    logger.error('Failed to get analytics from production, returning fallback:', error);
+    try {
+      const localCounts = await queryLocal(`
+        SELECT
+          COUNT(*) FILTER (WHERE archived = false)::int as total,
+          COUNT(*) FILTER (WHERE status = 'SUBMITTED' AND archived = false)::int as submitted,
+          COUNT(*) FILTER (WHERE status = 'UNDER_REVIEW' AND archived = false)::int as under_review,
+          COUNT(*) FILTER (WHERE status IN ('INTERVIEW_PENDING', 'INTERVIEW_SCHEDULED', 'INTERVIEW_DONE') AND archived = false)::int as interview_phase,
+          COUNT(*) FILTER (WHERE status = 'SELECTED' AND archived = false)::int as selected,
+          COUNT(*) FILTER (WHERE status = 'CLUB_CREATED' AND archived = false)::int as onboarded,
+          COUNT(*) FILTER (WHERE status = 'REJECTED' AND archived = false)::int as rejected,
+          COUNT(*) FILTER (WHERE status = 'ON_HOLD' AND archived = false)::int as on_hold,
+          COUNT(*) FILTER (WHERE status = 'ACTIVE' AND archived = false)::int as active_journey,
+          COUNT(*) FILTER (WHERE status = 'ABANDONED' AND archived = false)::int as abandoned,
+          COUNT(*) FILTER (WHERE status = 'NOT_INTERESTED' AND archived = false)::int as not_interested,
+          COUNT(*) FILTER (WHERE status IN ('ACTIVE', 'ABANDONED', 'NOT_INTERESTED') AND archived = false)::int as dropped_early,
+          COUNT(*) FILTER (WHERE status = 'REJECTED' AND rejected_from_status IN ('SUBMITTED', 'UNDER_REVIEW', 'ON_HOLD') AND archived = false)::int as rejected_screening,
+          COUNT(*) FILTER (WHERE status = 'REJECTED' AND rejected_from_status = 'INTERVIEW_DONE' AND archived = false)::int as rejected_interview
+        FROM club_applications
+      `);
+
+      const localStage = await queryLocal(`
+        SELECT
+          status,
+          COUNT(*)::int as count,
+          ROUND(AVG(EXTRACT(EPOCH FROM (NOW() - COALESCE(updated_at, created_at))) / 3600.0)::numeric, 1) as avg_stage_age_hrs
+        FROM club_applications
+        WHERE archived = false
+        GROUP BY status
+        ORDER BY count DESC
+      `);
+
+      const funnel = localCounts.rows?.[0] || {};
+      const total = parseInt(funnel.total || 0, 10);
+      const submitted = parseInt(funnel.submitted || 0, 10);
+      const underReview = parseInt(funnel.under_review || 0, 10);
+      const interviewPhase = parseInt(funnel.interview_phase || 0, 10);
+      const selected = parseInt(funnel.selected || 0, 10);
+      const onboarded = parseInt(funnel.onboarded || 0, 10);
+      const rejected = parseInt(funnel.rejected || 0, 10);
+      const reachedSubmitted = submitted + underReview + interviewPhase + selected + onboarded + rejected;
+      const reachedInterview = interviewPhase + selected + onboarded + parseInt(funnel.rejected_interview || 0, 10);
+      const reachedSelected = selected + onboarded;
+
+      return res.json({
+        success: true,
+        data: {
+          funnel: {
+            total,
+            submitted,
+            under_review: underReview,
+            interview_phase: interviewPhase,
+            selected,
+            onboarded,
+            rejected,
+            on_hold: parseInt(funnel.on_hold || 0, 10),
+            active_journey: parseInt(funnel.active_journey || 0, 10),
+            abandoned: parseInt(funnel.abandoned || 0, 10),
+            not_interested: parseInt(funnel.not_interested || 0, 10),
+            dropped_early: parseInt(funnel.dropped_early || 0, 10),
+            rejected_screening: parseInt(funnel.rejected_screening || 0, 10),
+            rejected_interview: parseInt(funnel.rejected_interview || 0, 10),
+          },
+          conversion: {
+            submit_to_interview: reachedSubmitted > 0 ? Math.round((reachedInterview / reachedSubmitted) * 100) : 0,
+            interview_to_selected: reachedInterview > 0 ? Math.round((reachedSelected / reachedInterview) * 100) : 0,
+            selected_to_onboarded: reachedSelected > 0 ? Math.round((onboarded / reachedSelected) * 100) : 0,
+            overall: total > 0 ? Math.round((onboarded / total) * 100) : 0,
+          },
+          tat: {
+            submit_to_pick_hrs: null,
+            pick_to_interview_hrs: null,
+            interview_to_select_hrs: null,
+            select_to_call_hrs: null,
+            select_to_venue_hrs: null,
+            select_to_launch_hrs: null,
+            total_pipeline_hrs: null,
+          },
+          dropped_analysis: {
+            rejection_reasons: [],
+          },
+          stage_analytics: localStage.rows || [],
+        },
+        source: 'local_fallback',
+        warning: error?.message || 'Production database unavailable'
+      });
+    } catch {
+      return res.json({
+        success: true,
+        data: {
+          funnel: {
+            total: 0,
+            submitted: 0,
+            under_review: 0,
+            interview_phase: 0,
+            selected: 0,
+            onboarded: 0,
+            rejected: 0,
+            on_hold: 0,
+            active_journey: 0,
+            abandoned: 0,
+            not_interested: 0,
+            dropped_early: 0,
+            rejected_screening: 0,
+            rejected_interview: 0,
+          },
+          conversion: {
+            submit_to_interview: 0,
+            interview_to_selected: 0,
+            selected_to_onboarded: 0,
+            overall: 0,
+          },
+          tat: {
+            submit_to_pick_hrs: null,
+            pick_to_interview_hrs: null,
+            interview_to_select_hrs: null,
+            select_to_call_hrs: null,
+            select_to_venue_hrs: null,
+            select_to_launch_hrs: null,
+            total_pipeline_hrs: null,
+          },
+          dropped_analysis: {
+            rejection_reasons: [],
+          },
+          stage_analytics: [],
+        },
+        source: 'empty_fallback',
+        warning: error?.message || 'Production database unavailable'
+      });
+    }
   }
 });
 
@@ -646,7 +870,14 @@ router.get('/admin/cities', async (req: Request, res: Response) => {
     );
     res.json({ success: true, data: result.rows.map((r: any) => r.city) });
   } catch (error: any) {
-    res.status(500).json({ success: false, error: error.message });
+    try {
+      const local = await queryLocal(
+        `SELECT DISTINCT city FROM club_applications WHERE city IS NOT NULL AND archived = false ORDER BY city`
+      );
+      return res.json({ success: true, data: local.rows.map((r: any) => r.city), source: 'local_fallback' });
+    } catch {
+      return res.json({ success: true, data: [], source: 'empty_fallback' });
+    }
   }
 });
 
@@ -658,7 +889,14 @@ router.get('/admin/activities', async (req: Request, res: Response) => {
     );
     res.json({ success: true, data: result.rows.map((r: any) => r.activity) });
   } catch (error: any) {
-    res.status(500).json({ success: false, error: error.message });
+    try {
+      const local = await queryLocal(
+        `SELECT DISTINCT activity FROM club_applications WHERE activity IS NOT NULL AND archived = false ORDER BY activity`
+      );
+      return res.json({ success: true, data: local.rows.map((r: any) => r.activity), source: 'local_fallback' });
+    } catch {
+      return res.json({ success: true, data: [], source: 'empty_fallback' });
+    }
   }
 });
 

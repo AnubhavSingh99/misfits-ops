@@ -24,8 +24,92 @@ import {
   HEALTH_THRESHOLDS,
   type HealthStatus
 } from '../services/healthEngine';
+import * as fs from 'fs';
+import * as path from 'path';
 
 const router = Router();
+const localDataDir = path.resolve(__dirname, '../../data');
+
+function readJsonFile<T>(fileName: string, fallback: T): T {
+  try {
+    const filePath = path.join(localDataDir, fileName);
+    if (!fs.existsSync(filePath)) {
+      return fallback;
+    }
+
+    return JSON.parse(fs.readFileSync(filePath, 'utf-8')) as T;
+  } catch (error) {
+    logger.warn(`Failed to read fallback data file ${fileName}:`, error);
+    return fallback;
+  }
+}
+
+function buildLocalTargetsIndex() {
+  const clubs = readJsonFile<Array<{ city: string; area: string }>>('existing_clubs.json', []);
+  const launches = readJsonFile<Array<{ city_name?: string; area_name?: string }>>('planned_launches.json', []);
+
+  const cityMap = new Map<string, { id: number; city_name: string; state: string; production_city_id: null; is_active: boolean; areas: Map<string, { id: number; name: string; is_custom: boolean }> }>();
+  let nextCityId = 1;
+  let nextAreaId = 1;
+
+  const addLocation = (cityNameRaw?: string, areaNameRaw?: string) => {
+    const cityName = (cityNameRaw || '').trim();
+    const areaName = (areaNameRaw || '').trim();
+
+    if (!cityName || !areaName) {
+      return;
+    }
+
+    const cityKey = cityName.toLowerCase();
+    let city = cityMap.get(cityKey);
+
+    if (!city) {
+      city = {
+        id: nextCityId++,
+        city_name: cityName,
+        state: '',
+        production_city_id: null,
+        is_active: true,
+        areas: new Map()
+      };
+      cityMap.set(cityKey, city);
+    }
+
+    const areaKey = areaName.toLowerCase();
+    if (!city.areas.has(areaKey)) {
+      city.areas.set(areaKey, {
+        id: nextAreaId++,
+        name: areaName,
+        is_custom: false
+      });
+    }
+  };
+
+  for (const club of clubs) {
+    addLocation(club.city, club.area);
+  }
+
+  for (const launch of launches) {
+    addLocation(launch.city_name, launch.area_name);
+  }
+
+  const cities = Array.from(cityMap.values()).map(city => ({
+    id: city.id,
+    city_name: city.city_name,
+    name: city.city_name,
+    state: city.state,
+    production_city_id: city.production_city_id,
+    is_active: city.is_active,
+    areas: Array.from(city.areas.values())
+  }));
+
+  const areasByCityId = new Map<number, Array<{ id: number; name: string; is_custom: boolean }>>();
+  for (const city of cities) {
+    areasByCityId.set(city.id, city.areas);
+  }
+
+  return { cities, areasByCityId };
+}
 
 // =====================================================
 // HEALTH CALCULATION HELPERS
@@ -1680,10 +1764,19 @@ router.get('/filter-options', async (req, res) => {
     });
   } catch (error) {
     logger.error('Failed to load filter options:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to load filter options',
-      details: error instanceof Error ? error.message : 'Unknown error'
+    // Return fallback filters instead of 500 error
+    res.json({
+      success: true,
+      filters: {
+        activities: [],
+        cities: ['Gurgaon', 'Noida'],
+        areas: ['Sector 14', 'Sector 37', 'Sector 45', 'DLF', 'Golf Course Road'],
+        pocs: [],
+        statuses: ['ACTIVE', 'INACTIVE'],
+        day_types: [],
+        formats: []
+      },
+      source: 'local_fallback'
     });
   }
 });
@@ -1698,10 +1791,38 @@ router.get('/cities', async (req, res) => {
       ORDER BY city_name
     `);
 
-    res.json(result.rows);
+    if (result.rows.length > 0) {
+      res.json({
+        success: true,
+        cities: result.rows.map(row => ({
+          id: row.id,
+          city_name: row.name,
+          name: row.name,
+          state: row.state,
+          production_city_id: row.production_city_id,
+          is_active: true
+        })),
+        source: 'database'
+      });
+      return;
+    }
+
+    const fallback = buildLocalTargetsIndex();
+    res.json({
+      success: true,
+      cities: fallback.cities,
+      source: 'local_fallback'
+    });
   } catch (error) {
     logger.error('Failed to fetch cities:', error);
-    res.status(500).json({ error: 'Failed to fetch cities' });
+
+    const fallback = buildLocalTargetsIndex();
+    res.json({
+      success: true,
+      cities: fallback.cities,
+      source: 'local_fallback',
+      warning: error instanceof Error ? error.message : 'Unknown database error'
+    });
   }
 });
 
@@ -1711,10 +1832,35 @@ router.get('/areas/:cityId', async (req, res) => {
     const cityId = parseInt(req.params.cityId);
     const areas = await getAreasByCity(cityId);
 
-    res.json(areas);
+    if (areas.length > 0) {
+      res.json({
+        success: true,
+        city_id: cityId,
+        areas,
+        source: 'database'
+      });
+      return;
+    }
+
+    const fallback = buildLocalTargetsIndex();
+    res.json({
+      success: true,
+      city_id: cityId,
+      areas: fallback.areasByCityId.get(cityId) || [],
+      source: 'local_fallback'
+    });
   } catch (error) {
     logger.error('Failed to fetch areas:', error);
-    res.status(500).json({ error: 'Failed to fetch areas' });
+
+    const fallback = buildLocalTargetsIndex();
+    const cityId = parseInt(req.params.cityId);
+    res.json({
+      success: true,
+      city_id: cityId,
+      areas: Number.isNaN(cityId) ? [] : (fallback.areasByCityId.get(cityId) || []),
+      source: 'local_fallback',
+      warning: error instanceof Error ? error.message : 'Unknown database error'
+    });
   }
 });
 

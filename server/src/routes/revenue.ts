@@ -1,8 +1,46 @@
 import express from 'express';
 import { query, queryProduction } from '../services/database';
 import { logger } from '../utils/logger';
+import * as fs from 'fs';
+import * as path from 'path';
 
 const router = express.Router();
+const localDataDir = path.resolve(__dirname, '../../data');
+
+function readJsonFile<T>(fileName: string, fallback: T): T {
+  try {
+    const filePath = path.join(localDataDir, fileName);
+    if (!fs.existsSync(filePath)) {
+      return fallback;
+    }
+
+    return JSON.parse(fs.readFileSync(filePath, 'utf-8')) as T;
+  } catch (error) {
+    logger.warn(`Failed to read fallback data file ${fileName}:`, error);
+    return fallback;
+  }
+}
+
+function buildRevenueFallback() {
+  const clubs = readJsonFile<Array<{ currentRevenue?: number }>>('existing_clubs.json', []);
+  const currentRevenueRupees = clubs.reduce((sum, club) => sum + (club.currentRevenue || 0), 0);
+  const targetRevenueRupees = currentRevenueRupees > 0 ? Math.max(currentRevenueRupees * 1.2, currentRevenueRupees + 1) : 1;
+  const progressPercentage = Math.min((currentRevenueRupees / targetRevenueRupees) * 100, 100);
+
+  return {
+    success: true,
+    data: {
+      current_revenue: Math.round(currentRevenueRupees * 100),
+      target_revenue: Math.round(targetRevenueRupees * 100),
+      progress_percentage: progressPercentage,
+      raw_data: [{
+        month: new Date().toISOString(),
+        total_revenue_rupees: currentRevenueRupees.toFixed(2)
+      }]
+    },
+    source: 'local_fallback'
+  };
+}
 
 // GET /api/revenue - Basic revenue summary
 router.get('/', async (req, res) => {
@@ -59,10 +97,9 @@ router.get('/', async (req, res) => {
     });
   } catch (error) {
     logger.error('Failed to fetch revenue data:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch revenue data',
-      details: error instanceof Error ? error.message : 'Unknown error'
+    res.json({
+      ...buildRevenueFallback(),
+      warning: error instanceof Error ? error.message : 'Unknown database error'
     });
   }
 });
