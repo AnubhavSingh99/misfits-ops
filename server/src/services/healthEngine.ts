@@ -227,9 +227,10 @@ export function calculateClubHealth(clubData: {
 
   // Determine health status for UI - dormant takes priority over capacity health
   let healthStatusForUI = 'healthy';
+  const isDormant = Boolean((clubData as any).is_dormant);
   if (clubData.club_status === 'INACTIVE') {
     healthStatusForUI = 'inactive';
-  } else if (clubData.is_dormant) {
+  } else if (isDormant) {
     // Dormant = 1 week no events (but had events 2 weeks ago)
     healthStatusForUI = 'dormant';
   } else if (capacityHealth === 'red') {

@@ -49,31 +49,31 @@ router.get('/:pocId/meetups', async (req, res) => {
     const { activity, city, health, stage, search } = req.query;
 
     let whereConditions = ['(m.activity_head_id = $1 OR m.city_head_id = $1)'];
-    let queryParams = [pocId];
+    let queryParams: any[] = [pocId];
     let paramIndex = 2;
 
     // Add filters
     if (activity && activity !== 'All') {
       whereConditions.push(`m.activity = $${paramIndex}`);
-      queryParams.push(activity);
+      queryParams.push(String(activity));
       paramIndex++;
     }
 
     if (city && city !== 'All') {
       whereConditions.push(`m.city = $${paramIndex}`);
-      queryParams.push(city);
+      queryParams.push(String(city));
       paramIndex++;
     }
 
     if (health && health !== 'All') {
       whereConditions.push(`m.health_status = $${paramIndex}`);
-      queryParams.push(health);
+      queryParams.push(String(health));
       paramIndex++;
     }
 
     if (stage && stage !== 'All') {
       whereConditions.push(`m.current_stage = $${paramIndex}`);
-      queryParams.push(stage);
+      queryParams.push(String(stage));
       paramIndex++;
     }
 

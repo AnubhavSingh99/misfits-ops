@@ -626,7 +626,7 @@ export async function checkStaleTickets(): Promise<{ found: number; sent: boolea
       })
     });
 
-    const data = await response.json();
+    const data: any = await response.json();
     if (data.ok) {
       logger.info(`Stale ticket check: Sent ${result.rows.length} tickets to Saurabh`);
       return { found: result.rows.length, sent: true };

@@ -12,6 +12,7 @@ const DASHBOARD_CONFIG = {
   'venue-requirements': true,
   'health-dashboard': true,
   'start-your-club': true,
+  'analytics': true,
   'shark-tank-invites': true,
 
   // Hidden dashboards (older/deprecated)
@@ -21,7 +22,6 @@ const DASHBOARD_CONFIG = {
   'dimensional-dashboard': false,
   'poc-management': false,
   'workspace': false,
-  'analytics': false,
   'revenue-growth': false,
   'scaling-upload': false,
   'wow-tracking': false,

@@ -838,7 +838,7 @@ router.put('/clubs/:clubId/dimensional/:targetId', async (req, res) => {
           (newProgress[stage] as number) = available - removeFromStage;
           toRemove -= removeFromStage;
           if (removeFromStage > 0) {
-            logger.info(`Target ${targetId}: Removed ${removeFromStage} from ${stage}`);
+            logger.info(`Target ${targetId}: Removed ${removeFromStage} from ${String(stage)}`);
           }
         }
       }
@@ -1172,7 +1172,7 @@ router.put('/launches/:launchId/dimensional/:targetId', async (req, res) => {
           (newProgress[stage] as number) = available - removeFromStage;
           toRemove -= removeFromStage;
           if (removeFromStage > 0) {
-            logger.info(`Launch Target ${targetId}: Removed ${removeFromStage} from ${stage}`);
+            logger.info(`Launch Target ${targetId}: Removed ${removeFromStage} from ${String(stage)}`);
           }
         }
       }

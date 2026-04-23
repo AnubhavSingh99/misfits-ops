@@ -8,12 +8,94 @@ import { misfitsApi } from '../services/startYourClub/misfitsApi';
 import { callGrpc } from '../services/grpcClient';
 import { logger } from '../utils/logger';
 
+const CITY_SUB_AREA_SEPARATOR = ' | ';
+const DELHI_SUB_AREAS = ['North Delhi', 'South Delhi', 'East Delhi', 'West Delhi', 'Central Delhi', 'New Delhi'];
+const CITY_SUB_AREA_DEFAULTS: Record<string, string[]> = {
+  Delhi: DELHI_SUB_AREAS,
+  Noida: ['Sector 18', 'Sector 62', 'Sector 75', 'Sector 104', 'Sector 137', 'Greater Noida'],
+  Gurgaon: ['Golf Course Road', 'DLF Phase 1', 'DLF Phase 2', 'Sohna Road', 'Sector 46', 'Sector 56', 'Cyber City'],
+  Bangalore: ['Indiranagar', 'Koramangala', 'HSR Layout', 'Whitefield', 'JP Nagar', 'Bellandur'],
+};
+const CITY_ALIAS_TO_PARENT: Record<string, { city: string; subArea: string }> = {
+  'north delhi': { city: 'Delhi', subArea: 'North Delhi' },
+  'south delhi': { city: 'Delhi', subArea: 'South Delhi' },
+  'east delhi': { city: 'Delhi', subArea: 'East Delhi' },
+  'west delhi': { city: 'Delhi', subArea: 'West Delhi' },
+  'new delhi': { city: 'Delhi', subArea: 'New Delhi' },
+  'central delhi': { city: 'Delhi', subArea: 'Central Delhi' },
+};
+
+function splitCityAndSubArea(rawCity?: string | null): { city: string | null; sub_area: string | null } {
+  if (!rawCity) return { city: null, sub_area: null };
+  const value = String(rawCity).trim();
+  if (!value) return { city: null, sub_area: null };
+
+  if (value.includes(CITY_SUB_AREA_SEPARATOR)) {
+    const [cityPart, subAreaPart] = value.split(CITY_SUB_AREA_SEPARATOR, 2).map((part) => part.trim());
+    return {
+      city: cityPart || null,
+      sub_area: subAreaPart || null,
+    };
+  }
+
+  const alias = CITY_ALIAS_TO_PARENT[value.toLowerCase()];
+  if (alias) {
+    return {
+      city: alias.city,
+      sub_area: alias.subArea,
+    };
+  }
+
+  return { city: value, sub_area: null };
+}
+
+function formatCityWithSubArea(city?: string | null, subArea?: string | null): string {
+  const baseCity = String(city || '').trim();
+  const area = String(subArea || '').trim();
+  if (!baseCity) return '';
+  if (!area) return baseCity;
+  return `${baseCity}${CITY_SUB_AREA_SEPARATOR}${area}`;
+}
+
+function normalizedCitySql(column: string): string {
+  return `CASE
+    WHEN ${column} IS NULL OR NULLIF(BTRIM(${column}), '') IS NULL THEN NULL
+    WHEN LOWER(BTRIM(${column})) IN ('north delhi', 'south delhi', 'east delhi', 'west delhi', 'new delhi', 'central delhi') THEN 'Delhi'
+    WHEN POSITION('${CITY_SUB_AREA_SEPARATOR}' IN ${column}) > 0 THEN NULLIF(BTRIM(split_part(${column}, '${CITY_SUB_AREA_SEPARATOR}', 1)), '')
+    ELSE BTRIM(${column})
+  END`;
+}
+
+function normalizedSubAreaSql(column: string): string {
+  return `CASE
+    WHEN ${column} IS NULL OR NULLIF(BTRIM(${column}), '') IS NULL THEN NULL
+    WHEN LOWER(BTRIM(${column})) = 'north delhi' THEN 'North Delhi'
+    WHEN LOWER(BTRIM(${column})) = 'south delhi' THEN 'South Delhi'
+    WHEN LOWER(BTRIM(${column})) = 'east delhi' THEN 'East Delhi'
+    WHEN LOWER(BTRIM(${column})) = 'west delhi' THEN 'West Delhi'
+    WHEN LOWER(BTRIM(${column})) = 'new delhi' THEN 'New Delhi'
+    WHEN LOWER(BTRIM(${column})) = 'central delhi' THEN 'Central Delhi'
+    WHEN POSITION('${CITY_SUB_AREA_SEPARATOR}' IN ${column}) > 0 THEN NULLIF(BTRIM(split_part(${column}, '${CITY_SUB_AREA_SEPARATOR}', 2)), '')
+    ELSE NULL
+  END`;
+}
+
+function normalizeCityList(rows: any[], key: string): string[] {
+  const unique = new Set<string>();
+  for (const row of rows) {
+    const parsed = splitCityAndSubArea(row?.[key]);
+    if (parsed.city) unique.add(parsed.city);
+  }
+  return [...unique].sort((a, b) => a.localeCompare(b));
+}
+
 // Map production column names to frontend-expected names
 function mapAppRow(row: any) {
   if (!row) return row;
   if (row.pk != null) row.id = row.pk;
+  const parsedLocation = splitCityAndSubArea(row.city_name ?? row.city);
   // Map production column names to ops frontend names
-  if (row.city_name !== undefined && row.city === undefined) row.city = row.city_name;
+  if (row.city_name !== undefined && row.city === undefined) row.city = parsedLocation.city || row.city_name;
   if (row.activity_name !== undefined && row.activity === undefined) row.activity = row.activity_name;
   if (row.club_name !== undefined && row.club === undefined) row.club = row.club_name;
   // Map timestamp columns to boolean flags for frontend compatibility
@@ -23,7 +105,8 @@ function mapAppRow(row: any) {
   if (row.marketing_launched === undefined) row.marketing_launched = !!row.marketing_launched_at;
   if (row.split_snapshot !== undefined) row.split_percentage = row.split_snapshot;
   if (row.contract_pdf_url !== undefined) row.contract_url = row.contract_pdf_url;
-  if (row.city_name !== undefined) row.city = row.city_name;
+  if (row.city_name !== undefined) row.city = parsedLocation.city || row.city_name;
+  if (row.sub_area === undefined) row.sub_area = parsedLocation.sub_area;
   if (row.activity_name !== undefined) row.activity = row.activity_name;
   // Map milestone timestamps to booleans (DB stores _at timestamps, frontend expects booleans)
   row.first_call_done = row.first_call_done_at != null;
@@ -37,11 +120,35 @@ function mapAppRows(rows: any[]) {
 }
 
 const STATUS_EVENT_TABLE = 'club_application_status_event';
+function applicantPhoneExpr(alias: string): string {
+  // Use JSON extraction so this works even if `user_phone` column does not exist in some environments.
+  return `NULLIF(BTRIM(to_jsonb(${alias})->>'user_phone'), '')`;
+}
+
+const CURRENT_APPLICANT_PHONE = `COALESCE(${applicantPhoneExpr('ca')}, u.phone)`;
+
+function applicantMatchClause(applicationAlias: string, userAlias: string): string {
+  return `(
+        (ca.user_id IS NOT NULL AND ${applicationAlias}.user_id = ca.user_id)
+        OR (
+          ${CURRENT_APPLICANT_PHONE} IS NOT NULL
+          AND (
+            ${applicantPhoneExpr(applicationAlias)} = ${CURRENT_APPLICANT_PHONE}
+            OR EXISTS (
+              SELECT 1
+              FROM users ${userAlias}
+              WHERE ${userAlias}.pk = ${applicationAlias}.user_id
+                AND ${userAlias}.phone = ${CURRENT_APPLICANT_PHONE}
+            )
+          )
+        )
+      )`;
+}
 
 const APP_ENRICHED_SELECT = `
   ca.*,
   COALESCE(ca.name, CONCAT(u.first_name, ' ', u.last_name)) as name,
-  u.phone as user_phone,
+  ${CURRENT_APPLICANT_PHONE} as user_phone,
   ('SYC-' || LPAD(ca.pk::text, 8, '0')) as application_ref,
   COALESCE(
     (
@@ -77,39 +184,15 @@ const APP_ENRICHED_SELECT = `
     FROM club_application dup
     WHERE dup.pk <> ca.pk
       AND dup.archived = false
-      AND (
-        (ca.user_id IS NOT NULL AND dup.user_id = ca.user_id)
-        OR (
-          ca.user_id IS NULL
-          AND u.phone IS NOT NULL
-          AND EXISTS (
-            SELECT 1
-            FROM users dup_u
-            WHERE dup_u.pk = dup.user_id
-              AND dup_u.phone = u.phone
-          )
-        )
-      )
-      AND COALESCE(dup.city_name, '') = COALESCE(ca.city_name, '')
-      AND COALESCE(dup.activity_name, '') = COALESCE(ca.activity_name, '')
+      AND ${applicantMatchClause('dup', 'dup_u')}
+      AND LOWER(BTRIM(COALESCE(dup.city_name, ''))) = LOWER(BTRIM(COALESCE(ca.city_name, '')))
+      AND LOWER(BTRIM(COALESCE(dup.activity_name, ''))) = LOWER(BTRIM(COALESCE(ca.activity_name, '')))
   ) as is_duplicate_lead,
   EXISTS(
     SELECT 1
     FROM club_application prev
     WHERE prev.pk <> ca.pk
-      AND (
-        (ca.user_id IS NOT NULL AND prev.user_id = ca.user_id)
-        OR (
-          ca.user_id IS NULL
-          AND u.phone IS NOT NULL
-          AND EXISTS (
-            SELECT 1
-            FROM users prev_u
-            WHERE prev_u.pk = prev.user_id
-              AND prev_u.phone = u.phone
-          )
-        )
-      )
+      AND ${applicantMatchClause('prev', 'prev_u')}
       AND (
         prev.archived = true
         OR prev.status IN ('REJECTED', 'NOT_INTERESTED', 'CLUB_CREATED')
@@ -119,21 +202,9 @@ const APP_ENRICHED_SELECT = `
     SELECT COUNT(*)::int
     FROM club_application rej
     WHERE rej.status = 'REJECTED'
-      AND COALESCE(rej.city_name, '') = COALESCE(ca.city_name, '')
-      AND COALESCE(rej.activity_name, '') = COALESCE(ca.activity_name, '')
-      AND (
-        (ca.user_id IS NOT NULL AND rej.user_id = ca.user_id)
-        OR (
-          ca.user_id IS NULL
-          AND u.phone IS NOT NULL
-          AND EXISTS (
-            SELECT 1
-            FROM users rej_u
-            WHERE rej_u.pk = rej.user_id
-              AND rej_u.phone = u.phone
-          )
-        )
-      )
+      AND LOWER(BTRIM(COALESCE(rej.city_name, ''))) = LOWER(BTRIM(COALESCE(ca.city_name, '')))
+      AND LOWER(BTRIM(COALESCE(rej.activity_name, ''))) = LOWER(BTRIM(COALESCE(ca.activity_name, '')))
+      AND ${applicantMatchClause('rej', 'rej_u')}
       AND (rej.pk <> ca.pk OR ca.status = 'REJECTED')
   ) as repeat_rejection_count
   ,(
@@ -141,19 +212,7 @@ const APP_ENRICHED_SELECT = `
     FROM club_application prev
     WHERE prev.pk <> ca.pk
       AND prev.activity_name IS NOT NULL
-      AND (
-        (ca.user_id IS NOT NULL AND prev.user_id = ca.user_id)
-        OR (
-          ca.user_id IS NULL
-          AND u.phone IS NOT NULL
-          AND EXISTS (
-            SELECT 1
-            FROM users prev_u
-            WHERE prev_u.pk = prev.user_id
-              AND prev_u.phone = u.phone
-          )
-        )
-      )
+      AND ${applicantMatchClause('prev', 'prev_u')}
     ORDER BY prev.created_at DESC
     LIMIT 1
   ) as last_applied_activity
@@ -162,23 +221,214 @@ const APP_ENRICHED_SELECT = `
       SELECT ARRAY_AGG(hist.activity_name ORDER BY hist.created_at DESC)
       FROM club_application hist
       WHERE hist.activity_name IS NOT NULL
-        AND (
-          (ca.user_id IS NOT NULL AND hist.user_id = ca.user_id)
-          OR (
-            ca.user_id IS NULL
-            AND u.phone IS NOT NULL
-            AND EXISTS (
-              SELECT 1
-              FROM users hist_u
-              WHERE hist_u.pk = hist.user_id
-                AND hist_u.phone = u.phone
-            )
-          )
-        )
+        AND ${applicantMatchClause('hist', 'hist_u')}
     ),
     ARRAY[]::text[]
   ) as applied_activities_history
 `;
+
+type AnalysisLeadRow = {
+  activity: string;
+  city: string;
+  sub_area: string | null;
+};
+
+type LeaderSupplyRow = {
+  activity: string;
+  city: string;
+  leaders_ready: number;
+  leaders_in_pipeline: number;
+};
+
+function round1(num: number): number {
+  return Math.round(num * 10) / 10;
+}
+
+function computeAnalysisDashboard(rows: any[], supplyRows: LeaderSupplyRow[] = []) {
+  const leads: AnalysisLeadRow[] = rows.map((row) => {
+    const parsed = splitCityAndSubArea(row.city_name ?? row.city);
+    return {
+      activity: String(row.activity_name ?? row.activity ?? 'Others').trim() || 'Others',
+      city: parsed.city || 'Others',
+      sub_area: parsed.sub_area || null,
+    };
+  });
+
+  const totalLeads = leads.length;
+  const activitySet = new Set<string>();
+  const citySet = new Set<string>();
+  const activityCounts = new Map<string, number>();
+  const cityCounts = new Map<string, number>();
+  const cityActivityCounts = new Map<string, Map<string, number>>();
+  const activityCityCounts = new Map<string, Map<string, number>>();
+  const citySubAreaCounts = new Map<string, Map<string, number>>();
+
+  for (const lead of leads) {
+    activitySet.add(lead.activity);
+    citySet.add(lead.city);
+    activityCounts.set(lead.activity, (activityCounts.get(lead.activity) || 0) + 1);
+    cityCounts.set(lead.city, (cityCounts.get(lead.city) || 0) + 1);
+
+    if (!cityActivityCounts.has(lead.city)) cityActivityCounts.set(lead.city, new Map());
+    const cityActivityMap = cityActivityCounts.get(lead.city)!;
+    cityActivityMap.set(lead.activity, (cityActivityMap.get(lead.activity) || 0) + 1);
+
+    if (!activityCityCounts.has(lead.activity)) activityCityCounts.set(lead.activity, new Map());
+    const activityCityMap = activityCityCounts.get(lead.activity)!;
+    activityCityMap.set(lead.city, (activityCityMap.get(lead.city) || 0) + 1);
+
+    if (lead.sub_area) {
+      if (!citySubAreaCounts.has(lead.city)) citySubAreaCounts.set(lead.city, new Map());
+      const citySubAreaMap = citySubAreaCounts.get(lead.city)!;
+      citySubAreaMap.set(lead.sub_area, (citySubAreaMap.get(lead.sub_area) || 0) + 1);
+    }
+  }
+
+  const activities = [...activitySet].sort((a, b) => (activityCounts.get(b) || 0) - (activityCounts.get(a) || 0));
+  const cities = [...citySet].sort((a, b) => (cityCounts.get(b) || 0) - (cityCounts.get(a) || 0));
+
+  const supplyByActivity = new Map<string, number>();
+  const supplyByActivityCity = new Map<string, Map<string, number>>();
+  let totalSupplyReady = 0;
+  for (const row of supplyRows) {
+    totalSupplyReady += row.leaders_ready;
+    supplyByActivity.set(row.activity, (supplyByActivity.get(row.activity) || 0) + row.leaders_ready);
+    if (!supplyByActivityCity.has(row.activity)) supplyByActivityCity.set(row.activity, new Map());
+    const cityMap = supplyByActivityCity.get(row.activity)!;
+    cityMap.set(row.city, (cityMap.get(row.city) || 0) + row.leaders_ready);
+  }
+
+  const activityBreakdown = activities.map((activity, index) => {
+    const leadsCount = activityCounts.get(activity) || 0;
+    const percentage = totalLeads > 0 ? round1((leadsCount / totalLeads) * 100) : 0;
+    const rank = index + 1;
+    const demandTag = rank <= 3 ? 'High' : rank > Math.max(activities.length - 2, 3) ? 'Low' : 'Medium';
+    const supplyReady = supplyByActivity.get(activity) || 0;
+    const demandSupplyGap = Math.max(leadsCount - supplyReady, 0);
+    const action = demandTag === 'High'
+      ? (demandSupplyGap > 0 ? 'Recruit Leader NOW' : 'Demand Covered')
+      : demandTag === 'Medium'
+        ? 'Plan Soon'
+        : 'Monitor';
+
+    return {
+      activity,
+      leads: leadsCount,
+      percentage,
+      rank,
+      demand_tag: demandTag,
+      action,
+      supply_ready: supplyReady,
+      demand_supply_gap: demandSupplyGap,
+    };
+  });
+
+  const cityBreakdown = cities.map((city) => {
+    const leadsCount = cityCounts.get(city) || 0;
+    const percentage = totalLeads > 0 ? round1((leadsCount / totalLeads) * 100) : 0;
+    const byActivity = cityActivityCounts.get(city) || new Map<string, number>();
+    const mostPopularActivity = [...byActivity.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || 'Others';
+    const subAreaMap = citySubAreaCounts.get(city) || new Map<string, number>();
+    const subAreaBreakdown = [...subAreaMap.entries()]
+      .map(([subArea, count]) => ({
+        sub_area: subArea,
+        leads: count,
+        percentage: leadsCount > 0 ? round1((count / leadsCount) * 100) : 0,
+      }))
+      .sort((a, b) => b.leads - a.leads);
+
+    return {
+      city,
+      leads: leadsCount,
+      percentage,
+      most_popular_activity: mostPopularActivity,
+      sub_area_breakdown: subAreaBreakdown,
+    };
+  });
+
+  const activityLocationMatrix = activities.map((activity) => {
+    const byCity: Record<string, number> = {};
+    for (const city of cities) {
+      byCity[city] = activityCityCounts.get(activity)?.get(city) || 0;
+    }
+    const rowTotal = activityCounts.get(activity) || 0;
+    return {
+      activity,
+      by_city: byCity,
+      row_total: rowTotal,
+      row_percentage: totalLeads > 0 ? round1((rowTotal / totalLeads) * 100) : 0,
+    };
+  });
+
+  const applyingRateByCity = cities.map((city) => {
+    const totalCityLeads = cityCounts.get(city) || 0;
+    const rates = activities
+      .map((activity) => {
+        const count = cityActivityCounts.get(city)?.get(activity) || 0;
+        return {
+          activity,
+          leads: count,
+          percentage: totalCityLeads > 0 ? round1((count / totalCityLeads) * 100) : 0,
+        };
+      })
+      .sort((a, b) => b.leads - a.leads);
+
+    return {
+      city,
+      total_city_leads: totalCityLeads,
+      rates,
+    };
+  });
+
+  let bestCombo = { activity: 'N/A', city: 'N/A', leads: 0 };
+  let lowestCombo = { activity: 'N/A', city: 'N/A', leads: 0 };
+  if (activities.length > 0 && cities.length > 0) {
+    bestCombo = { activity: activities[0], city: cities[0], leads: -1 };
+    lowestCombo = { activity: activities[0], city: cities[0], leads: Number.MAX_SAFE_INTEGER };
+    for (const activity of activities) {
+      for (const city of cities) {
+        const count = activityCityCounts.get(activity)?.get(city) || 0;
+        if (count > bestCombo.leads) bestCombo = { activity, city, leads: count };
+        if (count < lowestCombo.leads) lowestCombo = { activity, city, leads: count };
+      }
+    }
+  }
+
+  const highestDemandActivity = activityBreakdown[0]?.activity || 'N/A';
+  const lowestDemandActivity = activityBreakdown[activityBreakdown.length - 1]?.activity || 'N/A';
+  const topCity = cityBreakdown[0]?.city || 'N/A';
+  const weakestCity = cityBreakdown[cityBreakdown.length - 1]?.city || 'N/A';
+  const largestGapActivity = [...activityBreakdown].sort((a, b) => b.demand_supply_gap - a.demand_supply_gap)[0];
+  const totalGap = Math.max(totalLeads - totalSupplyReady, 0);
+
+  return {
+    total_leads: totalLeads,
+    categories: {
+      activities,
+      cities,
+    },
+    demand_supply_summary: {
+      total_demand: totalLeads,
+      total_supply_ready: totalSupplyReady,
+      total_gap: totalGap,
+    },
+    activity_breakdown: activityBreakdown,
+    city_breakdown: cityBreakdown,
+    activity_location_matrix: activityLocationMatrix,
+    applying_rate_by_city: applyingRateByCity,
+    insights: {
+      highest_demand_activity: `${highestDemandActivity} has the highest demand.`,
+      lowest_demand_activity: `${lowestDemandActivity} currently has the lowest demand.`,
+      top_city: `${topCity} has the largest lead concentration.`,
+      weakest_city: `${weakestCity} has the lowest lead concentration.`,
+      best_combo: `${bestCombo.activity} in ${bestCombo.city} has the highest demand (${bestCombo.leads} leads).`,
+      lowest_combo: `${lowestCombo.activity} in ${lowestCombo.city} has the lowest demand (${lowestCombo.leads} leads).`,
+      largest_gap: largestGapActivity
+        ? `${largestGapActivity.activity} has the largest demand-supply gap (${largestGapActivity.demand_supply_gap}).`
+        : 'No demand-supply gap yet.',
+    },
+  };
+}
 
 // Contract file upload setup
 const UPLOADS_DIR = path.join(__dirname, '../../uploads/contracts');
@@ -288,7 +538,7 @@ async function appendPotentialLeadNote(applicationId: number, note: string) {
 router.get('/admin/all', async (req: Request, res: Response) => {
   try {
     const {
-      status, statuses, city, activity, search,
+      status, statuses, city, sub_area, activity, search,
       sort = 'created_at', order = 'desc',
       page = '1', limit = '50',
       archived
@@ -315,26 +565,34 @@ router.get('/admin/all', async (req: Request, res: Response) => {
       params.push(status);
     }
     if (city) {
-      conditions.push(`ca.city_name = $${paramIdx++}`);
+      conditions.push(`${normalizedCitySql('ca.city_name')} = $${paramIdx++}`);
       params.push(city);
+    }
+    if (sub_area) {
+      conditions.push(`${normalizedSubAreaSql('ca.city_name')} = $${paramIdx++}`);
+      params.push(sub_area);
     }
     if (activity) {
       conditions.push(`ca.activity_name = $${paramIdx++}`);
       params.push(activity);
     }
     if (search) {
-      conditions.push(`(ca.name ILIKE $${paramIdx} OR CONCAT(u.first_name, ' ', u.last_name) ILIKE $${paramIdx} OR ca.city_name ILIKE $${paramIdx} OR ca.activity_name ILIKE $${paramIdx})`);
+      conditions.push(`(ca.name ILIKE $${paramIdx} OR CONCAT(u.first_name, ' ', u.last_name) ILIKE $${paramIdx} OR ca.city_name ILIKE $${paramIdx} OR ${normalizedSubAreaSql('ca.city_name')} ILIKE $${paramIdx} OR ca.activity_name ILIKE $${paramIdx})`);
       params.push(`%${search}%`);
       paramIdx++;
     }
 
     const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
-    const allowedSorts = ['created_at', 'updated_at', 'submitted_at', 'name', 'city_name', 'activity_name', 'status', 'stage_entered_at'];
+    const allowedSorts = ['created_at', 'updated_at', 'submitted_at', 'name', 'city_name', 'sub_area', 'activity_name', 'status', 'stage_entered_at'];
     const sortCol = allowedSorts.includes(sort as string) ? sort : 'created_at';
     const sortOrder = order === 'asc' ? 'ASC' : 'DESC';
     const sortPrefix = sortCol === 'name'
       ? "COALESCE(ca.name, CONCAT(u.first_name, ' ', u.last_name))"
+      : sortCol === 'city_name'
+        ? normalizedCitySql('ca.city_name')
+        : sortCol === 'sub_area'
+          ? normalizedSubAreaSql('ca.city_name')
       : sortCol === 'stage_entered_at'
         ? `COALESCE((SELECT MAX(se.created_at) FROM ${STATUS_EVENT_TABLE} se WHERE se.application_id = ca.pk AND se.to_status::text = ca.status::text), ca.updated_at, ca.created_at)`
         : `ca.${sortCol}`;
@@ -375,6 +633,7 @@ router.get('/admin/all', async (req: Request, res: Response) => {
       const fallbackStatuses = q.statuses;
       const fallbackStatus = q.status;
       const fallbackCity = q.city;
+      const fallbackSubArea = q.sub_area;
       const fallbackActivity = q.activity;
       const fallbackSearch = q.search;
       const fallbackPage = q.page || '1';
@@ -398,15 +657,19 @@ router.get('/admin/all', async (req: Request, res: Response) => {
         localParams.push(fallbackStatus);
       }
       if (fallbackCity) {
-        localConditions.push(`ca.city = $${localIdx++}`);
+        localConditions.push(`${normalizedCitySql('ca.city')} = $${localIdx++}`);
         localParams.push(fallbackCity);
+      }
+      if (fallbackSubArea) {
+        localConditions.push(`${normalizedSubAreaSql('ca.city')} = $${localIdx++}`);
+        localParams.push(fallbackSubArea);
       }
       if (fallbackActivity) {
         localConditions.push(`ca.activity = $${localIdx++}`);
         localParams.push(fallbackActivity);
       }
       if (fallbackSearch) {
-        localConditions.push(`(ca.name ILIKE $${localIdx} OR ca.city ILIKE $${localIdx} OR ca.activity ILIKE $${localIdx})`);
+        localConditions.push(`(ca.name ILIKE $${localIdx} OR ca.city ILIKE $${localIdx} OR ${normalizedSubAreaSql('ca.city')} ILIKE $${localIdx} OR ca.activity ILIKE $${localIdx})`);
         localParams.push(`%${String(fallbackSearch)}%`);
         localIdx++;
       }
@@ -430,8 +693,37 @@ router.get('/admin/all', async (req: Request, res: Response) => {
           COALESCE(ca.updated_at, ca.created_at) as stage_entered_at,
           ROUND((EXTRACT(EPOCH FROM (NOW() - COALESCE(ca.updated_at, ca.created_at))) / 3600.0)::numeric, 1) as stage_age_hours,
           false as is_duplicate_lead,
-          false as is_repeat_application,
-          0::int as repeat_rejection_count,
+          EXISTS(
+            SELECT 1
+            FROM club_applications prev
+            WHERE prev.id <> ca.id
+              AND (
+                (ca.user_id IS NOT NULL AND prev.user_id = ca.user_id)
+                OR (
+                  NULLIF(BTRIM(ca.user_phone), '') IS NOT NULL
+                  AND NULLIF(BTRIM(prev.user_phone), '') = NULLIF(BTRIM(ca.user_phone), '')
+                )
+              )
+              AND (
+                prev.archived = true
+                OR prev.status IN ('REJECTED', 'NOT_INTERESTED', 'CLUB_CREATED')
+              )
+          ) as is_repeat_application,
+          (
+            SELECT COUNT(*)::int
+            FROM club_applications rej
+            WHERE rej.id <> ca.id
+              AND rej.status = 'REJECTED'
+              AND LOWER(BTRIM(COALESCE(rej.city, ''))) = LOWER(BTRIM(COALESCE(ca.city, '')))
+              AND LOWER(BTRIM(COALESCE(rej.activity, ''))) = LOWER(BTRIM(COALESCE(ca.activity, '')))
+              AND (
+                (ca.user_id IS NOT NULL AND rej.user_id = ca.user_id)
+                OR (
+                  NULLIF(BTRIM(ca.user_phone), '') IS NOT NULL
+                  AND NULLIF(BTRIM(rej.user_phone), '') = NULLIF(BTRIM(ca.user_phone), '')
+                )
+              )
+          ) as repeat_rejection_count,
           NULL::text as last_applied_activity,
           ARRAY[]::text[] as applied_activities_history
         FROM club_applications ca
@@ -480,10 +772,10 @@ router.get('/admin/funnel', async (req: Request, res: Response) => {
     );
 
     const byCity = await queryProduction(
-      `SELECT city_name as city, COUNT(*)::int as count
+      `SELECT ${normalizedCitySql('city_name')} as city, COUNT(*)::int as count
        FROM club_application
        WHERE archived = false AND city_name IS NOT NULL
-       GROUP BY city_name
+       GROUP BY ${normalizedCitySql('city_name')}
        ORDER BY count DESC`
     );
 
@@ -776,6 +1068,96 @@ router.get('/admin/analytics', async (req: Request, res: Response) => {
   }
 });
 
+// GET /admin/analysis-dashboard — Demand vs supply analysis from live dashboard data
+router.get('/admin/analysis-dashboard', async (req: Request, res: Response) => {
+  try {
+    const demandResult = await queryProduction(
+      `SELECT city_name, activity_name
+       FROM club_application
+       WHERE archived = false`
+    );
+
+    let supplyRows: LeaderSupplyRow[] = [];
+    try {
+      const supplyResult = await queryProduction(
+        `SELECT
+          COALESCE(activity_name, 'Others') as activity_name,
+          COALESCE(city_name, 'Others') as city_name,
+          COUNT(*) FILTER (WHERE status = 'done')::int as leaders_ready,
+          COUNT(*) FILTER (WHERE status IN ('not_picked', 'in_progress', 'deprioritised'))::int as leaders_in_pipeline
+         FROM leader_requirements
+         GROUP BY COALESCE(activity_name, 'Others'), COALESCE(city_name, 'Others')`
+      );
+
+      supplyRows = (supplyResult.rows || []).map((row: any) => {
+        const parsedCity = splitCityAndSubArea(row.city_name);
+        return {
+          activity: String(row.activity_name || 'Others'),
+          city: parsedCity.city || String(row.city_name || 'Others'),
+          leaders_ready: parseInt(String(row.leaders_ready || 0), 10) || 0,
+          leaders_in_pipeline: parseInt(String(row.leaders_in_pipeline || 0), 10) || 0,
+        };
+      });
+    } catch (supplyError: any) {
+      logger.warn('Leader supply data unavailable for analysis dashboard:', supplyError?.message || supplyError);
+    }
+
+    return res.json({
+      success: true,
+      data: computeAnalysisDashboard(demandResult.rows || [], supplyRows),
+    });
+  } catch (error: any) {
+    logger.error('Failed to build analysis dashboard from production, trying local fallback:', error);
+
+    try {
+      const demandLocal = await queryLocal(
+        `SELECT city, activity
+         FROM club_applications
+         WHERE archived = false`
+      );
+
+      let supplyLocalRows: LeaderSupplyRow[] = [];
+      try {
+        const supplyLocal = await queryLocal(
+          `SELECT
+            COALESCE(activity_name, 'Others') as activity_name,
+            COALESCE(city_name, 'Others') as city_name,
+            COUNT(*) FILTER (WHERE status = 'done')::int as leaders_ready,
+            COUNT(*) FILTER (WHERE status IN ('not_picked', 'in_progress', 'deprioritised'))::int as leaders_in_pipeline
+           FROM leader_requirements
+           GROUP BY COALESCE(activity_name, 'Others'), COALESCE(city_name, 'Others')`
+        );
+        supplyLocalRows = (supplyLocal.rows || []).map((row: any) => {
+          const parsedCity = splitCityAndSubArea(row.city_name);
+          return {
+            activity: String(row.activity_name || 'Others'),
+            city: parsedCity.city || String(row.city_name || 'Others'),
+            leaders_ready: parseInt(String(row.leaders_ready || 0), 10) || 0,
+            leaders_in_pipeline: parseInt(String(row.leaders_in_pipeline || 0), 10) || 0,
+          };
+        });
+      } catch {
+        supplyLocalRows = [];
+      }
+
+      return res.json({
+        success: true,
+        data: computeAnalysisDashboard(demandLocal.rows || [], supplyLocalRows),
+        source: 'local_fallback',
+        warning: error?.message || 'Production database unavailable',
+      });
+    } catch (localError: any) {
+      logger.error('Failed to build analysis dashboard from local fallback:', localError);
+      return res.json({
+        success: true,
+        data: computeAnalysisDashboard([], []),
+        source: 'empty_fallback',
+        warning: error?.message || 'Production database unavailable',
+      });
+    }
+  }
+});
+
 // GET /admin/rating-dimensions — Fetch active rating dimensions
 router.get('/admin/rating-dimensions', async (req: Request, res: Response) => {
   try {
@@ -868,15 +1250,69 @@ router.get('/admin/cities', async (req: Request, res: Response) => {
     const result = await queryProduction(
       `SELECT DISTINCT city_name as city FROM club_application WHERE city_name IS NOT NULL AND archived = false ORDER BY city_name`
     );
-    res.json({ success: true, data: result.rows.map((r: any) => r.city) });
+    res.json({ success: true, data: normalizeCityList(result.rows, 'city') });
   } catch (error: any) {
     try {
       const local = await queryLocal(
         `SELECT DISTINCT city FROM club_applications WHERE city IS NOT NULL AND archived = false ORDER BY city`
       );
-      return res.json({ success: true, data: local.rows.map((r: any) => r.city), source: 'local_fallback' });
+      return res.json({ success: true, data: normalizeCityList(local.rows, 'city'), source: 'local_fallback' });
     } catch {
       return res.json({ success: true, data: [], source: 'empty_fallback' });
+    }
+  }
+});
+
+// GET /admin/sub-areas?city=Delhi — Distinct sub-areas for a city
+router.get('/admin/sub-areas', async (req: Request, res: Response) => {
+  const requestedCity = String(req.query.city || '').trim();
+  if (!requestedCity) return res.json({ success: true, data: [] });
+
+  const uniqueSubAreas = new Set<string>();
+  const defaults = CITY_SUB_AREA_DEFAULTS[requestedCity] || [];
+  defaults.forEach((subArea) => uniqueSubAreas.add(subArea));
+
+  try {
+    const result = await queryProduction(
+      `SELECT DISTINCT city_name as city
+       FROM club_application
+       WHERE city_name IS NOT NULL AND archived = false`
+    );
+
+    for (const row of result.rows || []) {
+      const parsed = splitCityAndSubArea(row.city);
+      if (parsed.city?.toLowerCase() === requestedCity.toLowerCase() && parsed.sub_area) {
+        uniqueSubAreas.add(parsed.sub_area);
+      }
+    }
+
+    return res.json({ success: true, data: [...uniqueSubAreas].sort((a, b) => a.localeCompare(b)) });
+  } catch (error: any) {
+    try {
+      const local = await queryLocal(
+        `SELECT DISTINCT city
+         FROM club_applications
+         WHERE city IS NOT NULL AND archived = false`
+      );
+
+      for (const row of local.rows || []) {
+        const parsed = splitCityAndSubArea(row.city);
+        if (parsed.city?.toLowerCase() === requestedCity.toLowerCase() && parsed.sub_area) {
+          uniqueSubAreas.add(parsed.sub_area);
+        }
+      }
+
+      return res.json({
+        success: true,
+        data: [...uniqueSubAreas].sort((a, b) => a.localeCompare(b)),
+        source: 'local_fallback',
+      });
+    } catch {
+      return res.json({
+        success: true,
+        data: [...uniqueSubAreas].sort((a, b) => a.localeCompare(b)),
+        source: 'empty_fallback',
+      });
     }
   }
 });
@@ -931,10 +1367,11 @@ router.get('/admin/lookup-user', async (req: Request, res: Response) => {
 // POST /admin/create-lead — Create a manual lead (MUST be before /admin/:id)
 router.post('/admin/create-lead', async (req: Request, res: Response) => {
   try {
-    const { user_id, city_name, activity_name, name } = req.body;
+    const { user_id, city_name, sub_area, activity_name, name } = req.body;
     if (!user_id) {
       return res.status(400).json({ success: false, error: 'user_id is required' });
     }
+    const locationValue = formatCityWithSubArea(city_name, sub_area);
     const duplicateCheck = await queryProduction(
       `SELECT pk, status
        FROM club_application
@@ -944,7 +1381,7 @@ router.post('/admin/create-lead', async (req: Request, res: Response) => {
          AND COALESCE(activity_name, '') = COALESCE($3, '')
        ORDER BY created_at DESC
        LIMIT 1`,
-      [user_id, city_name || '', activity_name || '']
+      [user_id, locationValue || '', activity_name || '']
     );
 
     if (duplicateCheck.rows.length > 0) {
@@ -960,7 +1397,10 @@ router.post('/admin/create-lead', async (req: Request, res: Response) => {
     }
 
     const apiRes = await misfitsApi('POST', '/start-your-club/admin/create-lead', {
-      user_id, city_name: city_name || '', activity_name: activity_name || '', name: name || '',
+      user_id,
+      city_name: locationValue || '',
+      activity_name: activity_name || '',
+      name: name || '',
     });
     if (!apiRes.ok) {
       return res.status(apiRes.status).json({ success: false, error: apiRes.error || apiRes.data?.message });

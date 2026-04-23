@@ -1,10 +1,7 @@
 import { Router, Request, Response } from 'express';
-import { exec } from 'child_process';
-import { promisify } from 'util';
 import { logger } from '../utils/logger';
 import { queryLocal, queryProduction } from '../services/database';
-
-const execAsync = promisify(exec);
+import { callGrpc } from '../services/grpcClient';
 
 const router = Router();
 
@@ -1471,30 +1468,17 @@ router.post('/:id/transfer-to-vms', async (req: Request, res: Response) => {
       grpcRequest.preferred_schedules = expandedSchedules;
     }
 
-    // gRPC API key for authentication
-    const grpcApiKey = '024d77dd28d21f0a99bfc2bb1c6ce9089d9273772c8319848d0a34f9ff9ae3d3';
-
-    // Call gRPC CreateVenue
-    const grpcData = JSON.stringify(grpcRequest);
-    const escapedData = grpcData.replace(/'/g, "'\\''");
-    const grpcCmd = `/home/ec2-user/go/bin/grpcurl -plaintext -H 'authorization: bearer ${grpcApiKey}' -d '${escapedData}' 15.207.255.212:8001 LocationService.CreateVenue`;
-
     logger.info(`Calling gRPC CreateVenue for venue ${id}: ${venue.name}`, { grpcRequest: JSON.stringify(grpcRequest).substring(0, 500) });
 
-    let grpcOutput: string;
     try {
-      const { stdout, stderr } = await execAsync(grpcCmd, { timeout: 30000 });
-      grpcOutput = stdout;
-      if (stderr) logger.warn(`gRPC stderr: ${stderr}`);
+      await callGrpc('LocationService', 'CreateVenue', grpcRequest);
     } catch (grpcError: any) {
-      logger.error('gRPC CreateVenue failed:', grpcError);
+      logger.error('gRPC CreateVenue failed:', grpcError?.message || grpcError);
       return res.status(500).json({
         error: 'Failed to create venue in VMS',
-        details: grpcError.stderr || grpcError.message
+        details: grpcError?.message || 'Unknown gRPC error'
       });
     }
-
-    logger.info(`gRPC CreateVenue response: ${grpcOutput}`);
 
     // Query production DB for the newly created venue (match by name + area_id)
     let vmsLocationId: number | null = null;
@@ -1528,13 +1512,11 @@ router.post('/:id/transfer-to-vms', async (req: Request, res: Response) => {
     if (venue_manager_phone && vmsLocationId) {
       try {
         // Step 1: Mark user as venue manager
-        const markCmd = `/home/ec2-user/go/bin/grpcurl -plaintext -H 'authorization: bearer ${grpcApiKey}' -d '{"phone_number": "${venue_manager_phone}"}' 15.207.255.212:8001 LocationService.MarkUserAsVenueManager`;
-        await execAsync(markCmd, { timeout: 15000 });
+        await callGrpc('LocationService', 'MarkUserAsVenueManager', { phone_number: venue_manager_phone });
         logger.info(`Marked user ${venue_manager_phone} as venue manager`);
 
         // Step 2: Add venue manager to venue
-        const addCmd = `/home/ec2-user/go/bin/grpcurl -plaintext -H 'authorization: bearer ${grpcApiKey}' -d '{"venue_id": ${vmsLocationId}, "phone_number": "${venue_manager_phone}"}' 15.207.255.212:8001 LocationService.AddVenueManager`;
-        await execAsync(addCmd, { timeout: 15000 });
+        await callGrpc('LocationService', 'AddVenueManager', { venue_id: vmsLocationId, phone_number: venue_manager_phone });
         logger.info(`Added venue manager ${venue_manager_phone} to venue ${vmsLocationId}`);
       } catch (managerError: any) {
         logger.warn('Failed to assign venue manager (venue was still created):', managerError.message);

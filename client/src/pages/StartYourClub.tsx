@@ -13,6 +13,13 @@ const API_BASE = import.meta.env.VITE_API_URL
   ? `${import.meta.env.VITE_API_URL}/api/start-club`
   : '/api/start-club';
 
+const CITY_SUB_AREA_DEFAULTS: Record<string, string[]> = {
+  Delhi: ['North Delhi', 'South Delhi', 'East Delhi', 'West Delhi', 'Central Delhi', 'New Delhi'],
+  Noida: ['Sector 18', 'Sector 62', 'Sector 75', 'Sector 104', 'Sector 137', 'Greater Noida'],
+  Gurgaon: ['Golf Course Road', 'DLF Phase 1', 'DLF Phase 2', 'Sohna Road', 'Sector 46', 'Sector 56', 'Cyber City'],
+  Bangalore: ['Indiranagar', 'Koramangala', 'HSR Layout', 'Whitefield', 'JP Nagar', 'Bellandur'],
+};
+
 // Status configuration (3-layer: Journey / Evaluation / Outcome)
 const STATUS_CONFIG: Record<string, { label: string; shortLabel: string; badgeClass: string }> = {
   // Layer 1: Journey
@@ -157,6 +164,7 @@ interface Application {
   exit_type: string | null;
   source: string;
   city: string | null;
+  sub_area?: string | null;
   activity: string | null;
   awareness: string | null;
   archived: boolean;
@@ -273,6 +281,13 @@ function computeLeadAge(stageEnteredAt: string | null | undefined, fallbackCreat
   if (hours < 24) return `${hours}h`;
   const days = Math.floor(hours / 24);
   return `${days}d`;
+}
+
+function formatLocation(city: string | null | undefined, subArea?: string | null): string {
+  const safeCity = city ? city.trim() : '';
+  const safeSubArea = subArea ? subArea.trim() : '';
+  if (safeCity && safeSubArea) return `${safeCity} (${safeSubArea})`;
+  return safeCity || safeSubArea || '-';
 }
 
 // ─── Rating Form Component ─────────────────────────────────────
@@ -762,7 +777,7 @@ function LeadRow({
           </div>
         </td>
         <td className="px-4 py-3 text-slate-500 text-xs">{app.user_phone || '-'}</td>
-        <td className="px-4 py-3 text-slate-600">{app.city || '-'}</td>
+        <td className="px-4 py-3 text-slate-600">{formatLocation(app.city, app.sub_area)}</td>
         <td className="px-4 py-3 text-slate-600">{app.activity || '-'}</td>
         <td className="px-4 py-3 text-slate-600 text-center font-medium">
           {app.repeat_rejection_count || 0}
@@ -850,7 +865,7 @@ function LeadRow({
                     <div>
                       <h3 className="text-base font-bold text-slate-800">{detail.name || 'Anonymous'}</h3>
                       <div className="flex items-center gap-2 mt-0.5 text-xs text-slate-500">
-                        <span>{detail.city}</span><span>·</span><span>{detail.activity}</span>
+                        <span>{formatLocation(detail.city, detail.sub_area)}</span><span>·</span><span>{detail.activity}</span>
                         <span>·</span><span>Source: {detail.source}</span>
                         {detail.application_ref && (<><span>·</span><span className="font-medium text-indigo-600">{detail.application_ref}</span></>)}
                         {detail.user_phone && (<><span>·</span><Phone className="h-3 w-3 inline" /> {detail.user_phone}</>)}
@@ -2121,9 +2136,50 @@ function AddLeadModal({
   const [lookupError, setLookupError] = useState('');
   const [lookupLoading, setLookupLoading] = useState(false);
   const [city, setCity] = useState('');
+  const [subArea, setSubArea] = useState('');
+  const [subAreas, setSubAreas] = useState<string[]>([]);
+  const [subAreasLoading, setSubAreasLoading] = useState(false);
   const [activity, setActivity] = useState('');
   const [targetStatus, setTargetStatus] = useState('SUBMITTED');
   const [creating, setCreating] = useState(false);
+  const cityOptions = useMemo(() => {
+    const merged = new Set<string>([...Object.keys(CITY_SUB_AREA_DEFAULTS), ...cities]);
+    return [...merged].sort((a, b) => a.localeCompare(b));
+  }, [cities]);
+  const needsSubArea = !!city && subAreas.length > 0;
+
+  useEffect(() => {
+    let isCancelled = false;
+    const fetchSubAreas = async () => {
+      if (!city) {
+        setSubAreas([]);
+        setSubArea('');
+        return;
+      }
+
+      setSubAreasLoading(true);
+      const defaults = CITY_SUB_AREA_DEFAULTS[city] || [];
+      try {
+        const res = await fetch(`${apiBase}/admin/sub-areas?city=${encodeURIComponent(city)}`);
+        const data = await res.json();
+        if (isCancelled) return;
+        const fromApi = data?.success && Array.isArray(data.data) ? data.data : [];
+        const merged = new Set<string>([...defaults, ...fromApi]);
+        const finalSubAreas = [...merged].sort((a, b) => a.localeCompare(b));
+        setSubAreas(finalSubAreas);
+        setSubArea((current) => (finalSubAreas.includes(current) ? current : ''));
+      } catch {
+        if (isCancelled) return;
+        setSubAreas([...defaults]);
+        setSubArea((current) => (defaults.includes(current) ? current : ''));
+      } finally {
+        if (!isCancelled) setSubAreasLoading(false);
+      }
+    };
+
+    fetchSubAreas();
+    return () => { isCancelled = true; };
+  }, [apiBase, city]);
 
   const handleLookup = async () => {
     const cleaned = phone.replace(/\D/g, '');
@@ -2156,6 +2212,7 @@ function AddLeadModal({
         body: JSON.stringify({
           user_id: lookupResult.user_id,
           city_name: city,
+          sub_area: subArea || null,
           activity_name: activity,
           name: `${lookupResult.first_name} ${lookupResult.last_name}`.trim(),
         }),
@@ -2177,7 +2234,7 @@ function AddLeadModal({
     }
   };
 
-  const canCreate = lookupResult && city && activity && targetStatus;
+  const canCreate = lookupResult && city && activity && targetStatus && (!needsSubArea || !!subArea);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
@@ -2242,13 +2299,33 @@ function AddLeadModal({
             <label className="text-xs font-medium text-slate-600 mb-1 block">City</label>
             <select
               value={city}
-              onChange={e => setCity(e.target.value)}
+              onChange={e => { setCity(e.target.value); setSubArea(''); }}
               className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
             >
               <option value="">Select city</option>
-              {cities.map(c => <option key={c} value={c}>{c}</option>)}
+              {cityOptions.map(c => <option key={c} value={c}>{c}</option>)}
             </select>
           </div>
+
+          {/* Sub-area */}
+          {city && (
+            <div>
+              <label className="text-xs font-medium text-slate-600 mb-1 block">
+                Sub-area {needsSubArea ? <span className="text-red-500">*</span> : null}
+              </label>
+              <select
+                value={subArea}
+                onChange={e => setSubArea(e.target.value)}
+                disabled={subAreasLoading || subAreas.length === 0}
+                className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 disabled:bg-slate-50 disabled:text-slate-400"
+              >
+                <option value="">
+                  {subAreasLoading ? 'Loading sub-areas...' : subAreas.length > 0 ? 'Select sub-area' : 'No sub-areas available'}
+                </option>
+                {subAreas.map(sa => <option key={sa} value={sa}>{sa}</option>)}
+              </select>
+            </div>
+          )}
 
           {/* Activity */}
           <div>
@@ -2544,6 +2621,7 @@ export default function StartYourClub() {
   const [statusFilter, setStatusFilter] = useState('');
   const [subsectionFilter, setSubsectionFilter] = useState('');
   const [cityFilter, setCityFilter] = useState('');
+  const [subAreaFilter, setSubAreaFilter] = useState('');
   const [activityFilter, setActivityFilter] = useState('');
   const [marketingFilter, setMarketingFilter] = useState(false);
 
@@ -2577,6 +2655,7 @@ export default function StartYourClub() {
 
   // Filter dropdowns data
   const [cities, setCities] = useState<string[]>([]);
+  const [subAreas, setSubAreas] = useState<string[]>([]);
   const [activities, setActivities] = useState<string[]>([]);
 
   // Get statuses for current section
@@ -2625,6 +2704,7 @@ export default function StartYourClub() {
       setLoading(true);
       const params = new URLSearchParams();
       if (cityFilter) params.set('city', cityFilter);
+      if (subAreaFilter) params.set('sub_area', subAreaFilter);
       if (activityFilter) params.set('activity', activityFilter);
       if (searchQuery) params.set('search', searchQuery);
       // Pass active section's statuses so backend returns the right applications
@@ -2636,7 +2716,7 @@ export default function StartYourClub() {
       params.set('limit', '200');
 
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 5000);
+      const timeoutId = setTimeout(() => controller.abort(), 20000);
       const res = await fetch(`${API_BASE}/admin/all?${params}`, { signal: controller.signal });
       clearTimeout(timeoutId);
 
@@ -2651,7 +2731,7 @@ export default function StartYourClub() {
     } finally {
       setLoading(false);
     }
-  }, [cityFilter, activityFilter, searchQuery, sortField, sortDir, page, activeSection]);
+  }, [cityFilter, subAreaFilter, activityFilter, searchQuery, sortField, sortDir, page, activeSection]);
 
   const fetchAnalytics = useCallback(async () => {
     try {
@@ -2689,6 +2769,26 @@ export default function StartYourClub() {
     }
   }, []);
 
+  const fetchSubAreasByCity = useCallback(async (selectedCity: string) => {
+    if (!selectedCity) {
+      setSubAreas([]);
+      return;
+    }
+
+    try {
+      const res = await fetch(`${API_BASE}/admin/sub-areas?city=${encodeURIComponent(selectedCity)}`);
+      const data = await res.json();
+      if (data.success && Array.isArray(data.data)) {
+        setSubAreas(data.data);
+      } else {
+        setSubAreas(CITY_SUB_AREA_DEFAULTS[selectedCity] || []);
+      }
+    } catch (err) {
+      console.error('Failed to fetch sub-areas:', err);
+      setSubAreas(CITY_SUB_AREA_DEFAULTS[selectedCity] || []);
+    }
+  }, []);
+
   const fetchRatingDimensions = useCallback(async () => {
     try {
       const controller = new AbortController();
@@ -2715,6 +2815,14 @@ export default function StartYourClub() {
 
   useEffect(() => { fetchApplications(); fetchAnalytics(); fetchFilterOptions(); fetchRatingDimensions(); fetchScheduledCalls(); }, []);
   useEffect(() => { fetchApplications(); }, [fetchApplications]);
+  useEffect(() => {
+    if (!cityFilter) {
+      setSubAreas([]);
+      setSubAreaFilter('');
+      return;
+    }
+    fetchSubAreasByCity(cityFilter);
+  }, [cityFilter, fetchSubAreasByCity]);
 
   // SSE (admin actions) + polling every 30s (new user submissions)
   useEffect(() => {
@@ -2786,6 +2894,7 @@ export default function StartYourClub() {
       const effectiveStatuses = statusFilter ? [statusFilter] : section.statuses;
       const baseParams = new URLSearchParams();
       if (cityFilter) baseParams.set('city', cityFilter);
+      if (subAreaFilter) baseParams.set('sub_area', subAreaFilter);
       if (activityFilter) baseParams.set('activity', activityFilter);
       if (searchQuery) baseParams.set('search', searchQuery);
       if (effectiveStatuses.length > 0) baseParams.set('statuses', effectiveStatuses.join(','));
@@ -2824,6 +2933,7 @@ export default function StartYourClub() {
         'Name': app.name || '',
         'Phone': app.user_phone || '',
         'City': app.city || '',
+        'Sub Area': app.sub_area || '',
         'Activity': app.activity || '',
         'Status': STATUS_CONFIG[app.status]?.label || app.status,
         'Current Stage Age': computeLeadAge(app.stage_entered_at, app.created_at),
@@ -2860,7 +2970,7 @@ export default function StartYourClub() {
     } finally {
       setExporting(false);
     }
-  }, [activeSection, activityFilter, applyClientFilters, cityFilter, getSubsectionLabelForApp, marketingFilter, searchQuery, sortDir, sortField, statusFilter]);
+  }, [activeSection, activityFilter, applyClientFilters, cityFilter, subAreaFilter, getSubsectionLabelForApp, marketingFilter, searchQuery, sortDir, sortField, statusFilter]);
 
   const handleSort = (field: string) => {
     if (sortField === field) setSortDir(prev => prev === 'asc' ? 'desc' : 'asc');
@@ -3073,7 +3183,7 @@ export default function StartYourClub() {
                                   {app.user_phone && <span className="text-[10px] text-slate-400">{app.user_phone}</span>}
                                   {app.admin_created && <span className="text-[9px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full">Admin</span>}
                                 </div>
-                                <div className="text-xs text-slate-500">{app.city} · {app.activity}</div>
+                                <div className="text-xs text-slate-500">{formatLocation(app.city, app.sub_area)} · {app.activity}</div>
                               </div>
                               <div className="text-xs font-medium text-slate-600 whitespace-nowrap">{time}</div>
                               <div className="flex items-center gap-1.5">
@@ -3250,7 +3360,7 @@ export default function StartYourClub() {
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
             <input
               type="text"
-              placeholder="Search by name, city, activity..."
+              placeholder="Search by name, city, sub-area, activity..."
               value={searchQuery}
               onChange={e => { setSearchQuery(e.target.value); setPage(1); }}
               className="w-full pl-9 pr-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400"
@@ -3268,9 +3378,18 @@ export default function StartYourClub() {
               <option key={sub.id} value={sub.id}>{sub.label}</option>
             ))}
           </select>
-          <select value={cityFilter} onChange={e => { setCityFilter(e.target.value); setPage(1); }} className="px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20">
+          <select value={cityFilter} onChange={e => { setCityFilter(e.target.value); setSubAreaFilter(''); setPage(1); }} className="px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20">
             <option value="">All Cities</option>
             {cities.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+          <select
+            value={subAreaFilter}
+            onChange={e => { setSubAreaFilter(e.target.value); setPage(1); }}
+            disabled={!cityFilter}
+            className="px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 disabled:bg-slate-50 disabled:text-slate-400"
+          >
+            <option value="">{cityFilter ? 'All Sub-areas' : 'Select City First'}</option>
+            {subAreas.map(sa => <option key={sa} value={sa}>{sa}</option>)}
           </select>
           <select value={activityFilter} onChange={e => { setActivityFilter(e.target.value); setPage(1); }} className="px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20">
             <option value="">All Activities</option>
@@ -3288,8 +3407,8 @@ export default function StartYourClub() {
               Marketing Launch Ready
             </button>
           )}
-          {(statusFilter || subsectionFilter || cityFilter || activityFilter || searchQuery || marketingFilter) && (
-            <button onClick={() => { setStatusFilter(''); setSubsectionFilter(''); setCityFilter(''); setActivityFilter(''); setSearchQuery(''); setMarketingFilter(false); setPage(1); }} className="text-xs text-slate-500 hover:text-slate-700 underline">
+          {(statusFilter || subsectionFilter || cityFilter || subAreaFilter || activityFilter || searchQuery || marketingFilter) && (
+            <button onClick={() => { setStatusFilter(''); setSubsectionFilter(''); setCityFilter(''); setSubAreaFilter(''); setActivityFilter(''); setSearchQuery(''); setMarketingFilter(false); setPage(1); }} className="text-xs text-slate-500 hover:text-slate-700 underline">
               Clear
             </button>
           )}
@@ -3353,11 +3472,11 @@ export default function StartYourClub() {
                   <div className="flex items-center gap-1">Name {sortField === 'name' && (sortDir === 'asc' ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />)}</div>
                 </th>
                 <th className="px-4 py-3 text-left font-semibold text-slate-600">Phone</th>
-                <th className="px-4 py-3 text-left font-semibold text-slate-600 cursor-pointer hover:text-slate-800" onClick={() => handleSort('city')}>
-                  <div className="flex items-center gap-1">City {sortField === 'city' && (sortDir === 'asc' ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />)}</div>
+                <th className="px-4 py-3 text-left font-semibold text-slate-600 cursor-pointer hover:text-slate-800" onClick={() => handleSort('city_name')}>
+                  <div className="flex items-center gap-1">City {sortField === 'city_name' && (sortDir === 'asc' ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />)}</div>
                 </th>
-                <th className="px-4 py-3 text-left font-semibold text-slate-600 cursor-pointer hover:text-slate-800" onClick={() => handleSort('activity')}>
-                  <div className="flex items-center gap-1">Activity {sortField === 'activity' && (sortDir === 'asc' ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />)}</div>
+                <th className="px-4 py-3 text-left font-semibold text-slate-600 cursor-pointer hover:text-slate-800" onClick={() => handleSort('activity_name')}>
+                  <div className="flex items-center gap-1">Activity {sortField === 'activity_name' && (sortDir === 'asc' ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />)}</div>
                 </th>
                 <th className="px-4 py-3 text-center font-semibold text-slate-600">Rejected Count</th>
                 <th className="px-4 py-3 text-left font-semibold text-slate-600">Status</th>
@@ -3412,6 +3531,7 @@ export default function StartYourClub() {
                         subApps = subApps.filter(a =>
                           (a.name || '').toLowerCase().includes(q) ||
                           (a.city || '').toLowerCase().includes(q) ||
+                          (a.sub_area || '').toLowerCase().includes(q) ||
                           (a.activity || '').toLowerCase().includes(q)
                         );
                       }

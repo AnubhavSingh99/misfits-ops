@@ -5,9 +5,10 @@ let client: any;
 
 export async function initializeRedis() {
   try {
+    const host = process.env.REDIS_HOST || 'localhost';
+    const port = parseInt(process.env.REDIS_PORT || '6379', 10);
     client = createClient({
-      host: process.env.REDIS_HOST || 'localhost',
-      port: parseInt(process.env.REDIS_PORT || '6379'),
+      url: `redis://${host}:${port}`,
     });
 
     await client.connect();

@@ -36,7 +36,7 @@ export async function misfitsApi(
 
   try {
     const res = await fetch(url, opts);
-    const data = await res.json().catch(() => ({}));
+    const data: any = await res.json().catch(() => ({}));
 
     if (!res.ok) {
       const errMsg = data?.error || data?.message || `HTTP ${res.status}`;

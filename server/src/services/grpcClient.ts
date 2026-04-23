@@ -21,7 +21,9 @@ function shellQuote(value: string): string {
 }
 
 function redactSensitiveCommand(cmd: string): string {
-  return cmd.replace(/x-api-key:\s*[^'\s]+/gi, 'x-api-key: [REDACTED]');
+  return cmd
+    .replace(/x-api-key:\s*[^'\s]+/gi, 'x-api-key: [REDACTED]')
+    .replace(/authorization:\s*bearer\s*[^'\s]+/gi, 'authorization: bearer [REDACTED]');
 }
 
 function getGrpcApiKey(): string {
@@ -72,7 +74,9 @@ export async function callGrpc(service: string, method: string, data: any): Prom
   const bin = getGrpcurlBin();
   const jsonData = JSON.stringify(data);
   const escaped = jsonData.replace(/'/g, "'\\''");
-  const cmd = `${shellQuote(bin)} -plaintext -H 'x-api-key: ${apiKey}' -d '${escaped}' ${grpcHost} ${service}.${method}`;
+  // Some Misfits gRPC services expect `x-api-key`, others `authorization: bearer`.
+  // Send both to keep client code simple and avoid per-service config drift.
+  const cmd = `${shellQuote(bin)} -plaintext -H 'x-api-key: ${apiKey}' -H 'authorization: bearer ${apiKey}' -d '${escaped}' ${grpcHost} ${service}.${method}`;
 
   logger.info(`gRPC call: ${service}.${method}`, { data });
 

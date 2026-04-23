@@ -352,7 +352,7 @@ VITE_APP_NAME=Misfits Operations Platform
 ## Production Deployment
 
 **Domain**: operations.misfits.net.in (or qualitymisfits.net.in)
-**Server**: 13.201.15.180
+**Server**: 3.108.218.47
 **Process Manager**: PM2
 
 ### Deployment Script (`./deploy.sh`)
@@ -371,15 +371,18 @@ The deployment script provides easy production management:
 ```
 
 **Deployment Flow:**
-1. Commits local changes with auto-generated commit message
-2. Pushes to production server
-3. Sets up database tunnel on production
-4. Restarts PM2 service (`misfits-app`)
+1. Pushes local git changes
+2. Pulls and rebuilds on the server (client + server)
+3. Restarts PM2 service (`misfits-ops`)
 
 **SSH Configuration:**
-- Key: `/Users/retalplaza/Downloads/cdk-key-staging.pem`
-- Server: `ec2-user@13.201.15.180`
-- Path: `/home/ec2-user/misfits-operations`
+- Key: set `SSH_KEY_PATH` (optional; otherwise uses your SSH agent/default key)
+- Server: `ec2-user@3.108.218.47`
+- Path: `/home/ec2-user/misfits-ops`
+
+**Frontend Serving:**
+- Nginx serves the built React app from `/var/www/operations` (not from the Node server).
+- `/api/*` is proxied to the Node backend on `localhost:5001` (PM2 app `misfits-ops`).
 
 ## Development Workflow
 

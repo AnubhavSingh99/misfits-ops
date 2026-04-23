@@ -11,7 +11,7 @@ interface RealTimeEvent {
 }
 
 class RealTimeService {
-  private io: SocketIOServer;
+  private io: any;
   private connectedClients: Map<string, { pocId?: string; filters?: any }> = new Map();
 
   constructor(server: any) {

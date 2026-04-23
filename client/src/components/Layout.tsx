@@ -28,6 +28,7 @@ const allNavigation = [
   { id: 'health-dashboard', name: 'Health Dashboard', href: '/health-dashboard', icon: Activity },
   { id: 'venue-requirements', name: 'Venue Requirements', href: '/venue-requirements', icon: MapPin },
   { id: 'leader-requirements', name: 'Leader Requirements', href: '/leader-requirements', icon: Users },
+  { id: 'analytics', name: 'Analysis', href: '/analytics', icon: TrendingUp },
   { id: 'customer-service', name: 'Customer Service (New)', href: '/customer-service', icon: Headphones },
   { id: 'customer-service-old', name: 'Customer Service (Old)', href: '/customer-service-old', icon: Headphones },
   { id: 'shark-tank', name: 'Shark Tank CRM', href: '/shark-tank', icon: Zap },
