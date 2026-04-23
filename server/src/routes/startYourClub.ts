@@ -24,6 +24,31 @@ const CITY_ALIAS_TO_PARENT: Record<string, { city: string; subArea: string }> = 
   'new delhi': { city: 'Delhi', subArea: 'New Delhi' },
   'central delhi': { city: 'Delhi', subArea: 'Central Delhi' },
 };
+const MANUAL_LEAD_TARGET_STATUSES = new Set([
+  'SUBMITTED',
+  'UNDER_REVIEW',
+  'INTERVIEW_PENDING',
+  'INTERVIEW_DONE',
+  'SELECTED',
+]);
+
+function normalizeRequestedCity(rawCity?: string | null): string {
+  const value = String(rawCity || '').trim();
+  if (!value) return '';
+  const parsed = splitCityAndSubArea(value);
+  return parsed.city || value;
+}
+
+function getDefaultSubAreasForCity(requestedCity?: string | null): string[] {
+  const normalizedRequestedCity = normalizeRequestedCity(requestedCity);
+  if (!normalizedRequestedCity) return [];
+  const exact = CITY_SUB_AREA_DEFAULTS[normalizedRequestedCity];
+  if (exact) return [...exact];
+
+  const caseInsensitiveMatch = Object.keys(CITY_SUB_AREA_DEFAULTS)
+    .find((city) => city.toLowerCase() === normalizedRequestedCity.toLowerCase());
+  return caseInsensitiveMatch ? [...CITY_SUB_AREA_DEFAULTS[caseInsensitiveMatch]] : [];
+}
 
 function splitCityAndSubArea(rawCity?: string | null): { city: string | null; sub_area: string | null } {
   if (!rawCity) return { city: null, sub_area: null };
@@ -237,11 +262,80 @@ type LeaderSupplyRow = {
   activity: string;
   city: string;
   leaders_ready: number;
-  leaders_in_pipeline: number;
+  leaders_in_progress: number;
+  leaders_backlog: number;
 };
 
 function round1(num: number): number {
   return Math.round(num * 10) / 10;
+}
+
+function normalizeActivityKey(activity?: string | null): string {
+  return String(activity || 'Others').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+function normalizeCityKey(city?: string | null): string {
+  return String(city || 'Others').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+function mapLeaderSupplyRows(rows: any[]): LeaderSupplyRow[] {
+  return (rows || []).map((row: any) => {
+    const parsedCity = splitCityAndSubArea(row.city_name);
+    return {
+      activity: String(row.activity_name || 'Others'),
+      city: parsedCity.city || String(row.city_name || 'Others'),
+      leaders_ready: parseInt(String(row.leaders_ready || 0), 10) || 0,
+      leaders_in_progress: parseInt(String(row.leaders_in_progress || row.leaders_in_pipeline || 0), 10) || 0,
+      leaders_backlog: parseInt(String(row.leaders_backlog || 0), 10) || 0,
+    };
+  });
+}
+
+async function fetchSupplyRowsFromRequirementsApi(baseUrl: string): Promise<LeaderSupplyRow[]> {
+  const root = String(baseUrl || '').trim().replace(/\/+$/, '');
+  if (!root) return [];
+
+  const response = await fetch(`${root}/api/requirements/leaders`);
+  if (!response.ok) {
+    throw new Error(`Fallback requirements API failed with ${response.status}`);
+  }
+
+  const payload: any = await response.json();
+  const requirements = Array.isArray(payload?.requirements) ? payload.requirements : [];
+  const grouped = new Map<string, LeaderSupplyRow>();
+
+  for (const req of requirements) {
+    const activity = String(req?.activity_name || req?.activity || 'Others').trim() || 'Others';
+    const parsedCity = splitCityAndSubArea(req?.city_name || req?.city);
+    const city = parsedCity.city || String(req?.city_name || req?.city || 'Others').trim() || 'Others';
+    const status = String(req?.status || '').trim().toLowerCase();
+    const leadersRequiredRaw = Number(req?.leaders_required);
+    const leadersRequired = Number.isFinite(leadersRequiredRaw) && leadersRequiredRaw > 0
+      ? Math.floor(leadersRequiredRaw)
+      : 1;
+    const key = `${normalizeActivityKey(activity)}||${normalizeCityKey(city)}`;
+
+    if (!grouped.has(key)) {
+      grouped.set(key, {
+        activity,
+        city,
+        leaders_ready: 0,
+        leaders_in_progress: 0,
+        leaders_backlog: 0,
+      });
+    }
+
+    const bucket = grouped.get(key)!;
+    if (status === 'done') {
+      bucket.leaders_ready += leadersRequired;
+    } else if (status === 'in_progress') {
+      bucket.leaders_in_progress += leadersRequired;
+    } else if (status === 'not_picked' || status === 'deprioritised') {
+      bucket.leaders_backlog += leadersRequired;
+    }
+  }
+
+  return [...grouped.values()];
 }
 
 function computeAnalysisDashboard(rows: any[], supplyRows: LeaderSupplyRow[] = []) {
@@ -288,14 +382,25 @@ function computeAnalysisDashboard(rows: any[], supplyRows: LeaderSupplyRow[] = [
   const cities = [...citySet].sort((a, b) => (cityCounts.get(b) || 0) - (cityCounts.get(a) || 0));
 
   const supplyByActivity = new Map<string, number>();
-  const supplyByActivityCity = new Map<string, Map<string, number>>();
+  const supplyInProgressByActivity = new Map<string, number>();
+  const supplyBacklogByActivity = new Map<string, number>();
   let totalSupplyReady = 0;
+  let totalSupplyInProgress = 0;
+  let totalSupplyBacklog = 0;
   for (const row of supplyRows) {
+    const normalizedActivity = normalizeActivityKey(row.activity);
     totalSupplyReady += row.leaders_ready;
-    supplyByActivity.set(row.activity, (supplyByActivity.get(row.activity) || 0) + row.leaders_ready);
-    if (!supplyByActivityCity.has(row.activity)) supplyByActivityCity.set(row.activity, new Map());
-    const cityMap = supplyByActivityCity.get(row.activity)!;
-    cityMap.set(row.city, (cityMap.get(row.city) || 0) + row.leaders_ready);
+    totalSupplyInProgress += row.leaders_in_progress;
+    totalSupplyBacklog += row.leaders_backlog;
+    supplyByActivity.set(normalizedActivity, (supplyByActivity.get(normalizedActivity) || 0) + row.leaders_ready);
+    supplyInProgressByActivity.set(
+      normalizedActivity,
+      (supplyInProgressByActivity.get(normalizedActivity) || 0) + row.leaders_in_progress
+    );
+    supplyBacklogByActivity.set(
+      normalizedActivity,
+      (supplyBacklogByActivity.get(normalizedActivity) || 0) + row.leaders_backlog
+    );
   }
 
   const activityBreakdown = activities.map((activity, index) => {
@@ -303,8 +408,13 @@ function computeAnalysisDashboard(rows: any[], supplyRows: LeaderSupplyRow[] = [
     const percentage = totalLeads > 0 ? round1((leadsCount / totalLeads) * 100) : 0;
     const rank = index + 1;
     const demandTag = rank <= 3 ? 'High' : rank > Math.max(activities.length - 2, 3) ? 'Low' : 'Medium';
-    const supplyReady = supplyByActivity.get(activity) || 0;
-    const demandSupplyGap = Math.max(leadsCount - supplyReady, 0);
+    const normalizedActivity = normalizeActivityKey(activity);
+    const supplyReady = supplyByActivity.get(normalizedActivity) || 0;
+    const supplyInProgress = supplyInProgressByActivity.get(normalizedActivity) || 0;
+    const backlogCount = supplyBacklogByActivity.get(normalizedActivity) || 0;
+    const supplyEffective = supplyReady + supplyInProgress;
+    const demandSupplyGap = Math.max(leadsCount - supplyEffective, 0);
+    const coveragePercentage = leadsCount > 0 ? round1((supplyEffective / leadsCount) * 100) : 0;
     const action = demandTag === 'High'
       ? (demandSupplyGap > 0 ? 'Recruit Leader NOW' : 'Demand Covered')
       : demandTag === 'Medium'
@@ -319,6 +429,10 @@ function computeAnalysisDashboard(rows: any[], supplyRows: LeaderSupplyRow[] = [
       demand_tag: demandTag,
       action,
       supply_ready: supplyReady,
+      supply_in_progress: supplyInProgress,
+      supply_effective: supplyEffective,
+      backlog_count: backlogCount,
+      coverage_percentage: coveragePercentage,
       demand_supply_gap: demandSupplyGap,
     };
   });
@@ -399,7 +513,10 @@ function computeAnalysisDashboard(rows: any[], supplyRows: LeaderSupplyRow[] = [
   const topCity = cityBreakdown[0]?.city || 'N/A';
   const weakestCity = cityBreakdown[cityBreakdown.length - 1]?.city || 'N/A';
   const largestGapActivity = [...activityBreakdown].sort((a, b) => b.demand_supply_gap - a.demand_supply_gap)[0];
-  const totalGap = Math.max(totalLeads - totalSupplyReady, 0);
+  const totalSupplyEffective = totalSupplyReady + totalSupplyInProgress;
+  const totalGap = Math.max(totalLeads - totalSupplyEffective, 0);
+  const readyOnlyGap = Math.max(totalLeads - totalSupplyReady, 0);
+  const overallCoverage = totalLeads > 0 ? round1((totalSupplyEffective / totalLeads) * 100) : 0;
 
   return {
     total_leads: totalLeads,
@@ -410,7 +527,12 @@ function computeAnalysisDashboard(rows: any[], supplyRows: LeaderSupplyRow[] = [
     demand_supply_summary: {
       total_demand: totalLeads,
       total_supply_ready: totalSupplyReady,
+      total_supply_in_progress: totalSupplyInProgress,
+      total_supply_effective: totalSupplyEffective,
+      total_supply_backlog: totalSupplyBacklog,
       total_gap: totalGap,
+      ready_only_gap: readyOnlyGap,
+      overall_coverage: overallCoverage,
     },
     activity_breakdown: activityBreakdown,
     city_breakdown: cityBreakdown,
@@ -1078,28 +1200,34 @@ router.get('/admin/analysis-dashboard', async (req: Request, res: Response) => {
     );
 
     let supplyRows: LeaderSupplyRow[] = [];
+    const supplyQuery = `SELECT
+      COALESCE(activity_name, 'Others') as activity_name,
+      COALESCE(city_name, 'Others') as city_name,
+      COALESCE(SUM(COALESCE(leaders_required, 1)) FILTER (WHERE status = 'done'), 0)::int as leaders_ready,
+      COALESCE(SUM(COALESCE(leaders_required, 1)) FILTER (WHERE status = 'in_progress'), 0)::int as leaders_in_progress,
+      COALESCE(SUM(COALESCE(leaders_required, 1)) FILTER (WHERE status IN ('not_picked', 'deprioritised')), 0)::int as leaders_backlog
+     FROM leader_requirements
+     GROUP BY COALESCE(activity_name, 'Others'), COALESCE(city_name, 'Others')`;
     try {
-      const supplyResult = await queryProduction(
-        `SELECT
-          COALESCE(activity_name, 'Others') as activity_name,
-          COALESCE(city_name, 'Others') as city_name,
-          COUNT(*) FILTER (WHERE status = 'done')::int as leaders_ready,
-          COUNT(*) FILTER (WHERE status IN ('not_picked', 'in_progress', 'deprioritised'))::int as leaders_in_pipeline
-         FROM leader_requirements
-         GROUP BY COALESCE(activity_name, 'Others'), COALESCE(city_name, 'Others')`
-      );
-
-      supplyRows = (supplyResult.rows || []).map((row: any) => {
-        const parsedCity = splitCityAndSubArea(row.city_name);
-        return {
-          activity: String(row.activity_name || 'Others'),
-          city: parsedCity.city || String(row.city_name || 'Others'),
-          leaders_ready: parseInt(String(row.leaders_ready || 0), 10) || 0,
-          leaders_in_pipeline: parseInt(String(row.leaders_in_pipeline || 0), 10) || 0,
-        };
-      });
+      const localSupply = await queryLocal(supplyQuery);
+      supplyRows = mapLeaderSupplyRows(localSupply.rows || []);
+      if (supplyRows.length === 0) {
+        const productionSupply = await queryProduction(supplyQuery);
+        supplyRows = mapLeaderSupplyRows(productionSupply.rows || []);
+      }
     } catch (supplyError: any) {
       logger.warn('Leader supply data unavailable for analysis dashboard:', supplyError?.message || supplyError);
+    }
+    if (supplyRows.length === 0) {
+      try {
+        const fallbackBase = process.env.LEADER_REQUIREMENTS_FALLBACK_URL || 'https://operations.misfits.net.in';
+        supplyRows = await fetchSupplyRowsFromRequirementsApi(fallbackBase);
+        if (supplyRows.length > 0) {
+          logger.info(`Leader supply loaded from fallback requirements API (${supplyRows.length} buckets)`);
+        }
+      } catch (fallbackError: any) {
+        logger.warn('Fallback requirements API unavailable for analysis dashboard:', fallbackError?.message || fallbackError);
+      }
     }
 
     return res.json({
@@ -1122,22 +1250,26 @@ router.get('/admin/analysis-dashboard', async (req: Request, res: Response) => {
           `SELECT
             COALESCE(activity_name, 'Others') as activity_name,
             COALESCE(city_name, 'Others') as city_name,
-            COUNT(*) FILTER (WHERE status = 'done')::int as leaders_ready,
-            COUNT(*) FILTER (WHERE status IN ('not_picked', 'in_progress', 'deprioritised'))::int as leaders_in_pipeline
+            COALESCE(SUM(COALESCE(leaders_required, 1)) FILTER (WHERE status = 'done'), 0)::int as leaders_ready,
+            COALESCE(SUM(COALESCE(leaders_required, 1)) FILTER (WHERE status = 'in_progress'), 0)::int as leaders_in_progress,
+            COALESCE(SUM(COALESCE(leaders_required, 1)) FILTER (WHERE status IN ('not_picked', 'deprioritised')), 0)::int as leaders_backlog
            FROM leader_requirements
            GROUP BY COALESCE(activity_name, 'Others'), COALESCE(city_name, 'Others')`
         );
-        supplyLocalRows = (supplyLocal.rows || []).map((row: any) => {
-          const parsedCity = splitCityAndSubArea(row.city_name);
-          return {
-            activity: String(row.activity_name || 'Others'),
-            city: parsedCity.city || String(row.city_name || 'Others'),
-            leaders_ready: parseInt(String(row.leaders_ready || 0), 10) || 0,
-            leaders_in_pipeline: parseInt(String(row.leaders_in_pipeline || 0), 10) || 0,
-          };
-        });
+        supplyLocalRows = mapLeaderSupplyRows(supplyLocal.rows || []);
       } catch {
         supplyLocalRows = [];
+      }
+      if (supplyLocalRows.length === 0) {
+        try {
+          const fallbackBase = process.env.LEADER_REQUIREMENTS_FALLBACK_URL || 'https://operations.misfits.net.in';
+          supplyLocalRows = await fetchSupplyRowsFromRequirementsApi(fallbackBase);
+          if (supplyLocalRows.length > 0) {
+            logger.info(`Leader supply loaded from fallback requirements API in local fallback (${supplyLocalRows.length} buckets)`);
+          }
+        } catch {
+          supplyLocalRows = [];
+        }
       }
 
       return res.json({
@@ -1267,9 +1399,10 @@ router.get('/admin/cities', async (req: Request, res: Response) => {
 router.get('/admin/sub-areas', async (req: Request, res: Response) => {
   const requestedCity = String(req.query.city || '').trim();
   if (!requestedCity) return res.json({ success: true, data: [] });
+  const normalizedRequestedCity = normalizeRequestedCity(requestedCity);
 
   const uniqueSubAreas = new Set<string>();
-  const defaults = CITY_SUB_AREA_DEFAULTS[requestedCity] || [];
+  const defaults = getDefaultSubAreasForCity(normalizedRequestedCity);
   defaults.forEach((subArea) => uniqueSubAreas.add(subArea));
 
   try {
@@ -1281,7 +1414,7 @@ router.get('/admin/sub-areas', async (req: Request, res: Response) => {
 
     for (const row of result.rows || []) {
       const parsed = splitCityAndSubArea(row.city);
-      if (parsed.city?.toLowerCase() === requestedCity.toLowerCase() && parsed.sub_area) {
+      if (parsed.city?.toLowerCase() === normalizedRequestedCity.toLowerCase() && parsed.sub_area) {
         uniqueSubAreas.add(parsed.sub_area);
       }
     }
@@ -1297,7 +1430,7 @@ router.get('/admin/sub-areas', async (req: Request, res: Response) => {
 
       for (const row of local.rows || []) {
         const parsed = splitCityAndSubArea(row.city);
-        if (parsed.city?.toLowerCase() === requestedCity.toLowerCase() && parsed.sub_area) {
+        if (parsed.city?.toLowerCase() === normalizedRequestedCity.toLowerCase() && parsed.sub_area) {
           uniqueSubAreas.add(parsed.sub_area);
         }
       }
@@ -1357,7 +1490,16 @@ router.get('/admin/lookup-user', async (req: Request, res: Response) => {
     }
 
     const user = result.rows[0];
-    res.json({ success: true, data: { user_id: user.pk, first_name: user.first_name, last_name: user.last_name || '', phone: user.phone } });
+    const normalizedUserId = Number.parseInt(String(user.pk), 10);
+    res.json({
+      success: true,
+      data: {
+        user_id: Number.isFinite(normalizedUserId) ? normalizedUserId : user.pk,
+        first_name: user.first_name,
+        last_name: user.last_name || '',
+        phone: user.phone,
+      },
+    });
   } catch (error: any) {
     logger.error('Failed to look up user:', error);
     res.status(500).json({ success: false, error: error.message });
@@ -1367,21 +1509,35 @@ router.get('/admin/lookup-user', async (req: Request, res: Response) => {
 // POST /admin/create-lead — Create a manual lead (MUST be before /admin/:id)
 router.post('/admin/create-lead', async (req: Request, res: Response) => {
   try {
-    const { user_id, city_name, sub_area, activity_name, name } = req.body;
-    if (!user_id) {
+    const { user_id, city_name, sub_area, activity_name, name, target_status } = req.body;
+    const normalizedUserId = Number.parseInt(String(user_id || ''), 10);
+    if (!Number.isFinite(normalizedUserId)) {
       return res.status(400).json({ success: false, error: 'user_id is required' });
     }
-    const locationValue = formatCityWithSubArea(city_name, sub_area);
+    const normalizedCity = normalizeRequestedCity(city_name);
+    const normalizedSubArea = String(sub_area || '').trim();
+    const locationValue = formatCityWithSubArea(normalizedCity, normalizedSubArea);
+    const duplicateCityCandidates = Array.from(
+      new Set([locationValue, normalizedCity].map((value) => String(value || '').trim()).filter(Boolean))
+    );
+    const normalizedTargetStatus = String(target_status || 'SUBMITTED').trim().toUpperCase();
+    if (!MANUAL_LEAD_TARGET_STATUSES.has(normalizedTargetStatus)) {
+      return res.status(400).json({
+        success: false,
+        error: `target_status must be one of: ${Array.from(MANUAL_LEAD_TARGET_STATUSES).join(', ')}`,
+      });
+    }
+
     const duplicateCheck = await queryProduction(
       `SELECT pk, status
        FROM club_application
        WHERE archived = false
          AND user_id = $1
-         AND COALESCE(city_name, '') = COALESCE($2, '')
+         AND COALESCE(city_name, '') = ANY($2)
          AND COALESCE(activity_name, '') = COALESCE($3, '')
        ORDER BY created_at DESC
        LIMIT 1`,
-      [user_id, locationValue || '', activity_name || '']
+      [normalizedUserId, duplicateCityCandidates.length > 0 ? duplicateCityCandidates : [''], activity_name || '']
     );
 
     if (duplicateCheck.rows.length > 0) {
@@ -1396,14 +1552,37 @@ router.post('/admin/create-lead', async (req: Request, res: Response) => {
       });
     }
 
-    const apiRes = await misfitsApi('POST', '/start-your-club/admin/create-lead', {
-      user_id,
-      city_name: locationValue || '',
+    const createPayload = {
+      user_id: normalizedUserId,
+      // Upstream create endpoint validates city_name; send canonical city and keep sub-area local for duplicate checks.
+      city_name: normalizedCity || '',
       activity_name: activity_name || '',
       name: name || '',
-    });
+      status: normalizedTargetStatus,
+    };
+
+    let apiRes = await misfitsApi('POST', '/start-your-club/admin/create-lead', createPayload);
     if (!apiRes.ok) {
-      return res.status(apiRes.status).json({ success: false, error: apiRes.error || apiRes.data?.message });
+      const serializedError = `${apiRes.error || ''} ${JSON.stringify(apiRes.data || {})}`.toLowerCase();
+      const shouldRetryWithoutStatus =
+        Boolean(createPayload.status) &&
+        (serializedError.includes('validation_error') || serializedError.includes('status'));
+      if (shouldRetryWithoutStatus) {
+        apiRes = await misfitsApi('POST', '/start-your-club/admin/create-lead', {
+          user_id: normalizedUserId,
+          city_name: normalizedCity || '',
+          activity_name: activity_name || '',
+          name: name || '',
+        });
+      }
+    }
+
+    if (!apiRes.ok) {
+      return res.status(apiRes.status).json({
+        success: false,
+        error: apiRes.error || apiRes.data?.message || 'Failed to create lead',
+        details: apiRes.data?.errors || apiRes.data?.details || null,
+      });
     }
     broadcast('application_updated', apiRes.data);
     res.status(201).json({ success: true, data: apiRes.data });

@@ -2191,7 +2191,10 @@ function AddLeadModal({
       const res = await fetch(`${apiBase}/admin/lookup-user?phone=${cleaned}`);
       const data = await res.json();
       if (data.success) {
-        setLookupResult(data.data);
+        setLookupResult({
+          ...data.data,
+          user_id: Number(data.data?.user_id),
+        });
       } else {
         setLookupError(data.error || 'User not found');
       }
@@ -2214,6 +2217,7 @@ function AddLeadModal({
           city_name: city,
           sub_area: subArea || null,
           activity_name: activity,
+          target_status: targetStatus,
           name: `${lookupResult.first_name} ${lookupResult.last_name}`.trim(),
         }),
       });
@@ -2224,7 +2228,12 @@ function AddLeadModal({
         if (res.status === 409 && data?.data?.existing_application_id) {
           alert(`Duplicate lead already exists (ID: ${data.data.existing_application_id}, status: ${data.data.existing_status || 'unknown'}).`);
         } else {
-          alert(data.error || 'Failed to create lead');
+          const details = Array.isArray(data?.details)
+            ? data.details.join(', ')
+            : typeof data?.details === 'string'
+              ? data.details
+              : '';
+          alert([data.error, details].filter(Boolean).join('\n') || 'Failed to create lead');
         }
       }
     } catch {

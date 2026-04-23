@@ -2,8 +2,10 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
   BarChart3,
-  MapPin,
+  CheckCircle2,
+  Clock3,
   RefreshCw,
+  Target,
   TrendingUp,
   Users,
 } from 'lucide-react';
@@ -12,6 +14,7 @@ import {
   BarChart,
   CartesianGrid,
   Cell,
+  Legend,
   Pie,
   PieChart,
   ResponsiveContainer,
@@ -24,7 +27,7 @@ const API_BASE = import.meta.env.VITE_API_URL
   ? `${import.meta.env.VITE_API_URL}/api/start-club`
   : '/api/start-club';
 
-const PIE_COLORS = ['#4f46e5', '#0ea5e9', '#22c55e', '#f59e0b', '#ef4444', '#8b5cf6'];
+const PIE_COLORS = ['#2563eb', '#14b8a6', '#22c55e', '#f59e0b', '#ef4444', '#8b5cf6'];
 
 interface ActivityBreakdown {
   activity: string;
@@ -34,6 +37,10 @@ interface ActivityBreakdown {
   demand_tag: 'High' | 'Medium' | 'Low';
   action: string;
   supply_ready: number;
+  supply_in_progress: number;
+  supply_effective: number;
+  backlog_count: number;
+  coverage_percentage: number;
   demand_supply_gap: number;
 }
 
@@ -58,7 +65,12 @@ interface AnalysisData {
   demand_supply_summary: {
     total_demand: number;
     total_supply_ready: number;
+    total_supply_in_progress: number;
+    total_supply_effective: number;
+    total_supply_backlog: number;
     total_gap: number;
+    ready_only_gap: number;
+    overall_coverage: number;
   };
   activity_breakdown: ActivityBreakdown[];
   city_breakdown: CityBreakdown[];
@@ -121,16 +133,28 @@ export function Analytics() {
     return () => clearInterval(interval);
   }, [fetchData]);
 
-  const topActivities = useMemo(
-    () => (data?.activity_breakdown || []).slice(0, 8),
-    [data]
-  );
   const topCities = useMemo(
     () => (data?.city_breakdown || []).slice(0, 6),
     [data]
   );
-  const biggestGap = useMemo(
-    () => (data?.activity_breakdown || []).slice().sort((a, b) => b.demand_supply_gap - a.demand_supply_gap)[0],
+  const priorityQueue = useMemo(
+    () => (data?.activity_breakdown || []).slice().sort((a, b) => b.demand_supply_gap - a.demand_supply_gap).slice(0, 8),
+    [data]
+  );
+  const topGapActivities = useMemo(
+    () => priorityQueue.slice(0, 6),
+    [priorityQueue]
+  );
+  const quickWins = useMemo(
+    () => (data?.activity_breakdown || [])
+      .filter((row) => row.supply_in_progress > 0 && row.demand_supply_gap > 0)
+      .slice()
+      .sort((a, b) => a.demand_supply_gap - b.demand_supply_gap)
+      .slice(0, 5),
+    [data]
+  );
+  const othersDemand = useMemo(
+    () => (data?.activity_breakdown || []).find((row) => row.activity.toLowerCase() === 'others'),
     [data]
   );
 
@@ -156,19 +180,29 @@ export function Analytics() {
 
   return (
     <div className="p-6 space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">Start Your Club Analysis</h1>
-          <p className="text-sm text-slate-500 mt-1">Auto-generated from live dashboard data (no file upload)</p>
+      <div className="rounded-2xl border border-indigo-100 bg-gradient-to-r from-indigo-50 via-sky-50 to-emerald-50 p-5">
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+          <div>
+            <h1 className="text-2xl font-bold text-slate-900">Start Your Club Analysis</h1>
+            <p className="text-sm text-slate-600 mt-1">
+              Live demand vs supply from Start Your Club + Leader Requirements
+            </p>
+          </div>
+          <button
+            onClick={() => fetchData(true)}
+            disabled={refreshing}
+            className="self-start px-3 py-2 text-sm font-medium text-indigo-700 bg-white border border-indigo-200 rounded-lg hover:bg-indigo-50 disabled:opacity-60 flex items-center gap-2"
+          >
+            <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
+            Refresh
+          </button>
         </div>
-        <button
-          onClick={() => fetchData(true)}
-          disabled={refreshing}
-          className="px-3 py-2 text-sm font-medium text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-lg hover:bg-indigo-100 disabled:opacity-60 flex items-center gap-2"
-        >
-          <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
-          Refresh
-        </button>
+        {othersDemand && (
+          <div className="mt-3 text-xs text-slate-600">
+            <span className="font-semibold text-slate-700">Classification watch:</span>{' '}
+            `Others` has {othersDemand.leads} leads ({othersDemand.percentage}% of total demand).
+          </div>
+        )}
       </div>
 
       {error && (
@@ -178,39 +212,28 @@ export function Analytics() {
         </div>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <StatCard title="Total Leads" value={String(data.total_leads)} icon={<Users className="h-4 w-4 text-indigo-500" />} />
-        <StatCard
-          title="Top Demand Activity"
-          value={data.activity_breakdown[0]?.activity || '-'}
-          sub={`${data.activity_breakdown[0]?.leads || 0} leads`}
-          icon={<TrendingUp className="h-4 w-4 text-emerald-500" />}
-        />
-        <StatCard
-          title="Top City"
-          value={data.city_breakdown[0]?.city || '-'}
-          sub={`${data.city_breakdown[0]?.leads || 0} leads`}
-          icon={<MapPin className="h-4 w-4 text-sky-500" />}
-        />
-        <StatCard
-          title="Biggest Gap"
-          value={biggestGap?.activity || '-'}
-          sub={biggestGap ? `${biggestGap.demand_supply_gap} pending` : '0 pending'}
-          icon={<BarChart3 className="h-4 w-4 text-rose-500" />}
-        />
+      <div className="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-6 gap-4">
+        <StatCard title="Total Demand" value={String(data.demand_supply_summary.total_demand)} icon={<Users className="h-4 w-4 text-blue-600" />} />
+        <StatCard title="Ready Supply" value={String(data.demand_supply_summary.total_supply_ready)} icon={<CheckCircle2 className="h-4 w-4 text-emerald-600" />} />
+        <StatCard title="In Progress" value={String(data.demand_supply_summary.total_supply_in_progress)} icon={<Clock3 className="h-4 w-4 text-amber-600" />} />
+        <StatCard title="Effective Supply" value={String(data.demand_supply_summary.total_supply_effective)} icon={<TrendingUp className="h-4 w-4 text-indigo-600" />} />
+        <StatCard title="Current Gap" value={String(data.demand_supply_summary.total_gap)} icon={<Target className="h-4 w-4 text-rose-600" />} />
+        <StatCard title="Coverage" value={`${data.demand_supply_summary.overall_coverage}%`} icon={<BarChart3 className="h-4 w-4 text-sky-600" />} />
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
         <div className="bg-white border border-slate-200 rounded-xl p-4">
-          <h2 className="text-sm font-semibold text-slate-700 mb-3">Activity Demand Distribution</h2>
-          <div className="h-72">
+          <h2 className="text-sm font-semibold text-slate-700 mb-3">Demand vs Effective Supply (Top Gaps)</h2>
+          <div className="h-80">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={topActivities}>
+              <BarChart data={topGapActivities}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} />
                 <XAxis dataKey="activity" tick={{ fontSize: 11 }} interval={0} angle={-20} textAnchor="end" height={70} />
                 <YAxis allowDecimals={false} />
                 <Tooltip />
-                <Bar dataKey="leads" fill="#4f46e5" radius={[6, 6, 0, 0]} />
+                <Legend />
+                <Bar dataKey="leads" fill="#4f46e5" name="Demand" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="supply_effective" fill="#0ea5e9" name="Effective Supply" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -218,10 +241,10 @@ export function Analytics() {
 
         <div className="bg-white border border-slate-200 rounded-xl p-4">
           <h2 className="text-sm font-semibold text-slate-700 mb-3">City Lead Share</h2>
-          <div className="h-72">
+          <div className="h-80">
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
-                <Pie data={topCities} dataKey="leads" nameKey="city" cx="50%" cy="50%" outerRadius={100} label>
+                <Pie data={topCities} dataKey="leads" nameKey="city" cx="50%" cy="50%" outerRadius={108} label>
                   {topCities.map((entry, index) => (
                     <Cell key={entry.city} fill={PIE_COLORS[index % PIE_COLORS.length]} />
                   ))}
@@ -233,124 +256,155 @@ export function Analytics() {
         </div>
       </div>
 
-      <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-        <div className="px-4 py-3 border-b border-slate-100">
-          <h2 className="text-sm font-semibold text-slate-700">Demand vs Supply Action Panel</h2>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="bg-slate-50">
-                <th className="px-4 py-2 text-left text-slate-600">Activity</th>
-                <th className="px-4 py-2 text-right text-slate-600">Demand</th>
-                <th className="px-4 py-2 text-right text-slate-600">Supply Ready</th>
-                <th className="px-4 py-2 text-right text-slate-600">Gap</th>
-                <th className="px-4 py-2 text-left text-slate-600">Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.activity_breakdown.map((row) => (
-                <tr key={row.activity} className="border-t border-slate-100">
-                  <td className="px-4 py-2 font-medium text-slate-800">{row.activity}</td>
-                  <td className="px-4 py-2 text-right text-slate-700">{row.leads}</td>
-                  <td className="px-4 py-2 text-right text-slate-700">{row.supply_ready}</td>
-                  <td className="px-4 py-2 text-right text-slate-700">{row.demand_supply_gap}</td>
-                  <td className="px-4 py-2">
-                    <span className={`px-2 py-0.5 rounded-full text-xs border ${
-                      row.demand_tag === 'High'
-                        ? 'bg-red-50 text-red-700 border-red-200'
-                        : row.demand_tag === 'Medium'
-                          ? 'bg-amber-50 text-amber-700 border-amber-200'
-                          : 'bg-slate-50 text-slate-600 border-slate-200'
-                    }`}>
-                      {row.action}
-                    </span>
-                  </td>
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+        <div className="xl:col-span-2 bg-white border border-slate-200 rounded-xl overflow-hidden">
+          <div className="px-4 py-3 border-b border-slate-100">
+            <h2 className="text-sm font-semibold text-slate-700">Demand vs Supply Action Panel</h2>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-slate-50">
+                  <th className="px-4 py-2 text-left text-slate-600">Activity</th>
+                  <th className="px-3 py-2 text-right text-slate-600">Demand</th>
+                  <th className="px-3 py-2 text-right text-slate-600">Ready</th>
+                  <th className="px-3 py-2 text-right text-slate-600">In Prog.</th>
+                  <th className="px-3 py-2 text-right text-slate-600">Effective</th>
+                  <th className="px-3 py-2 text-right text-slate-600">Gap</th>
+                  <th className="px-3 py-2 text-right text-slate-600">Coverage</th>
+                  <th className="px-4 py-2 text-left text-slate-600">Action</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-        <div className="px-4 py-3 border-b border-slate-100">
-          <h2 className="text-sm font-semibold text-slate-700">Activity x City Matrix</h2>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="bg-slate-50">
-                <th className="px-4 py-2 text-left text-slate-600">Activity</th>
-                {data.categories.cities.map((city) => (
-                  <th key={city} className="px-3 py-2 text-right text-slate-600">{city}</th>
-                ))}
-                <th className="px-4 py-2 text-right text-slate-600">Total</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.activity_location_matrix.map((row) => (
-                <tr key={row.activity} className="border-t border-slate-100">
-                  <td className="px-4 py-2 font-medium text-slate-800">{row.activity}</td>
-                  {data.categories.cities.map((city) => (
-                    <td key={`${row.activity}-${city}`} className="px-3 py-2 text-right text-slate-700">
-                      {row.by_city[city] || 0}
+              </thead>
+              <tbody>
+                {data.activity_breakdown.map((row) => (
+                  <tr key={row.activity} className="border-t border-slate-100">
+                    <td className="px-4 py-2 font-medium text-slate-800">{row.activity}</td>
+                    <td className="px-3 py-2 text-right text-slate-700">{row.leads}</td>
+                    <td className="px-3 py-2 text-right text-slate-700">{row.supply_ready}</td>
+                    <td className="px-3 py-2 text-right text-slate-700">{row.supply_in_progress}</td>
+                    <td className="px-3 py-2 text-right text-slate-700">{row.supply_effective}</td>
+                    <td className="px-3 py-2 text-right font-semibold text-slate-800">{row.demand_supply_gap}</td>
+                    <td className="px-3 py-2 text-right text-slate-700">{row.coverage_percentage}%</td>
+                    <td className="px-4 py-2">
+                      <span className={`px-2 py-0.5 rounded-full text-xs border ${
+                        row.demand_tag === 'High'
+                          ? 'bg-red-50 text-red-700 border-red-200'
+                          : row.demand_tag === 'Medium'
+                            ? 'bg-amber-50 text-amber-700 border-amber-200'
+                            : 'bg-slate-50 text-slate-600 border-slate-200'
+                      }`}>
+                        {row.action}
+                      </span>
                     </td>
-                  ))}
-                  <td className="px-4 py-2 text-right font-semibold text-slate-800">{row.row_total}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
-      </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <div className="bg-white border border-slate-200 rounded-xl p-4">
-          <h2 className="text-sm font-semibold text-slate-700 mb-3">Applying Rate by City</h2>
-          <div className="space-y-3">
-            {data.applying_rate_by_city.slice(0, 6).map((cityRow) => (
-              <div key={cityRow.city} className="border border-slate-100 rounded-lg p-3">
-                <div className="text-sm font-semibold text-slate-800 mb-2">{cityRow.city}</div>
-                <div className="space-y-1">
-                  {cityRow.rates.filter((r) => r.leads > 0).slice(0, 5).map((rate) => (
-                    <div key={`${cityRow.city}-${rate.activity}`} className="flex justify-between text-xs">
-                      <span className="text-slate-600">{rate.activity}</span>
-                      <span className="font-medium text-slate-700">{rate.percentage}%</span>
-                    </div>
-                  ))}
+          <h2 className="text-sm font-semibold text-slate-700 mb-3">Quick Wins</h2>
+          <div className="space-y-2">
+            {quickWins.length === 0 && (
+              <p className="text-xs text-slate-500">No immediate in-progress quick wins right now.</p>
+            )}
+            {quickWins.map((row) => (
+              <div key={row.activity} className="border border-emerald-100 bg-emerald-50/40 rounded-lg p-2.5">
+                <div className="text-sm font-semibold text-slate-800">{row.activity}</div>
+                <div className="text-xs text-slate-600 mt-1">
+                  In progress: {row.supply_in_progress} · Remaining gap: {row.demand_supply_gap} · Coverage: {row.coverage_percentage}%
                 </div>
               </div>
             ))}
           </div>
         </div>
+      </div>
 
-        <div className="bg-white border border-slate-200 rounded-xl p-4">
-          <h2 className="text-sm font-semibold text-slate-700 mb-3">Key Insights</h2>
-          <div className="space-y-2 text-sm text-slate-700">
-            <p>{data.insights.highest_demand_activity}</p>
-            <p>{data.insights.lowest_demand_activity}</p>
-            <p>{data.insights.top_city}</p>
-            <p>{data.insights.weakest_city}</p>
-            <p>{data.insights.best_combo}</p>
-            <p>{data.insights.lowest_combo}</p>
-            <p>{data.insights.largest_gap}</p>
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+        <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+          <div className="px-4 py-3 border-b border-slate-100">
+            <h2 className="text-sm font-semibold text-slate-700">Priority Queue (Largest Gaps)</h2>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-slate-50">
+                  <th className="px-4 py-2 text-left text-slate-600">Activity</th>
+                  <th className="px-3 py-2 text-right text-slate-600">Gap</th>
+                  <th className="px-3 py-2 text-right text-slate-600">Backlog</th>
+                  <th className="px-4 py-2 text-left text-slate-600">Focus</th>
+                </tr>
+              </thead>
+              <tbody>
+                {priorityQueue.map((row) => (
+                  <tr key={`priority-${row.activity}`} className="border-t border-slate-100">
+                    <td className="px-4 py-2 font-medium text-slate-800">{row.activity}</td>
+                    <td className="px-3 py-2 text-right text-slate-700">{row.demand_supply_gap}</td>
+                    <td className="px-3 py-2 text-right text-slate-700">{row.backlog_count}</td>
+                    <td className="px-4 py-2 text-xs text-slate-600">
+                      {row.demand_supply_gap > 0 ? 'Move backlog to in-progress and add hiring bandwidth' : 'Demand covered'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </div>
+
+        <div className="bg-white border border-slate-200 rounded-xl p-4">
+          <h2 className="text-sm font-semibold text-slate-700 mb-3">City Sub-area Spread</h2>
+          <div className="space-y-3">
+            {data.city_breakdown.filter((row) => row.sub_area_breakdown.length > 0).slice(0, 5).map((cityRow) => (
+              <div key={cityRow.city} className="border border-slate-100 rounded-lg p-3">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="text-sm font-semibold text-slate-800">{cityRow.city}</div>
+                  <div className="text-xs text-slate-500">{cityRow.sub_area_breakdown.length} sub-areas tracked</div>
+                </div>
+                <div className="space-y-1">
+                  {cityRow.sub_area_breakdown.slice(0, 4).map((sa) => (
+                    <div key={`${cityRow.city}-${sa.sub_area}`} className="flex justify-between text-xs">
+                      <span className="text-slate-600">{sa.sub_area}</span>
+                      <span className="font-medium text-slate-700">{sa.leads}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+            {data.city_breakdown.every((row) => row.sub_area_breakdown.length === 0) && (
+              <p className="text-xs text-slate-500">No sub-area distribution available yet.</p>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="bg-white border border-slate-200 rounded-xl p-4">
+        <h2 className="text-sm font-semibold text-slate-700 mb-3">Key Insights</h2>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm text-slate-700">
+          <p>{data.insights.highest_demand_activity}</p>
+          <p>{data.insights.top_city}</p>
+          <p>{data.insights.largest_gap}</p>
+          <p>{data.insights.best_combo}</p>
+          <p>{data.insights.lowest_demand_activity}</p>
+          <p>{data.insights.weakest_city}</p>
+        </div>
+      </div>
+
+      <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs text-slate-600">
+        Gap formula: `Demand - (Ready + In Progress)`. Ready-only gap right now: {data.demand_supply_summary.ready_only_gap}.
       </div>
     </div>
   );
 }
 
-function StatCard({ title, value, sub, icon }: { title: string; value: string; sub?: string; icon: React.ReactNode }) {
+function StatCard({ title, value, icon }: { title: string; value: string; icon: React.ReactNode }) {
   return (
     <div className="bg-white border border-slate-200 rounded-xl p-4">
       <div className="flex items-center justify-between mb-2">
-        <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">{title}</span>
+        <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">{title}</span>
         {icon}
       </div>
       <div className="text-xl font-bold text-slate-900">{value}</div>
-      {sub && <div className="text-xs text-slate-500 mt-1">{sub}</div>}
     </div>
   );
 }

@@ -12,6 +12,26 @@ import {
 
 const router = Router();
 
+function shouldUseRequirementsApiFallback(): boolean {
+  if (process.env.ENABLE_REQUIREMENTS_API_FALLBACK === 'true') return true;
+  return process.env.NODE_ENV !== 'production';
+}
+
+async function fetchRequirementsFallback(req: Request): Promise<any | null> {
+  if (!shouldUseRequirementsApiFallback()) return null;
+  const base = (process.env.LEADER_REQUIREMENTS_FALLBACK_URL || 'https://operations.misfits.net.in').trim().replace(/\/+$/, '');
+  if (!base) return null;
+
+  const targetUrl = `${base}${req.originalUrl}`;
+  try {
+    const response = await fetch(targetUrl);
+    if (!response.ok) return null;
+    return await response.json();
+  } catch {
+    return null;
+  }
+}
+
 // =====================================================
 // LEADER REQUIREMENTS CRUD
 // =====================================================
@@ -109,6 +129,13 @@ router.get('/leaders', async (req: Request, res: Response) => {
       linked_tasks: linkedTasksMap[r.id] || []
     }));
 
+    if (requirements.length === 0) {
+      const fallback = await fetchRequirementsFallback(req);
+      if (fallback?.success && Array.isArray(fallback.requirements)) {
+        return res.json(fallback);
+      }
+    }
+
     res.json({
       success: true,
       requirements,
@@ -116,6 +143,10 @@ router.get('/leaders', async (req: Request, res: Response) => {
     });
   } catch (error) {
     console.error('Error fetching leader requirements:', error);
+    const fallback = await fetchRequirementsFallback(req);
+    if (fallback?.success) {
+      return res.json(fallback);
+    }
     res.status(500).json({ success: false, error: 'Failed to fetch leader requirements' });
   }
 });
@@ -358,9 +389,20 @@ router.get('/leaders/hierarchy', async (req: Request, res: Response) => {
       done: requirements.filter((r: any) => r.status === 'done').length
     };
 
+    if (requirements.length === 0) {
+      const fallback = await fetchRequirementsFallback(req);
+      if (fallback?.success && (Array.isArray(fallback.hierarchy) || fallback.summary)) {
+        return res.json(fallback);
+      }
+    }
+
     res.json({ success: true, hierarchy, summary });
   } catch (error) {
     console.error('Error fetching leader requirements hierarchy:', error);
+    const fallback = await fetchRequirementsFallback(req);
+    if (fallback?.success) {
+      return res.json(fallback);
+    }
     res.status(500).json({ success: false, error: 'Failed to fetch hierarchy' });
   }
 });
@@ -397,17 +439,35 @@ router.get('/leaders/filter-options', async (req: Request, res: Response) => {
       `)
     ]);
 
+    const options = {
+      activities: activities.rows,
+      cities: cities.rows,
+      areas: areas.rows,
+      clubs: clubs.rows
+    };
+
+    const isLocalEmpty = options.activities.length === 0
+      && options.cities.length === 0
+      && options.areas.length === 0
+      && options.clubs.length === 0;
+
+    if (isLocalEmpty) {
+      const fallback = await fetchRequirementsFallback(req);
+      if (fallback?.success && fallback.options) {
+        return res.json(fallback);
+      }
+    }
+
     res.json({
       success: true,
-      options: {
-        activities: activities.rows,
-        cities: cities.rows,
-        areas: areas.rows,
-        clubs: clubs.rows
-      }
+      options
     });
   } catch (error) {
     console.error('Error fetching leader filter options:', error);
+    const fallback = await fetchRequirementsFallback(req);
+    if (fallback?.success) {
+      return res.json(fallback);
+    }
     res.status(500).json({ success: false, error: 'Failed to fetch filter options' });
   }
 });
