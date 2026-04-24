@@ -256,6 +256,7 @@ type AnalysisLeadRow = {
   activity: string;
   city: string;
   sub_area: string | null;
+  status: string;
 };
 
 type LeaderSupplyRow = {
@@ -345,6 +346,7 @@ function computeAnalysisDashboard(rows: any[], supplyRows: LeaderSupplyRow[] = [
       activity: String(row.activity_name ?? row.activity ?? 'Others').trim() || 'Others',
       city: parsed.city || 'Others',
       sub_area: parsed.sub_area || null,
+      status: String(row.status || '').trim().toUpperCase(),
     };
   });
 
@@ -356,12 +358,16 @@ function computeAnalysisDashboard(rows: any[], supplyRows: LeaderSupplyRow[] = [
   const cityActivityCounts = new Map<string, Map<string, number>>();
   const activityCityCounts = new Map<string, Map<string, number>>();
   const citySubAreaCounts = new Map<string, Map<string, number>>();
+  const potentialLeadCounts = new Map<string, number>();
 
   for (const lead of leads) {
     activitySet.add(lead.activity);
     citySet.add(lead.city);
     activityCounts.set(lead.activity, (activityCounts.get(lead.activity) || 0) + 1);
     cityCounts.set(lead.city, (cityCounts.get(lead.city) || 0) + 1);
+    if (lead.status === 'ON_HOLD') {
+      potentialLeadCounts.set(lead.activity, (potentialLeadCounts.get(lead.activity) || 0) + 1);
+    }
 
     if (!cityActivityCounts.has(lead.city)) cityActivityCounts.set(lead.city, new Map());
     const cityActivityMap = cityActivityCounts.get(lead.city)!;
@@ -413,13 +419,17 @@ function computeAnalysisDashboard(rows: any[], supplyRows: LeaderSupplyRow[] = [
     const supplyInProgress = supplyInProgressByActivity.get(normalizedActivity) || 0;
     const backlogCount = supplyBacklogByActivity.get(normalizedActivity) || 0;
     const supplyEffective = supplyReady + supplyInProgress;
+    const requiredCount = supplyEffective;
+    const completedCount = supplyReady;
     const demandSupplyGap = Math.max(leadsCount - supplyEffective, 0);
     const coveragePercentage = leadsCount > 0 ? round1((supplyEffective / leadsCount) * 100) : 0;
-    const action = demandTag === 'High'
-      ? (demandSupplyGap > 0 ? 'Recruit Leader NOW' : 'Demand Covered')
-      : demandTag === 'Medium'
-        ? 'Plan Soon'
-        : 'Monitor';
+    const completionPercentage = requiredCount > 0 ? round1((completedCount / requiredCount) * 100) : 0;
+    const priorityTag = requiredCount === 0 || completedCount >= requiredCount
+      ? 'Low'
+      : completionPercentage < 50
+        ? 'High'
+        : 'Medium';
+    const action = `${priorityTag} Priority`;
 
     return {
       activity,
@@ -434,6 +444,11 @@ function computeAnalysisDashboard(rows: any[], supplyRows: LeaderSupplyRow[] = [
       backlog_count: backlogCount,
       coverage_percentage: coveragePercentage,
       demand_supply_gap: demandSupplyGap,
+      required_count: requiredCount,
+      completed_count: completedCount,
+      completion_percentage: completionPercentage,
+      priority_tag: priorityTag,
+      potential_leads: potentialLeadCounts.get(activity) || 0,
     };
   });
 
@@ -512,8 +527,9 @@ function computeAnalysisDashboard(rows: any[], supplyRows: LeaderSupplyRow[] = [
   const lowestDemandActivity = activityBreakdown[activityBreakdown.length - 1]?.activity || 'N/A';
   const topCity = cityBreakdown[0]?.city || 'N/A';
   const weakestCity = cityBreakdown[cityBreakdown.length - 1]?.city || 'N/A';
-  const largestGapActivity = [...activityBreakdown].sort((a, b) => b.demand_supply_gap - a.demand_supply_gap)[0];
+  const largestPotentialLeadActivity = [...activityBreakdown].sort((a, b) => b.potential_leads - a.potential_leads)[0];
   const totalSupplyEffective = totalSupplyReady + totalSupplyInProgress;
+  const totalPotentialLeads = [...potentialLeadCounts.values()].reduce((sum, count) => sum + count, 0);
   const totalGap = Math.max(totalLeads - totalSupplyEffective, 0);
   const readyOnlyGap = Math.max(totalLeads - totalSupplyReady, 0);
   const overallCoverage = totalLeads > 0 ? round1((totalSupplyEffective / totalLeads) * 100) : 0;
@@ -530,6 +546,7 @@ function computeAnalysisDashboard(rows: any[], supplyRows: LeaderSupplyRow[] = [
       total_supply_in_progress: totalSupplyInProgress,
       total_supply_effective: totalSupplyEffective,
       total_supply_backlog: totalSupplyBacklog,
+      total_potential_leads: totalPotentialLeads,
       total_gap: totalGap,
       ready_only_gap: readyOnlyGap,
       overall_coverage: overallCoverage,
@@ -539,15 +556,15 @@ function computeAnalysisDashboard(rows: any[], supplyRows: LeaderSupplyRow[] = [
     activity_location_matrix: activityLocationMatrix,
     applying_rate_by_city: applyingRateByCity,
     insights: {
-      highest_demand_activity: `${highestDemandActivity} has the highest demand.`,
-      lowest_demand_activity: `${lowestDemandActivity} currently has the lowest demand.`,
+      highest_demand_activity: `${highestDemandActivity} has the highest applicant volume.`,
+      lowest_demand_activity: `${lowestDemandActivity} currently has the lowest applicant volume.`,
       top_city: `${topCity} has the largest lead concentration.`,
       weakest_city: `${weakestCity} has the lowest lead concentration.`,
-      best_combo: `${bestCombo.activity} in ${bestCombo.city} has the highest demand (${bestCombo.leads} leads).`,
-      lowest_combo: `${lowestCombo.activity} in ${lowestCombo.city} has the lowest demand (${lowestCombo.leads} leads).`,
-      largest_gap: largestGapActivity
-        ? `${largestGapActivity.activity} has the largest demand-supply gap (${largestGapActivity.demand_supply_gap}).`
-        : 'No demand-supply gap yet.',
+      best_combo: `${bestCombo.activity} in ${bestCombo.city} has the highest applicant volume (${bestCombo.leads} applicants).`,
+      lowest_combo: `${lowestCombo.activity} in ${lowestCombo.city} has the lowest applicant volume (${lowestCombo.leads} applicants).`,
+      largest_gap: largestPotentialLeadActivity && largestPotentialLeadActivity.potential_leads > 0
+        ? `${largestPotentialLeadActivity.activity} has the largest potential lead pool (${largestPotentialLeadActivity.potential_leads} on hold).`
+        : 'No on-hold potential leads yet.',
     },
   };
 }
@@ -1190,11 +1207,11 @@ router.get('/admin/analytics', async (req: Request, res: Response) => {
   }
 });
 
-// GET /admin/analysis-dashboard — Demand vs supply analysis from live dashboard data
+// GET /admin/analysis-dashboard — Applicant and requirement analysis from live dashboard data
 router.get('/admin/analysis-dashboard', async (req: Request, res: Response) => {
   try {
     const demandResult = await queryProduction(
-      `SELECT city_name, activity_name
+      `SELECT city_name, activity_name, status
        FROM club_application
        WHERE archived = false`
     );
@@ -1239,7 +1256,7 @@ router.get('/admin/analysis-dashboard', async (req: Request, res: Response) => {
 
     try {
       const demandLocal = await queryLocal(
-        `SELECT city, activity
+        `SELECT city, activity, status
          FROM club_applications
          WHERE archived = false`
       );

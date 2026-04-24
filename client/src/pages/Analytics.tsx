@@ -29,6 +29,77 @@ const API_BASE = import.meta.env.VITE_API_URL
 
 const PIE_COLORS = ['#2563eb', '#14b8a6', '#22c55e', '#f59e0b', '#ef4444', '#8b5cf6'];
 
+function toNumber(value: unknown, fallback = 0): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function normalizeAnalysisData(rawData: AnalysisData): AnalysisData {
+  const activityBreakdown = (rawData.activity_breakdown || []).map((row) => {
+    const leads = toNumber(row.leads);
+    const supplyReady = toNumber(row.supply_ready);
+    const supplyInProgress = toNumber(row.supply_in_progress);
+    const supplyEffective = toNumber(row.supply_effective, supplyReady + supplyInProgress);
+    const requiredCount = toNumber(row.required_count, supplyEffective);
+    const completedCount = toNumber(row.completed_count, supplyReady);
+    const potentialLeads = toNumber(row.potential_leads);
+    const completionPercentage = toNumber(
+      row.completion_percentage,
+      requiredCount > 0 ? Math.round((completedCount / requiredCount) * 100) : 0
+    );
+    const priorityTag = row.priority_tag || row.demand_tag || 'Low';
+
+    return {
+      ...row,
+      leads,
+      supply_ready: supplyReady,
+      supply_in_progress: supplyInProgress,
+      supply_effective: supplyEffective,
+      backlog_count: toNumber(row.backlog_count),
+      coverage_percentage: toNumber(row.coverage_percentage),
+      demand_supply_gap: toNumber(row.demand_supply_gap, Math.max(leads - supplyEffective, 0)),
+      required_count: requiredCount,
+      completed_count: completedCount,
+      completion_percentage: completionPercentage,
+      priority_tag: priorityTag,
+      potential_leads: potentialLeads,
+    };
+  });
+
+  const cityBreakdown = (rawData.city_breakdown || []).map((row) => ({
+    ...row,
+    leads: toNumber(row.leads),
+    percentage: toNumber(row.percentage),
+    sub_area_breakdown: Array.isArray(row.sub_area_breakdown) ? row.sub_area_breakdown : [],
+  }));
+
+  const totalDemand = toNumber(rawData.demand_supply_summary?.total_demand, toNumber(rawData.total_leads));
+  const totalSupplyReady = toNumber(rawData.demand_supply_summary?.total_supply_ready);
+  const totalSupplyInProgress = toNumber(rawData.demand_supply_summary?.total_supply_in_progress);
+  const totalSupplyEffective = toNumber(
+    rawData.demand_supply_summary?.total_supply_effective,
+    totalSupplyReady + totalSupplyInProgress
+  );
+
+  return {
+    ...rawData,
+    activity_breakdown: activityBreakdown,
+    city_breakdown: cityBreakdown,
+    demand_supply_summary: {
+      ...rawData.demand_supply_summary,
+      total_demand: totalDemand,
+      total_supply_ready: totalSupplyReady,
+      total_supply_in_progress: totalSupplyInProgress,
+      total_supply_effective: totalSupplyEffective,
+      total_supply_backlog: toNumber(rawData.demand_supply_summary?.total_supply_backlog),
+      total_potential_leads: toNumber(rawData.demand_supply_summary?.total_potential_leads),
+      total_gap: toNumber(rawData.demand_supply_summary?.total_gap, Math.max(totalDemand - totalSupplyEffective, 0)),
+      ready_only_gap: toNumber(rawData.demand_supply_summary?.ready_only_gap, Math.max(totalDemand - totalSupplyReady, 0)),
+      overall_coverage: toNumber(rawData.demand_supply_summary?.overall_coverage),
+    },
+  };
+}
+
 interface ActivityBreakdown {
   activity: string;
   leads: number;
@@ -42,6 +113,11 @@ interface ActivityBreakdown {
   backlog_count: number;
   coverage_percentage: number;
   demand_supply_gap: number;
+  required_count: number;
+  completed_count: number;
+  completion_percentage: number;
+  priority_tag: 'High' | 'Medium' | 'Low';
+  potential_leads: number;
 }
 
 interface CityBreakdown {
@@ -68,6 +144,7 @@ interface AnalysisData {
     total_supply_in_progress: number;
     total_supply_effective: number;
     total_supply_backlog: number;
+    total_potential_leads: number;
     total_gap: number;
     ready_only_gap: number;
     overall_coverage: number;
@@ -115,7 +192,7 @@ export function Analytics() {
       const res = await fetch(`${API_BASE}/admin/analysis-dashboard`);
       const payload = await res.json();
       if (payload.success) {
-        setData(payload.data);
+        setData(normalizeAnalysisData(payload.data));
       } else {
         setError(payload.error || 'Failed to load analysis data');
       }
@@ -138,18 +215,25 @@ export function Analytics() {
     [data]
   );
   const priorityQueue = useMemo(
-    () => (data?.activity_breakdown || []).slice().sort((a, b) => b.demand_supply_gap - a.demand_supply_gap).slice(0, 8),
+    () => (data?.activity_breakdown || [])
+      .slice()
+      .sort((a, b) => {
+        const aRemaining = Math.max((a.required_count ?? a.supply_effective) - (a.completed_count ?? a.supply_ready), 0);
+        const bRemaining = Math.max((b.required_count ?? b.supply_effective) - (b.completed_count ?? b.supply_ready), 0);
+        return bRemaining - aRemaining || b.potential_leads - a.potential_leads;
+      })
+      .slice(0, 8),
     [data]
   );
-  const topGapActivities = useMemo(
+  const topPriorityActivities = useMemo(
     () => priorityQueue.slice(0, 6),
     [priorityQueue]
   );
-  const quickWins = useMemo(
+  const potentialLeadRows = useMemo(
     () => (data?.activity_breakdown || [])
-      .filter((row) => row.supply_in_progress > 0 && row.demand_supply_gap > 0)
+      .filter((row) => row.potential_leads > 0)
       .slice()
-      .sort((a, b) => a.demand_supply_gap - b.demand_supply_gap)
+      .sort((a, b) => b.potential_leads - a.potential_leads)
       .slice(0, 5),
     [data]
   );
@@ -185,7 +269,7 @@ export function Analytics() {
           <div>
             <h1 className="text-2xl font-bold text-slate-900">Start Your Club Analysis</h1>
             <p className="text-sm text-slate-600 mt-1">
-              Live demand vs supply from Start Your Club + Leader Requirements
+              Live applicant volume, requirement completion, and potential lead pool
             </p>
           </div>
           <button
@@ -200,7 +284,7 @@ export function Analytics() {
         {othersDemand && (
           <div className="mt-3 text-xs text-slate-600">
             <span className="font-semibold text-slate-700">Classification watch:</span>{' '}
-            `Others` has {othersDemand.leads} leads ({othersDemand.percentage}% of total demand).
+            `Others` has {othersDemand.leads} applicants ({othersDemand.percentage}% of total applicants).
           </div>
         )}
       </div>
@@ -213,27 +297,27 @@ export function Analytics() {
       )}
 
       <div className="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-6 gap-4">
-        <StatCard title="Total Demand" value={String(data.demand_supply_summary.total_demand)} icon={<Users className="h-4 w-4 text-blue-600" />} />
-        <StatCard title="Ready Supply" value={String(data.demand_supply_summary.total_supply_ready)} icon={<CheckCircle2 className="h-4 w-4 text-emerald-600" />} />
-        <StatCard title="In Progress" value={String(data.demand_supply_summary.total_supply_in_progress)} icon={<Clock3 className="h-4 w-4 text-amber-600" />} />
-        <StatCard title="Effective Supply" value={String(data.demand_supply_summary.total_supply_effective)} icon={<TrendingUp className="h-4 w-4 text-indigo-600" />} />
-        <StatCard title="Current Gap" value={String(data.demand_supply_summary.total_gap)} icon={<Target className="h-4 w-4 text-rose-600" />} />
+        <StatCard title="No. of Applicants" value={String(data.demand_supply_summary.total_demand)} icon={<Users className="h-4 w-4 text-blue-600" />} />
+        <StatCard title="Required" value={String(data.demand_supply_summary.total_supply_effective)} icon={<Target className="h-4 w-4 text-indigo-600" />} />
+        <StatCard title="Completed" value={String(data.demand_supply_summary.total_supply_ready)} icon={<CheckCircle2 className="h-4 w-4 text-emerald-600" />} />
+        <StatCard title="Potential Leads" value={String(data.demand_supply_summary.total_potential_leads || 0)} icon={<Clock3 className="h-4 w-4 text-amber-600" />} />
+        <StatCard title="Completion" value={`${data.demand_supply_summary.total_supply_effective > 0 ? Math.round((data.demand_supply_summary.total_supply_ready / data.demand_supply_summary.total_supply_effective) * 100) : 0}%`} icon={<TrendingUp className="h-4 w-4 text-indigo-600" />} />
         <StatCard title="Coverage" value={`${data.demand_supply_summary.overall_coverage}%`} icon={<BarChart3 className="h-4 w-4 text-sky-600" />} />
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
         <div className="bg-white border border-slate-200 rounded-xl p-4">
-          <h2 className="text-sm font-semibold text-slate-700 mb-3">Demand vs Effective Supply (Top Gaps)</h2>
+          <h2 className="text-sm font-semibold text-slate-700 mb-3">Applicants vs Required (Top Priorities)</h2>
           <div className="h-80">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={topGapActivities}>
+              <BarChart data={topPriorityActivities}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} />
                 <XAxis dataKey="activity" tick={{ fontSize: 11 }} interval={0} angle={-20} textAnchor="end" height={70} />
                 <YAxis allowDecimals={false} />
                 <Tooltip />
                 <Legend />
-                <Bar dataKey="leads" fill="#4f46e5" name="Demand" radius={[4, 4, 0, 0]} />
-                <Bar dataKey="supply_effective" fill="#0ea5e9" name="Effective Supply" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="leads" fill="#4f46e5" name="No. of Applicants" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="required_count" fill="#0ea5e9" name="Required" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -259,61 +343,66 @@ export function Analytics() {
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
         <div className="xl:col-span-2 bg-white border border-slate-200 rounded-xl overflow-hidden">
           <div className="px-4 py-3 border-b border-slate-100">
-            <h2 className="text-sm font-semibold text-slate-700">Demand vs Supply Action Panel</h2>
+            <h2 className="text-sm font-semibold text-slate-700">Applicant Requirement Priority Panel</h2>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="bg-slate-50">
                   <th className="px-4 py-2 text-left text-slate-600">Activity</th>
-                  <th className="px-3 py-2 text-right text-slate-600">Demand</th>
-                  <th className="px-3 py-2 text-right text-slate-600">Ready</th>
-                  <th className="px-3 py-2 text-right text-slate-600">In Prog.</th>
-                  <th className="px-3 py-2 text-right text-slate-600">Effective</th>
-                  <th className="px-3 py-2 text-right text-slate-600">Gap</th>
-                  <th className="px-3 py-2 text-right text-slate-600">Coverage</th>
-                  <th className="px-4 py-2 text-left text-slate-600">Action</th>
+                  <th className="px-3 py-2 text-right text-slate-600">No. of Applicants</th>
+                  <th className="px-3 py-2 text-right text-slate-600">Required</th>
+                  <th className="px-3 py-2 text-right text-slate-600">Completed</th>
+                  <th className="px-3 py-2 text-right text-slate-600">Potential Leads</th>
+                  <th className="px-3 py-2 text-right text-slate-600">Completion</th>
+                  <th className="px-4 py-2 text-left text-slate-600">Priority</th>
                 </tr>
               </thead>
               <tbody>
-                {data.activity_breakdown.map((row) => (
-                  <tr key={row.activity} className="border-t border-slate-100">
-                    <td className="px-4 py-2 font-medium text-slate-800">{row.activity}</td>
-                    <td className="px-3 py-2 text-right text-slate-700">{row.leads}</td>
-                    <td className="px-3 py-2 text-right text-slate-700">{row.supply_ready}</td>
-                    <td className="px-3 py-2 text-right text-slate-700">{row.supply_in_progress}</td>
-                    <td className="px-3 py-2 text-right text-slate-700">{row.supply_effective}</td>
-                    <td className="px-3 py-2 text-right font-semibold text-slate-800">{row.demand_supply_gap}</td>
-                    <td className="px-3 py-2 text-right text-slate-700">{row.coverage_percentage}%</td>
-                    <td className="px-4 py-2">
-                      <span className={`px-2 py-0.5 rounded-full text-xs border ${
-                        row.demand_tag === 'High'
-                          ? 'bg-red-50 text-red-700 border-red-200'
-                          : row.demand_tag === 'Medium'
-                            ? 'bg-amber-50 text-amber-700 border-amber-200'
-                            : 'bg-slate-50 text-slate-600 border-slate-200'
-                      }`}>
-                        {row.action}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
+                {data.activity_breakdown.map((row) => {
+                  const priority = row.priority_tag || row.demand_tag;
+                  const required = row.required_count ?? row.supply_effective;
+                  const completed = row.completed_count ?? row.supply_ready;
+                  const completion = row.completion_percentage ?? (required > 0 ? Math.round((completed / required) * 100) : 0);
+
+                  return (
+                    <tr key={row.activity} className="border-t border-slate-100">
+                      <td className="px-4 py-2 font-medium text-slate-800">{row.activity}</td>
+                      <td className="px-3 py-2 text-right text-slate-700">{row.leads}</td>
+                      <td className="px-3 py-2 text-right text-slate-700">{required}</td>
+                      <td className="px-3 py-2 text-right text-slate-700">{completed}</td>
+                      <td className="px-3 py-2 text-right font-semibold text-slate-800">{row.potential_leads || 0}</td>
+                      <td className="px-3 py-2 text-right text-slate-700">{completion}%</td>
+                      <td className="px-4 py-2">
+                        <span className={`px-2 py-0.5 rounded-full text-xs border ${
+                          priority === 'High'
+                            ? 'bg-red-50 text-red-700 border-red-200'
+                            : priority === 'Medium'
+                              ? 'bg-amber-50 text-amber-700 border-amber-200'
+                              : 'bg-slate-50 text-slate-600 border-slate-200'
+                        }`}>
+                          {priority} Priority
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
         </div>
 
         <div className="bg-white border border-slate-200 rounded-xl p-4">
-          <h2 className="text-sm font-semibold text-slate-700 mb-3">Quick Wins</h2>
+          <h2 className="text-sm font-semibold text-slate-700 mb-3">Potential Leads on Hold</h2>
           <div className="space-y-2">
-            {quickWins.length === 0 && (
-              <p className="text-xs text-slate-500">No immediate in-progress quick wins right now.</p>
+            {potentialLeadRows.length === 0 && (
+              <p className="text-xs text-slate-500">No on-hold potential leads right now.</p>
             )}
-            {quickWins.map((row) => (
+            {potentialLeadRows.map((row) => (
               <div key={row.activity} className="border border-emerald-100 bg-emerald-50/40 rounded-lg p-2.5">
                 <div className="text-sm font-semibold text-slate-800">{row.activity}</div>
                 <div className="text-xs text-slate-600 mt-1">
-                  In progress: {row.supply_in_progress} · Remaining gap: {row.demand_supply_gap} · Coverage: {row.coverage_percentage}%
+                  Potential leads: {row.potential_leads} · Required: {row.required_count ?? row.supply_effective} · Completed: {row.completed_count ?? row.supply_ready}
                 </div>
               </div>
             ))}
@@ -324,29 +413,37 @@ export function Analytics() {
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
         <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
           <div className="px-4 py-3 border-b border-slate-100">
-            <h2 className="text-sm font-semibold text-slate-700">Priority Queue (Largest Gaps)</h2>
+            <h2 className="text-sm font-semibold text-slate-700">Priority Queue (Required vs Completed)</h2>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="bg-slate-50">
                   <th className="px-4 py-2 text-left text-slate-600">Activity</th>
-                  <th className="px-3 py-2 text-right text-slate-600">Gap</th>
-                  <th className="px-3 py-2 text-right text-slate-600">Backlog</th>
+                  <th className="px-3 py-2 text-right text-slate-600">Required</th>
+                  <th className="px-3 py-2 text-right text-slate-600">Completed</th>
+                  <th className="px-3 py-2 text-right text-slate-600">Potential Leads</th>
                   <th className="px-4 py-2 text-left text-slate-600">Focus</th>
                 </tr>
               </thead>
               <tbody>
-                {priorityQueue.map((row) => (
-                  <tr key={`priority-${row.activity}`} className="border-t border-slate-100">
-                    <td className="px-4 py-2 font-medium text-slate-800">{row.activity}</td>
-                    <td className="px-3 py-2 text-right text-slate-700">{row.demand_supply_gap}</td>
-                    <td className="px-3 py-2 text-right text-slate-700">{row.backlog_count}</td>
-                    <td className="px-4 py-2 text-xs text-slate-600">
-                      {row.demand_supply_gap > 0 ? 'Move backlog to in-progress and add hiring bandwidth' : 'Demand covered'}
-                    </td>
-                  </tr>
-                ))}
+                {priorityQueue.map((row) => {
+                  const required = row.required_count ?? row.supply_effective;
+                  const completed = row.completed_count ?? row.supply_ready;
+                  const remaining = Math.max(required - completed, 0);
+
+                  return (
+                    <tr key={`priority-${row.activity}`} className="border-t border-slate-100">
+                      <td className="px-4 py-2 font-medium text-slate-800">{row.activity}</td>
+                      <td className="px-3 py-2 text-right text-slate-700">{required}</td>
+                      <td className="px-3 py-2 text-right text-slate-700">{completed}</td>
+                      <td className="px-3 py-2 text-right text-slate-700">{row.potential_leads || 0}</td>
+                      <td className="px-4 py-2 text-xs text-slate-600">
+                        {remaining > 0 ? `${remaining} requirement${remaining === 1 ? '' : 's'} still open` : 'Requirement completed'}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -391,7 +488,7 @@ export function Analytics() {
       </div>
 
       <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs text-slate-600">
-        Gap formula: `Demand - (Ready + In Progress)`. Ready-only gap right now: {data.demand_supply_summary.ready_only_gap}.
+        Priority is based on completion: `Completed / Required`. Potential leads are applications currently on hold.
       </div>
     </div>
   );
