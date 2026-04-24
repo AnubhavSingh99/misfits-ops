@@ -1815,6 +1815,7 @@ router.patch('/admin/:id/status', async (req: Request, res: Response) => {
     if (appResult.rows.length === 0) {
       return res.status(404).json({ success: false, error: 'Application not found' });
     }
+    const currentApp = appResult.rows[0];
 
     // Map target status to the appropriate gRPC call
     const statusToGrpc: Record<string, { method: string; data: any }> = {
@@ -1827,9 +1828,23 @@ router.patch('/admin/:id/status', async (req: Request, res: Response) => {
 
     const grpcCall = statusToGrpc[to_status];
     if (grpcCall) {
-      await callGrpc('SuperAdminService', grpcCall.method, grpcCall.data);
-      if (to_status === 'REJECTED' && normalizedRejection.note) {
-        await appendRejectionNote(parseInt(id), normalizedRejection.note);
+      try {
+        await callGrpc('SuperAdminService', grpcCall.method, grpcCall.data);
+        if (to_status === 'REJECTED' && normalizedRejection.note) {
+          await appendRejectionNote(parseInt(id), normalizedRejection.note);
+        }
+      } catch (grpcError: any) {
+        // Interview-stage hold is supported by the upstream status patch even when review gRPC rejects it.
+        if (to_status !== 'ON_HOLD') {
+          throw grpcError;
+        }
+        logger.warn('ON_HOLD gRPC transition failed, falling back to direct status patch:', grpcError?.message || grpcError);
+        const apiRes = await misfitsApi('PATCH', `/start-your-club/admin/${id}/status`, { status: to_status });
+        if (!apiRes.ok) {
+          const fallbackError = apiRes.error || apiRes.data?.message || grpcError?.message;
+          const bestError = fallbackError === 'fetch failed' ? (grpcError?.message || fallbackError) : fallbackError;
+          return res.status(apiRes.status || 500).json({ success: false, error: bestError });
+        }
       }
     } else {
       // Fallback: use the misfitsApi for statuses not mapped to gRPC
@@ -2075,7 +2090,9 @@ router.patch('/admin/:id/reject', async (req: Request, res: Response) => {
         logger.warn('Review-on-hold failed, falling back to direct status patch:', holdErr.message);
         const apiRes = await misfitsApi('PATCH', `/start-your-club/admin/${id}/status`, { status: 'ON_HOLD' });
         if (!apiRes.ok) {
-          return res.status(apiRes.status || 500).json({ success: false, error: apiRes.error || apiRes.data?.message || holdErr.message });
+          const fallbackError = apiRes.error || apiRes.data?.message || holdErr.message;
+          const bestError = fallbackError === 'fetch failed' ? (holdErr.message || fallbackError) : fallbackError;
+          return res.status(apiRes.status || 500).json({ success: false, error: bestError });
         }
       }
 

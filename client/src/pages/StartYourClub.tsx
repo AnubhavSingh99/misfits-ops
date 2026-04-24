@@ -43,9 +43,9 @@ const STATUS_CONFIG: Record<string, { label: string; shortLabel: string; badgeCl
 const SECTIONS = [
   { id: 'followup', label: 'Follow Up', icon: PhoneCall, statuses: ['ACTIVE', 'ABANDONED'] },
   { id: 'submitted', label: 'Submitted', icon: ClipboardList, statuses: ['SUBMITTED', 'UNDER_REVIEW'] },
-  { id: 'interview', label: 'Interview Phase', icon: Calendar, statuses: ['INTERVIEW_PENDING', 'INTERVIEW_SCHEDULED', 'INTERVIEW_DONE'] },
+  { id: 'interview', label: 'Interview Phase', icon: Calendar, statuses: ['INTERVIEW_PENDING', 'INTERVIEW_SCHEDULED', 'ON_HOLD', 'INTERVIEW_DONE'] },
   { id: 'selected', label: 'Selected', icon: CheckCircle, statuses: ['SELECTED', 'CLUB_CREATED'] },
-  { id: 'dropped', label: 'Dropped', icon: UserX, statuses: ['NOT_INTERESTED', 'ON_HOLD', 'REJECTED'] },
+  { id: 'dropped', label: 'Dropped', icon: UserX, statuses: ['NOT_INTERESTED', 'REJECTED'] },
 ];
 
 // Subsections per tab for structured hierarchy display
@@ -82,6 +82,8 @@ const SECTION_SUBSECTIONS: Record<string, SubsectionConfig[]> = {
       filter: (app: Application) => app.status === 'INTERVIEW_PENDING' },
     { id: 'scheduled', label: 'Scheduled', borderClass: 'border-l-indigo-400', bgClass: 'bg-indigo-50/60', headerClass: 'text-indigo-700', countClass: 'bg-indigo-100 text-indigo-700',
       filter: (app: Application) => app.status === 'INTERVIEW_SCHEDULED' },
+    { id: 'hold', label: 'On Hold', borderClass: 'border-l-violet-400', bgClass: 'bg-violet-50/60', headerClass: 'text-violet-700', countClass: 'bg-violet-100 text-violet-700',
+      filter: (app: Application) => app.status === 'ON_HOLD' },
     { id: 'done', label: 'Done', borderClass: 'border-l-indigo-500', bgClass: 'bg-indigo-50/80', headerClass: 'text-indigo-800', countClass: 'bg-indigo-200 text-indigo-800',
       filter: (app: Application) => app.status === 'INTERVIEW_DONE' },
   ],
@@ -98,8 +100,6 @@ const SECTION_SUBSECTIONS: Record<string, SubsectionConfig[]> = {
   dropped: [
     { id: 'not_interested', label: 'Not Interested', borderClass: 'border-l-slate-400', bgClass: 'bg-slate-50/60', headerClass: 'text-slate-600', countClass: 'bg-slate-100 text-slate-600',
       filter: (app: Application) => app.status === 'NOT_INTERESTED' },
-    { id: 'on_hold', label: 'On Hold', borderClass: 'border-l-violet-400', bgClass: 'bg-violet-50/60', headerClass: 'text-violet-700', countClass: 'bg-violet-100 text-violet-700',
-      filter: (app: Application) => app.status === 'ON_HOLD' },
     { id: 'rejected_screening', label: 'Rejected (Screening)', borderClass: 'border-l-red-400', bgClass: 'bg-red-50/60', headerClass: 'text-red-700', countClass: 'bg-red-100 text-red-700',
       filter: (app: Application) => app.status === 'REJECTED' && ['SUBMITTED', 'UNDER_REVIEW', 'ON_HOLD'].includes(app.rejected_from_status || '') },
     { id: 'rejected_interview', label: 'Rejected (Interview)', borderClass: 'border-l-orange-400', bgClass: 'bg-orange-50/60', headerClass: 'text-orange-700', countClass: 'bg-orange-100 text-orange-700',
@@ -113,9 +113,9 @@ const SECTION_SUBSECTIONS: Record<string, SubsectionConfig[]> = {
 const SUBSECTION_TO_STATUSES: Record<string, Record<string, string[]>> = {
   followup: { active: ['ACTIVE'], screening: ['ABANDONED'], activity: ['ABANDONED'], basics: ['ABANDONED'], login: ['ABANDONED'], story: ['ABANDONED'] },
   submitted: { new: ['SUBMITTED'], under_review: ['UNDER_REVIEW'] },
-  interview: { pending: ['INTERVIEW_PENDING'], scheduled: ['INTERVIEW_SCHEDULED'], done: ['INTERVIEW_DONE'] },
+  interview: { pending: ['INTERVIEW_PENDING'], scheduled: ['INTERVIEW_SCHEDULED'], hold: ['ON_HOLD'], done: ['INTERVIEW_DONE'] },
   selected: { selected: ['SELECTED'], onboarded: ['CLUB_CREATED'], onboarded_incomplete: ['CLUB_CREATED'], onboarded_complete: ['CLUB_CREATED'] },
-  dropped: { not_interested: ['NOT_INTERESTED'], on_hold: ['ON_HOLD'], rejected_screening: ['REJECTED'], rejected_interview: ['REJECTED'], rejected_other: ['REJECTED'] },
+  dropped: { not_interested: ['NOT_INTERESTED'], rejected_screening: ['REJECTED'], rejected_interview: ['REJECTED'], rejected_other: ['REJECTED'] },
 };
 
 // Reverse lookup: status → subsection (returns null if ambiguous)
@@ -661,7 +661,25 @@ function LeadRow({
       method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to_status: toStatus }),
     });
     const data = await res.json();
-    if (data.success) { refetchDetail(); onRefresh(); } else alert(data.error);
+    if (data.success) {
+      refetchDetail();
+      onRefresh();
+      return;
+    }
+
+    const rawError = String(data.error || 'Action failed');
+    const friendlyError = rawError.includes('INTERVIEW_PENDING -> ON_HOLD')
+      ? 'Interview leads cannot be moved to On Hold yet because the upstream Misfits workflow still blocks that transition.'
+      : rawError;
+    alert(friendlyError);
+  };
+
+  const handleInterviewHold = async () => {
+    if (!confirm('Move this lead to On Hold? They will appear in the On Hold section.')) return;
+    resetRejectForm();
+    resetInterviewNotScheduledForm();
+    resetAddCommentForm();
+    await handleStatusTransition('ON_HOLD');
   };
 
   const handleReject = async () => {
@@ -1472,6 +1490,12 @@ function LeadRow({
                               </div>
                             </div>
                           )}
+                          <button
+                            onClick={handleInterviewHold}
+                            className="w-full py-2 text-xs font-medium text-violet-700 bg-violet-50 border border-violet-200 rounded-lg hover:bg-violet-100 flex items-center justify-center gap-1.5"
+                          >
+                            <PauseCircle className="h-3.5 w-3.5" /> Hold Interview
+                          </button>
                           {!showAddCommentForm ? (
                             <button
                               onClick={() => {
@@ -1542,6 +1566,12 @@ function LeadRow({
                                   <RotateCcw className="h-3 w-3" /> Reschedule
                                 </button>
                               </div>
+                              <button
+                                onClick={handleInterviewHold}
+                                className="w-full py-2 text-xs font-medium text-violet-700 bg-violet-50 border border-violet-200 rounded-lg hover:bg-violet-100 flex items-center justify-center gap-1.5"
+                              >
+                                <PauseCircle className="h-3.5 w-3.5" /> Hold Interview
+                              </button>
                               {!showAddCommentForm ? (
                                 <button
                                   onClick={() => {
