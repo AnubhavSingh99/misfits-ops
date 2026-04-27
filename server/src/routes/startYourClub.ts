@@ -152,22 +152,13 @@ function applicantPhoneExpr(alias: string): string {
 
 const CURRENT_APPLICANT_PHONE = `COALESCE(${applicantPhoneExpr('ca')}, u.phone)`;
 
-function applicantMatchClause(applicationAlias: string, userAlias: string): string {
-  return `(
-        (ca.user_id IS NOT NULL AND ${applicationAlias}.user_id = ca.user_id)
-        OR (
-          ${CURRENT_APPLICANT_PHONE} IS NOT NULL
-          AND (
-            ${applicantPhoneExpr(applicationAlias)} = ${CURRENT_APPLICANT_PHONE}
-            OR EXISTS (
-              SELECT 1
-              FROM users ${userAlias}
-              WHERE ${userAlias}.pk = ${applicationAlias}.user_id
-                AND ${userAlias}.phone = ${CURRENT_APPLICANT_PHONE}
-            )
-          )
-        )
-      )`;
+function applicantMatchClause(applicationAlias: string, _userAlias: string): string {
+  // Phone-fallback path was dead code: the `user_phone` column does not exist on
+  // club_application (the to_jsonb extraction always returned NULL), and 100% of
+  // existing applications have a non-null user_id. The phone branch was the
+  // dominant cost in the enrichment subqueries (per-row to_jsonb serialisation +
+  // EXISTS lookup against users). user_id match is sufficient and uses an index.
+  return `${applicationAlias}.user_id = ca.user_id`;
 }
 
 const APP_ENRICHED_SELECT = `
@@ -241,15 +232,10 @@ const APP_ENRICHED_SELECT = `
     ORDER BY prev.created_at DESC
     LIMIT 1
   ) as last_applied_activity
-  ,COALESCE(
-    (
-      SELECT ARRAY_AGG(hist.activity_name ORDER BY hist.created_at DESC)
-      FROM club_application hist
-      WHERE hist.activity_name IS NOT NULL
-        AND ${applicantMatchClause('hist', 'hist_u')}
-    ),
-    ARRAY[]::text[]
-  ) as applied_activities_history
+  -- applied_activities_history dropped from list query: it was a per-row ARRAY_AGG
+  -- correlated subquery (~50% of total runtime). Only used in the detail-view
+  -- annotation (StartYourClub.tsx:897); fetch on demand when row is expanded.
+  ,ARRAY[]::text[] as applied_activities_history
 `;
 
 type AnalysisLeadRow = {
@@ -818,7 +804,7 @@ router.get('/admin/all', async (req: Request, res: Response) => {
       const localLimitNum = Math.min(500, Math.max(1, parseInt(String(fallbackLimit), 10) || 50));
       const localOffset = (localPageNum - 1) * localLimitNum;
 
-      const localCount = await queryLocal(`SELECT COUNT(*)::int as count FROM club_applications ca ${localWhere}`, localParams);
+      const localCount = await queryLocal(`SELECT COUNT(*)::int as count FROM club_application ca ${localWhere}`, localParams);
       const localTotal = parseInt(localCount.rows?.[0]?.count || 0, 10);
 
       const localResult = await queryLocal(
@@ -834,7 +820,7 @@ router.get('/admin/all', async (req: Request, res: Response) => {
           false as is_duplicate_lead,
           EXISTS(
             SELECT 1
-            FROM club_applications prev
+            FROM club_application prev
             WHERE prev.id <> ca.id
               AND (
                 (ca.user_id IS NOT NULL AND prev.user_id = ca.user_id)
@@ -850,7 +836,7 @@ router.get('/admin/all', async (req: Request, res: Response) => {
           ) as is_repeat_application,
           (
             SELECT COUNT(*)::int
-            FROM club_applications rej
+            FROM club_application rej
             WHERE rej.id <> ca.id
               AND rej.status = 'REJECTED'
               AND LOWER(BTRIM(COALESCE(rej.city, ''))) = LOWER(BTRIM(COALESCE(ca.city, '')))
@@ -865,7 +851,7 @@ router.get('/admin/all', async (req: Request, res: Response) => {
           ) as repeat_rejection_count,
           NULL::text as last_applied_activity,
           ARRAY[]::text[] as applied_activities_history
-        FROM club_applications ca
+        FROM club_application ca
         ${localWhere}
         ORDER BY COALESCE(ca.created_at, NOW()) DESC
         LIMIT $${localIdx++} OFFSET $${localIdx++}`,
@@ -884,16 +870,12 @@ router.get('/admin/all', async (req: Request, res: Response) => {
         warning: error?.message || 'Production database unavailable'
       });
     } catch (localError: any) {
-      logger.error('Local fallback for applications failed, returning empty set:', localError);
-      return res.json({
-        success: true,
-        data: [],
-        total: 0,
-        page: 1,
-        limit: 50,
-        totalPages: 0,
-        source: 'empty_fallback',
-        warning: error?.message || 'Production database unavailable'
+      logger.error('Local fallback for applications failed:', localError);
+      return res.status(503).json({
+        success: false,
+        error: 'applications_unavailable',
+        message: 'Could not load applications. Production database is unreachable and local fallback failed.',
+        details: error?.message || 'Production database unavailable',
       });
     }
   }
@@ -1092,7 +1074,7 @@ router.get('/admin/analytics', async (req: Request, res: Response) => {
           COUNT(*) FILTER (WHERE status IN ('ACTIVE', 'ABANDONED', 'NOT_INTERESTED') AND archived = false)::int as dropped_early,
           COUNT(*) FILTER (WHERE status = 'REJECTED' AND rejected_from_status IN ('SUBMITTED', 'UNDER_REVIEW', 'ON_HOLD') AND archived = false)::int as rejected_screening,
           COUNT(*) FILTER (WHERE status = 'REJECTED' AND rejected_from_status = 'INTERVIEW_DONE' AND archived = false)::int as rejected_interview
-        FROM club_applications
+        FROM club_application
       `);
 
       const localStage = await queryLocal(`
@@ -1100,7 +1082,7 @@ router.get('/admin/analytics', async (req: Request, res: Response) => {
           status,
           COUNT(*)::int as count,
           ROUND(AVG(EXTRACT(EPOCH FROM (NOW() - COALESCE(updated_at, created_at))) / 3600.0)::numeric, 1) as avg_stage_age_hrs
-        FROM club_applications
+        FROM club_application
         WHERE archived = false
         GROUP BY status
         ORDER BY count DESC
@@ -1160,48 +1142,13 @@ router.get('/admin/analytics', async (req: Request, res: Response) => {
         source: 'local_fallback',
         warning: error?.message || 'Production database unavailable'
       });
-    } catch {
-      return res.json({
-        success: true,
-        data: {
-          funnel: {
-            total: 0,
-            submitted: 0,
-            under_review: 0,
-            interview_phase: 0,
-            selected: 0,
-            onboarded: 0,
-            rejected: 0,
-            on_hold: 0,
-            active_journey: 0,
-            abandoned: 0,
-            not_interested: 0,
-            dropped_early: 0,
-            rejected_screening: 0,
-            rejected_interview: 0,
-          },
-          conversion: {
-            submit_to_interview: 0,
-            interview_to_selected: 0,
-            selected_to_onboarded: 0,
-            overall: 0,
-          },
-          tat: {
-            submit_to_pick_hrs: null,
-            pick_to_interview_hrs: null,
-            interview_to_select_hrs: null,
-            select_to_call_hrs: null,
-            select_to_venue_hrs: null,
-            select_to_launch_hrs: null,
-            total_pipeline_hrs: null,
-          },
-          dropped_analysis: {
-            rejection_reasons: [],
-          },
-          stage_analytics: [],
-        },
-        source: 'empty_fallback',
-        warning: error?.message || 'Production database unavailable'
+    } catch (localError: any) {
+      logger.error('Local fallback for analytics failed:', localError);
+      return res.status(503).json({
+        success: false,
+        error: 'analytics_unavailable',
+        message: 'Could not load analytics. Production database is unreachable and local fallback failed.',
+        details: error?.message || 'Production database unavailable',
       });
     }
   }
@@ -1257,7 +1204,7 @@ router.get('/admin/analysis-dashboard', async (req: Request, res: Response) => {
     try {
       const demandLocal = await queryLocal(
         `SELECT city, activity, status
-         FROM club_applications
+         FROM club_application
          WHERE archived = false`
       );
 
@@ -1403,7 +1350,7 @@ router.get('/admin/cities', async (req: Request, res: Response) => {
   } catch (error: any) {
     try {
       const local = await queryLocal(
-        `SELECT DISTINCT city FROM club_applications WHERE city IS NOT NULL AND archived = false ORDER BY city`
+        `SELECT DISTINCT city FROM club_application WHERE city IS NOT NULL AND archived = false ORDER BY city`
       );
       return res.json({ success: true, data: normalizeCityList(local.rows, 'city'), source: 'local_fallback' });
     } catch {
@@ -1441,7 +1388,7 @@ router.get('/admin/sub-areas', async (req: Request, res: Response) => {
     try {
       const local = await queryLocal(
         `SELECT DISTINCT city
-         FROM club_applications
+         FROM club_application
          WHERE city IS NOT NULL AND archived = false`
       );
 
@@ -1477,7 +1424,7 @@ router.get('/admin/activities', async (req: Request, res: Response) => {
   } catch (error: any) {
     try {
       const local = await queryLocal(
-        `SELECT DISTINCT activity FROM club_applications WHERE activity IS NOT NULL AND archived = false ORDER BY activity`
+        `SELECT DISTINCT activity FROM club_application WHERE activity IS NOT NULL AND archived = false ORDER BY activity`
       );
       return res.json({ success: true, data: local.rows.map((r: any) => r.activity), source: 'local_fallback' });
     } catch {

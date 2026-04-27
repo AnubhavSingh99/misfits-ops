@@ -2630,6 +2630,7 @@ function InfoModal({ onClose }: { onClose: () => void }) {
 // ─── Main Dashboard Component ────────────────────────────────────
 export default function StartYourClub() {
   const [applications, setApplications] = useState<Application[]>([]);
+  const [applicationsError, setApplicationsError] = useState<string | null>(null);
   const [analytics, setAnalytics] = useState<AnalyticsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [total, setTotal] = useState(0);
@@ -2752,7 +2753,10 @@ export default function StartYourClub() {
       params.set('sort', sortField);
       params.set('order', sortDir);
       params.set('page', String(page));
-      params.set('limit', '200');
+      // 50 matches the displayed page size — fetching 200 was forcing the server
+      // to run 7 correlated subqueries per row × 200 rows = 1400 subquery executions
+      // per request. 50 keeps the API in sync with what the UI actually shows.
+      params.set('limit', '50');
 
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 20000);
@@ -2764,9 +2768,15 @@ export default function StartYourClub() {
         setApplications(data.data);
         setTotal(data.total);
         setTotalPages(data.totalPages);
+        setApplicationsError(null);
+      } else {
+        setApplicationsError(data.message || 'Could not load applications.');
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to fetch applications:', err);
+      setApplicationsError(err?.name === 'AbortError'
+        ? 'Request timed out. The server may be overloaded.'
+        : 'Could not load applications.');
     } finally {
       setLoading(false);
     }
@@ -2774,10 +2784,11 @@ export default function StartYourClub() {
 
   const fetchAnalytics = useCallback(async () => {
     try {
-      // Add 5 second timeout to prevent hanging on slow DB queries
+      // Server-side statement_timeout caps queries at 15s, so allow up to 20s here.
+      // Earlier 5s was aborting analytics during normal load → tab counts went to 0.
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 5000);
-      
+      const timeoutId = setTimeout(() => controller.abort(), 20000);
+
       const res = await fetch(`${API_BASE}/admin/analytics`, { signal: controller.signal });
       clearTimeout(timeoutId);
       const data = await res.json();
@@ -3539,6 +3550,14 @@ export default function StartYourClub() {
             <tbody>
               {loading && sectionApps.length === 0 ? (
                 <tr><td colSpan={10} className="text-center py-12 text-slate-400">Loading...</td></tr>
+              ) : applicationsError && sectionApps.length === 0 ? (
+                <tr><td colSpan={10} className="text-center py-12">
+                  <div className="text-red-600 font-medium mb-2">{applicationsError}</div>
+                  <button
+                    onClick={() => fetchApplications()}
+                    className="px-4 py-2 bg-indigo-600 text-white text-sm rounded-md hover:bg-indigo-700"
+                  >Retry</button>
+                </td></tr>
               ) : sectionApps.length === 0 ? (
                 <tr><td colSpan={10} className="text-center py-12 text-slate-400">No applications in this section</td></tr>
               ) : (() => {

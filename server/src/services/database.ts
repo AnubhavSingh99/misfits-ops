@@ -169,6 +169,11 @@ export async function initializeDatabase() {
       max: 20,
       idleTimeoutMillis: 30000,
       connectionTimeoutMillis: 10000,
+      // Server-side query timeout — kills runaway queries (e.g. APP_ENRICHED_SELECT
+      // taking 97s) that would otherwise hold pool slots after the HTTP client
+      // disconnects, eventually saturating the pool. 15s is well above normal but
+      // short enough to recover from a load spike.
+      statement_timeout: 15000,
     });
 
     try {
