@@ -2720,6 +2720,7 @@ export default function StartYourClub() {
     );
   }, [getScheduledCallTimestamp]);
 
+
   // Fetch detail when a scheduled call is expanded
   useEffect(() => {
     if (expandedScheduledId) {
@@ -2743,6 +2744,7 @@ export default function StartYourClub() {
         setScheduledCalls(sortScheduledCalls(
           (data.data as Application[]).filter(a => a.status === 'INTERVIEW_SCHEDULED')
         ));
+
       }
     } catch (err) {
       console.error('Failed to fetch scheduled calls:', err);
@@ -2764,6 +2766,7 @@ export default function StartYourClub() {
 
     return sortScheduledCalls(Array.from(merged.values()));
   }, [applications, scheduledCalls, sortScheduledCalls]);
+
 
   const fetchApplications = useCallback(async () => {
     try {
@@ -3233,6 +3236,7 @@ export default function StartYourClub() {
                 // Group by date
                 const groups: Record<string, Application[]> = {};
                 effectiveScheduledCalls.forEach(app => {
+
                   const hasScheduledTime = Boolean(app.interview_scheduled_at);
                   const d = new Date(getScheduledCallTimestamp(app));
                   const today = new Date();
