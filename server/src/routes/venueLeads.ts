@@ -2,7 +2,7 @@ import { Router } from 'express';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
-import { queryProduction } from '../services/database';
+import { queryProduction, queryProductionWrite } from '../services/database';
 import { logger } from '../utils/logger';
 import { runVmsSync } from './venueRepository';
 
@@ -22,6 +22,81 @@ const upload = multer({ storage, limits: { fileSize: 10 * 1024 * 1024 } });
 const router = Router();
 
 const VALID_STATUSES = ['PENDING', 'APPROVED', 'REJECTED'];
+
+function getVenueLeadWriteError(action: string, error: any): { status: number; message: string } {
+  const message = String(error?.message || '').trim();
+  if (error?.code === '42501' || /not configured/i.test(message)) {
+    return {
+      status: 503,
+      message: message || `Venue lead ${action} is not configured on this server.`,
+    };
+  }
+  return {
+    status: 500,
+    message: message || `Failed to ${action} venue lead`,
+  };
+}
+
+function getVenueLeadApiBaseUrl(): string {
+  const configured = (process.env.MISFITS_API_URL || 'https://prod.misfits.net.in/api/v1').trim();
+  return configured.replace(/\/api\/v1\/?$/, '');
+}
+
+async function parseProxyResponseBody(res: Response): Promise<any> {
+  const contentType = res.headers.get('content-type') || '';
+  if (contentType.includes('application/json')) {
+    return await res.json().catch(() => null);
+  }
+  const text = await res.text().catch(() => '');
+  return text ? { error: text } : null;
+}
+
+function getProxyErrorMessage(payload: any, fallback: string): string {
+  if (typeof payload?.error === 'string' && payload.error.trim()) return payload.error.trim();
+  if (typeof payload?.message === 'string' && payload.message.trim()) return payload.message.trim();
+  return fallback;
+}
+
+async function proxyVenueLeadWrite(method: string, path: string, body?: Record<string, any>) {
+  const apiToken = (process.env.MISFITS_API_TOKEN || '').trim();
+  if (!apiToken) {
+    return {
+      ok: false,
+      status: 500,
+      data: null,
+      error: 'MISFITS_API_TOKEN is not configured. Add MISFITS_API_TOKEN in .env to use venue lead write APIs.',
+    };
+  }
+
+  const url = `${getVenueLeadApiBaseUrl()}${path}`;
+  try {
+    const res = await fetch(url, {
+      method,
+      headers: {
+        'Authorization': `Bearer ${apiToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    const data = await parseProxyResponseBody(res);
+    if (!res.ok) {
+      return {
+        ok: false,
+        status: res.status,
+        data,
+        error: getProxyErrorMessage(data, `Venue lead write failed with HTTP ${res.status}`),
+      };
+    }
+    return { ok: true, status: res.status, data };
+  } catch (error: any) {
+    return {
+      ok: false,
+      status: 500,
+      data: null,
+      error: error?.message || 'Failed to reach venue lead write API',
+    };
+  }
+}
 
 // GET /api/venue-leads - List all venue leads from production DB
 router.get('/', async (req, res) => {
@@ -121,102 +196,26 @@ router.post('/:id/approve', async (req, res) => {
       return res.status(400).json({ success: false, error: 'Lead is not in PENDING status' });
     }
 
-    // Resolve area_id — use text-based matching (city/area tables may not have lat/lng)
-    let areaId: number | null = null;
-
-    if (lead.lat && lead.lng) {
-      // Check if city table has lat/lng columns before attempting coordinate lookup
-      const hasLatLng = await queryProduction(
-        `SELECT 1 FROM information_schema.columns
-         WHERE table_name = 'city' AND column_name = 'lat' LIMIT 1`
-      );
-
-      if (hasLatLng.rows.length > 0) {
-        // Find nearest city by coordinates
-        const cityResult = await queryProduction(
-          `SELECT id FROM city
-           WHERE lat IS NOT NULL AND lng IS NOT NULL
-           ORDER BY (lat - $1)*(lat - $1) + (lng - $2)*(lng - $2)
-           LIMIT 1`,
-          [lead.lat, lead.lng]
-        );
-
-        if (cityResult.rows.length > 0) {
-          const cityId = cityResult.rows[0].id;
-          const areaNameResult = await queryProduction(
-            `SELECT id FROM area WHERE city_id = $1 AND LOWER(name) = LOWER($2) LIMIT 1`,
-            [cityId, lead.area]
-          );
-
-          if (areaNameResult.rows.length > 0) {
-            areaId = areaNameResult.rows[0].id;
-          } else {
-            const areaResult = await queryProduction(
-              `SELECT id FROM area
-               WHERE city_id = $1 AND lat IS NOT NULL AND lng IS NOT NULL
-               ORDER BY (lat - $2)*(lat - $2) + (lng - $3)*(lng - $3)
-               LIMIT 1`,
-              [cityId, lead.lat, lead.lng]
-            );
-            if (areaResult.rows.length > 0) {
-              areaId = areaResult.rows[0].id;
-            }
-          }
-        }
-      }
+    const proxyResult = await proxyVenueLeadWrite('POST', `/api/venue-lead/${id}/approve`);
+    if (!proxyResult.ok) {
+      return res.status(proxyResult.status).json({ success: false, error: proxyResult.error });
     }
 
-    if (!areaId) {
-      // Text-based matching (primary path when city table has no lat/lng)
-      const textResult = await queryProduction(
-        `SELECT a.id FROM area a
-         JOIN city c ON a.city_id = c.id
-         WHERE LOWER(c.name) = LOWER($1) AND LOWER(a.name) = LOWER($2)
-         LIMIT 1`,
-        [lead.city, lead.area]
-      );
-      if (textResult.rows.length > 0) {
-        areaId = textResult.rows[0].id;
-      }
-    }
-
-    if (!areaId) {
-      return res.status(400).json({
-        success: false,
-        error: `Could not resolve area for city "${lead.city}", area "${lead.area}". Please check the lead data.`
-      });
-    }
-
-    // Use lead image or default placeholder (file_id 350)
-    const imageFileId = lead.image || 350;
-
-    // Build venue_info with source tag
-    const venueInfo = { ...(lead.venue_info ?? {}), source: 'venue_lead', venue_lead_id: parseInt(id) };
-
-    // Create location
-    const locationResult = await queryProduction(
-      `INSERT INTO location (name, url, image, area_id, lat, lng, created_by, venue_info)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-       RETURNING id`,
-      [lead.venue_name, lead.google_maps_link, imageFileId, areaId, lead.lat, lead.lng, lead.submitted_by, venueInfo]
-    );
-
-    const locationId = locationResult.rows[0].id;
-
-    // Update venue lead status
-    await queryProduction(
-      `UPDATE venue_lead SET status = 'APPROVED', location_id = $2, updated_at = now() WHERE id = $1 AND status = 'PENDING'`,
-      [id, locationId]
-    );
+    const locationId = proxyResult.data?.location_id;
 
     // Sync new location into venue_repository immediately (fire-and-forget)
     runVmsSync().catch(err => logger.warn('Post-approval VMS sync failed:', err));
 
     logger.info(`Venue lead ${id} approved, location ${locationId} created`);
-    res.json({ success: true, location_id: locationId, message: 'Venue lead approved and location created' });
+    res.json({
+      success: true,
+      location_id: locationId,
+      message: proxyResult.data?.message || 'Venue lead approved and location created',
+    });
   } catch (error: any) {
     logger.error(`Error approving venue lead ${id}:`, error);
-    res.status(500).json({ success: false, error: 'Failed to approve venue lead' });
+    const writeError = getVenueLeadWriteError('approve', error);
+    res.status(writeError.status).json({ success: false, error: writeError.message });
   }
 });
 
@@ -232,20 +231,48 @@ router.post('/', async (req, res) => {
   }
 
   try {
+    const proxyPayload = {
+      venue_name,
+      venue_type: venue_info?.venue_category || '',
+      address: address || '',
+      city: city || '',
+      area: area || '',
+      google_maps_link: google_maps_link || '',
+      lat: lat ?? 0,
+      lng: lng ?? 0,
+      contact_name: contact_name || '',
+      contact_phone: contact_phone || '',
+      amenities: Array.isArray(venue_info?.amenities) ? venue_info.amenities : [],
+      sitting_size: venue_info?.sitting_size || '',
+      notes: notes || '',
+      image_file_id: 0,
+      submitted_by: 0,
+    };
+
+    const proxyResult = await proxyVenueLeadWrite('POST', '/api/venue-lead', proxyPayload);
+    if (!proxyResult.ok) {
+      return res.status(proxyResult.status).json({ success: false, error: proxyResult.error });
+    }
+
+    const createdId = proxyResult.data?.id;
+    if (!createdId) {
+      return res.status(502).json({ success: false, error: 'Venue lead API did not return a lead ID' });
+    }
+
     const result = await queryProduction(
-      `INSERT INTO venue_lead (venue_name, address, city, area, google_maps_link, lat, lng, contact_name, contact_phone, notes, venue_info, status)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'PENDING')
-       RETURNING *`,
-      [venue_name, address || null, city || null, area || null, google_maps_link || null,
-       lat ?? null, lng ?? null, contact_name || null, contact_phone || null,
-       notes ?? null, venue_info ? JSON.stringify(venue_info) : null]
+      `SELECT vl.*, f.s3_url AS image_url
+       FROM venue_lead vl
+       LEFT JOIN file f ON f.id = vl.image
+       WHERE vl.id = $1`,
+      [createdId]
     );
 
     logger.info(`Venue lead created: ${venue_name}`);
     res.json({ success: true, lead: result.rows[0] });
   } catch (error: any) {
     logger.error('Error creating venue lead:', error);
-    res.status(500).json({ success: false, error: 'Failed to create venue lead' });
+    const writeError = getVenueLeadWriteError('create', error);
+    res.status(writeError.status).json({ success: false, error: writeError.message });
   }
 });
 
@@ -262,7 +289,7 @@ router.patch('/:id', async (req, res) => {
   } = req.body;
 
   try {
-    const result = await queryProduction(
+    const result = await queryProductionWrite(
       `UPDATE venue_lead
        SET venue_name = COALESCE($2, venue_name),
            address = COALESCE($3, address),
@@ -291,7 +318,8 @@ router.patch('/:id', async (req, res) => {
     res.json({ success: true, lead: result.rows[0] });
   } catch (error: any) {
     logger.error(`Error updating venue lead ${id}:`, error);
-    res.status(500).json({ success: false, error: 'Failed to update venue lead' });
+    const writeError = getVenueLeadWriteError('update', error);
+    res.status(writeError.status).json({ success: false, error: writeError.message });
   }
 });
 
@@ -311,14 +339,14 @@ router.post('/:id/image', upload.single('image'), async (req, res) => {
     const s3Url = `${baseUrl}/uploads/${fileName}`;
 
     // Insert into file table
-    const fileResult = await queryProduction(
+    const fileResult = await queryProductionWrite(
       `INSERT INTO file (file_name, content_type, s3_url) VALUES ($1, $2, $3) RETURNING id`,
       [fileName, req.file.mimetype, s3Url]
     );
     const fileId = fileResult.rows[0].id;
 
     // Update venue_lead image
-    await queryProduction(
+    await queryProductionWrite(
       `UPDATE venue_lead SET image = $1, updated_at = now() WHERE id = $2`,
       [fileId, id]
     );
@@ -327,7 +355,8 @@ router.post('/:id/image', upload.single('image'), async (req, res) => {
     res.json({ success: true, file_id: fileId, image_url: s3Url });
   } catch (error: any) {
     logger.error(`Error uploading image for venue lead ${id}:`, error);
-    res.status(500).json({ success: false, error: 'Failed to upload image' });
+    const writeError = getVenueLeadWriteError('upload image for', error);
+    res.status(writeError.status).json({ success: false, error: writeError.message });
   }
 });
 
@@ -353,16 +382,17 @@ router.post('/:id/reject', async (req, res) => {
       return res.status(400).json({ success: false, error: 'Lead is not in PENDING status' });
     }
 
-    await queryProduction(
-      `UPDATE venue_lead SET status = 'REJECTED', rejection_reason = $2, updated_at = now() WHERE id = $1 AND status = 'PENDING'`,
-      [id, reason || null]
-    );
+    const proxyResult = await proxyVenueLeadWrite('POST', `/api/venue-lead/${id}/reject`, { reason: reason || '' });
+    if (!proxyResult.ok) {
+      return res.status(proxyResult.status).json({ success: false, error: proxyResult.error });
+    }
 
     logger.info(`Venue lead ${id} rejected`);
-    res.json({ success: true, message: 'Venue lead rejected' });
+    res.json({ success: true, message: proxyResult.data?.message || 'Venue lead rejected' });
   } catch (error: any) {
     logger.error(`Error rejecting venue lead ${id}:`, error);
-    res.status(500).json({ success: false, error: 'Failed to reject venue lead' });
+    const writeError = getVenueLeadWriteError('reject', error);
+    res.status(writeError.status).json({ success: false, error: writeError.message });
   }
 });
 

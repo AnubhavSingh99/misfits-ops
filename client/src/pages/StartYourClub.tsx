@@ -2714,6 +2714,13 @@ export default function StartYourClub() {
     return app.interview_scheduled_at || app.stage_entered_at || app.updated_at || app.created_at;
   }, []);
 
+  const sortScheduledCalls = useCallback((items: Application[]) => {
+    return [...items].sort(
+      (a, b) => new Date(getScheduledCallTimestamp(a)).getTime() - new Date(getScheduledCallTimestamp(b)).getTime()
+    );
+  }, [getScheduledCallTimestamp]);
+
+
   // Fetch detail when a scheduled call is expanded
   useEffect(() => {
     if (expandedScheduledId) {
@@ -2734,16 +2741,32 @@ export default function StartYourClub() {
       const res = await fetch(`${API_BASE}/admin/all?statuses=INTERVIEW_SCHEDULED&sort=created_at&order=desc&page=1&limit=200`);
       const data = await res.json();
       if (data.success) {
-        setScheduledCalls(
-          (data.data as Application[])
-            .filter(a => a.status === 'INTERVIEW_SCHEDULED')
-            .sort((a, b) => new Date(getScheduledCallTimestamp(a)).getTime() - new Date(getScheduledCallTimestamp(b)).getTime())
-        );
+        setScheduledCalls(sortScheduledCalls(
+          (data.data as Application[]).filter(a => a.status === 'INTERVIEW_SCHEDULED')
+        ));
+
       }
     } catch (err) {
       console.error('Failed to fetch scheduled calls:', err);
     }
-  }, [getScheduledCallTimestamp]);
+  }, [sortScheduledCalls]);
+
+  const effectiveScheduledCalls = useMemo(() => {
+    const merged = new Map<string, Application>();
+
+    scheduledCalls.forEach((app) => {
+      merged.set(String(app.id), app);
+    });
+
+    applications
+      .filter((app) => app.status === 'INTERVIEW_SCHEDULED')
+      .forEach((app) => {
+        merged.set(String(app.id), app);
+      });
+
+    return sortScheduledCalls(Array.from(merged.values()));
+  }, [applications, scheduledCalls, sortScheduledCalls]);
+
 
   const fetchApplications = useCallback(async () => {
     try {
@@ -2869,8 +2892,9 @@ export default function StartYourClub() {
     }
   }, []);
 
-  useEffect(() => { fetchApplications(); fetchAnalytics(); fetchFilterOptions(); fetchRatingDimensions(); fetchScheduledCalls(); }, []);
+  useEffect(() => { fetchApplications(); fetchAnalytics(); fetchFilterOptions(); fetchRatingDimensions(); }, []);
   useEffect(() => { fetchApplications(); }, [fetchApplications]);
+  useEffect(() => { fetchScheduledCalls(); }, [fetchScheduledCalls]);
   useEffect(() => {
     if (!cityFilter) {
       setSubAreas([]);
@@ -2886,11 +2910,11 @@ export default function StartYourClub() {
       ? `${import.meta.env.VITE_API_URL}/api/start-club/events`
       : '/api/start-club/events';
     const es = new EventSource(url);
-    es.addEventListener('application_updated', () => { fetchApplications(); fetchAnalytics(); });
+    es.addEventListener('application_updated', () => { fetchApplications(); fetchAnalytics(); fetchScheduledCalls(); });
     es.addEventListener('activity_added', () => {});
-    const poll = setInterval(() => { fetchApplications(); fetchAnalytics(); }, 30000);
+    const poll = setInterval(() => { fetchApplications(); fetchAnalytics(); fetchScheduledCalls(); }, 30000);
     return () => { es.close(); clearInterval(poll); };
-  }, [fetchApplications, fetchAnalytics]);
+  }, [fetchApplications, fetchAnalytics, fetchScheduledCalls]);
 
   const handleRefresh = () => { fetchApplications(); fetchAnalytics(); fetchFilterOptions(); fetchScheduledCalls(); };
 
@@ -3200,18 +3224,19 @@ export default function StartYourClub() {
             <div className="flex items-center gap-2">
               <Phone className="h-4 w-4 text-teal-600" />
               <span className="text-sm font-semibold text-teal-700">Scheduled Calls</span>
-              <span className="bg-teal-600 text-white text-xs font-bold px-2 py-0.5 rounded-full">{scheduledCalls.length}</span>
+              <span className="bg-teal-600 text-white text-xs font-bold px-2 py-0.5 rounded-full">{effectiveScheduledCalls.length}</span>
             </div>
             {scheduledCallsCollapsed ? <ChevronDown className="h-4 w-4 text-teal-500" /> : <ChevronUp className="h-4 w-4 text-teal-500" />}
           </button>
           {!scheduledCallsCollapsed && (
             <div className="p-3 space-y-2">
-              {scheduledCalls.length === 0 ? (
+              {effectiveScheduledCalls.length === 0 ? (
                 <div className="text-center py-4 text-xs text-slate-400">No scheduled calls</div>
               ) : (() => {
                 // Group by date
                 const groups: Record<string, Application[]> = {};
-                scheduledCalls.forEach(app => {
+                effectiveScheduledCalls.forEach(app => {
+
                   const hasScheduledTime = Boolean(app.interview_scheduled_at);
                   const d = new Date(getScheduledCallTimestamp(app));
                   const today = new Date();

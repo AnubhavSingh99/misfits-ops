@@ -7,6 +7,7 @@ import * as net from 'net';
 
 let pool: Pool; // Local operations database
 let prodPool: Pool; // Production database (read-only, direct connection)
+let prodWritePool: Pool | null = null; // Production database (write-capable, optional)
 
 const TUNNEL_CHECK_TIMEOUT_MS = 1500;
 const TUNNEL_READY_RETRIES = 10;
@@ -16,9 +17,18 @@ function getProdDbPort(): number {
   return parseInt(process.env.PROD_DB_PORT || '5432', 10);
 }
 
+function getProdWriteDbPort(): number {
+  return parseInt(process.env.PROD_DB_WRITE_PORT || process.env.PROD_DB_PORT || '5432', 10);
+}
+
 function shouldUseSshTunnel(): boolean {
   const host = (process.env.PROD_DB_HOST || '').trim();
   return ['localhost', '127.0.0.1', '::1'].includes(host) && !!process.env.SSH_HOST && !!process.env.DB_HOST;
+}
+
+function shouldUseSshTunnelForHost(host?: string | null): boolean {
+  const normalizedHost = (host || '').trim();
+  return ['localhost', '127.0.0.1', '::1'].includes(normalizedHost) && !!process.env.SSH_HOST && !!process.env.DB_HOST;
 }
 
 function sleep(ms: number) {
@@ -127,6 +137,27 @@ async function getProductionClient(): Promise<PoolClient> {
   }
 }
 
+async function getProductionWriteClient(): Promise<PoolClient> {
+  if (!prodWritePool) {
+    throw new Error(
+      'Production venue-lead writes are not configured. Set PROD_DB_WRITE_USER and PROD_DB_WRITE_PASSWORD (optionally PROD_DB_WRITE_HOST/PORT/NAME) for approve/reject/edit actions.'
+    );
+  }
+
+  try {
+    return await prodWritePool.connect();
+  } catch (error) {
+    const writeHost = process.env.PROD_DB_WRITE_HOST || process.env.PROD_DB_HOST || 'localhost';
+    const tunnelReady = shouldUseSshTunnelForHost(writeHost) ? await ensureProductionTunnel() : false;
+    if (!tunnelReady) {
+      throw error;
+    }
+
+    logger.warn('Retrying production write DB connection after re-establishing SSH tunnel');
+    return await prodWritePool.connect();
+  }
+}
+
 export async function initializeDatabase() {
   // Initialize local operations database
   pool = new Pool({
@@ -188,6 +219,41 @@ export async function initializeDatabase() {
       // Don't throw - allow server to start without production DB
     }
   }
+
+  const prodWriteUser = (process.env.PROD_DB_WRITE_USER || '').trim();
+  const prodWritePassword = process.env.PROD_DB_WRITE_PASSWORD;
+  if (prodWriteUser && prodWritePassword) {
+    const prodWriteHost = process.env.PROD_DB_WRITE_HOST || process.env.PROD_DB_HOST;
+
+    if (shouldUseSshTunnelForHost(prodWriteHost)) {
+      await ensureProductionTunnel();
+    }
+
+    prodWritePool = new Pool({
+      host: prodWriteHost,
+      port: getProdWriteDbPort(),
+      database: process.env.PROD_DB_WRITE_NAME || process.env.PROD_DB_NAME || 'misfits',
+      user: prodWriteUser,
+      password: prodWritePassword,
+      max: 10,
+      idleTimeoutMillis: 30000,
+      connectionTimeoutMillis: 10000,
+      statement_timeout: 15000,
+    });
+
+    try {
+      const prodWriteClient = await prodWritePool.connect();
+      await prodWriteClient.query('SELECT NOW()');
+      prodWriteClient.release();
+
+      logger.info('Production database write connection established');
+    } catch (error) {
+      logger.error('Production database write connection failed:', error);
+      prodWritePool = null;
+    }
+  } else {
+    logger.warn('Production database write connection not configured; venue lead approve/reject/edit actions will be disabled');
+  }
 }
 
 export async function getClient(): Promise<PoolClient> {
@@ -216,6 +282,16 @@ export async function queryProduction(text: string, params?: any[]) {
   }
 
   const client = await getProductionClient();
+  try {
+    const result = await client.query(text, params);
+    return result;
+  } finally {
+    client.release();
+  }
+}
+
+export async function queryProductionWrite(text: string, params?: any[]) {
+  const client = await getProductionWriteClient();
   try {
     const result = await client.query(text, params);
     return result;
@@ -724,5 +800,13 @@ export async function closeDatabase() {
   if (pool) {
     await pool.end();
     logger.info('Database connection closed');
+  }
+  if (prodPool) {
+    await prodPool.end();
+    logger.info('Production read database connection closed');
+  }
+  if (prodWritePool) {
+    await prodWritePool.end();
+    logger.info('Production write database connection closed');
   }
 }

@@ -31,6 +31,106 @@ const MANUAL_LEAD_TARGET_STATUSES = new Set([
   'INTERVIEW_DONE',
   'SELECTED',
 ]);
+const DEFAULT_MANUAL_LEAD_REVIEWER = 'Manual Lead';
+const DEFAULT_MANUAL_SCREENING_RATINGS = {
+  intention: 3,
+  passion: 3,
+  time_availability: 3,
+  competency: 3,
+  objective: 3,
+};
+const DEFAULT_MANUAL_INTERVIEW_RATINGS = {
+  intention: 3,
+  passion: 3,
+  time_availability: 3,
+  competency: 3,
+  objective: 3,
+};
+
+function extractCreatedApplicationId(payload: any): number | null {
+  const candidates = [payload?.id, payload?.pk, payload?.application_id];
+  for (const candidate of candidates) {
+    const parsed = Number.parseInt(String(candidate ?? ''), 10);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
+}
+
+async function fetchFreshApplicationById(applicationId: number) {
+  const updated = await queryProduction(
+    `SELECT ${APP_ENRICHED_SELECT}
+     FROM club_application ca
+     LEFT JOIN users u ON u.pk = ca.user_id
+     WHERE ca.pk = $1`,
+    [applicationId]
+  );
+  return updated.rows[0] ? mapAppRow(updated.rows[0]) : null;
+}
+
+async function moveManualLeadToTargetStatus(applicationId: number, targetStatus: string, reviewedBy = DEFAULT_MANUAL_LEAD_REVIEWER) {
+  if (targetStatus === 'SUBMITTED') return;
+
+  const sequenceByTarget: Record<string, string[]> = {
+    UNDER_REVIEW: ['UNDER_REVIEW'],
+    INTERVIEW_PENDING: ['UNDER_REVIEW', 'INTERVIEW_PENDING'],
+    INTERVIEW_DONE: ['UNDER_REVIEW', 'INTERVIEW_PENDING', 'INTERVIEW_SCHEDULED', 'INTERVIEW_DONE'],
+    SELECTED: ['UNDER_REVIEW', 'INTERVIEW_PENDING', 'INTERVIEW_SCHEDULED', 'INTERVIEW_DONE', 'SELECTED'],
+  };
+
+  const sequence = sequenceByTarget[targetStatus];
+  if (!sequence) {
+    throw new Error(`Unsupported manual lead target status: ${targetStatus}`);
+  }
+
+  for (const step of sequence) {
+    switch (step) {
+      case 'UNDER_REVIEW':
+        await callGrpc('SuperAdminService', 'StartYourClubPickApplication', { application_id: applicationId });
+        try {
+          await queryLocal(
+            `INSERT INTO syc_reviewers (name, last_used_at) VALUES ($1, NOW())
+             ON CONFLICT (name) DO UPDATE SET last_used_at = NOW()`,
+            [reviewedBy.trim() || DEFAULT_MANUAL_LEAD_REVIEWER]
+          );
+        } catch {
+          // Non-critical autocomplete helper.
+        }
+        break;
+      case 'INTERVIEW_PENDING':
+        await callGrpc('SuperAdminService', 'StartYourClubReviewApplication', {
+          application_id: applicationId,
+          outcome: 1,
+          screening_ratings: DEFAULT_MANUAL_SCREENING_RATINGS,
+          rejection_reason: '',
+        });
+        break;
+      case 'INTERVIEW_SCHEDULED': {
+        const apiRes = await misfitsApi('PATCH', `/start-your-club/admin/${applicationId}/status`, { status: 'INTERVIEW_SCHEDULED' });
+        if (!apiRes.ok) {
+          throw new Error(apiRes.error || apiRes.data?.message || 'Failed to move lead to INTERVIEW_SCHEDULED');
+        }
+        break;
+      }
+      case 'INTERVIEW_DONE': {
+        const apiRes = await misfitsApi('PATCH', `/start-your-club/admin/${applicationId}/status`, { status: 'INTERVIEW_DONE' });
+        if (!apiRes.ok) {
+          throw new Error(apiRes.error || apiRes.data?.message || 'Failed to move lead to INTERVIEW_DONE');
+        }
+        break;
+      }
+      case 'SELECTED':
+        await callGrpc('SuperAdminService', 'StartYourClubSelectApplication', {
+          application_id: applicationId,
+          misfits_pct: 70,
+          leader_pct: 30,
+          interview_ratings: { dimensions: DEFAULT_MANUAL_INTERVIEW_RATINGS },
+        });
+        break;
+      default:
+        throw new Error(`Unsupported manual lead transition step: ${step}`);
+    }
+  }
+}
 
 function normalizeRequestedCity(rawCity?: string | null): string {
   const value = String(rawCity || '').trim();
@@ -1473,7 +1573,7 @@ router.get('/admin/lookup-user', async (req: Request, res: Response) => {
 // POST /admin/create-lead — Create a manual lead (MUST be before /admin/:id)
 router.post('/admin/create-lead', async (req: Request, res: Response) => {
   try {
-    const { user_id, city_name, sub_area, activity_name, name, target_status } = req.body;
+    const { user_id, city_name, sub_area, activity_name, name, target_status, reviewed_by } = req.body;
     const normalizedUserId = Number.parseInt(String(user_id || ''), 10);
     if (!Number.isFinite(normalizedUserId)) {
       return res.status(400).json({ success: false, error: 'user_id is required' });
@@ -1522,25 +1622,9 @@ router.post('/admin/create-lead', async (req: Request, res: Response) => {
       city_name: normalizedCity || '',
       activity_name: activity_name || '',
       name: name || '',
-      status: normalizedTargetStatus,
     };
 
-    let apiRes = await misfitsApi('POST', '/start-your-club/admin/create-lead', createPayload);
-    if (!apiRes.ok) {
-      const serializedError = `${apiRes.error || ''} ${JSON.stringify(apiRes.data || {})}`.toLowerCase();
-      const shouldRetryWithoutStatus =
-        Boolean(createPayload.status) &&
-        (serializedError.includes('validation_error') || serializedError.includes('status'));
-      if (shouldRetryWithoutStatus) {
-        apiRes = await misfitsApi('POST', '/start-your-club/admin/create-lead', {
-          user_id: normalizedUserId,
-          city_name: normalizedCity || '',
-          activity_name: activity_name || '',
-          name: name || '',
-        });
-      }
-    }
-
+    const apiRes = await misfitsApi('POST', '/start-your-club/admin/create-lead', createPayload);
     if (!apiRes.ok) {
       return res.status(apiRes.status).json({
         success: false,
@@ -1548,8 +1632,36 @@ router.post('/admin/create-lead', async (req: Request, res: Response) => {
         details: apiRes.data?.errors || apiRes.data?.details || null,
       });
     }
-    broadcast('application_updated', apiRes.data);
-    res.status(201).json({ success: true, data: apiRes.data });
+
+    const createdApplicationId = extractCreatedApplicationId(apiRes.data);
+    if (!createdApplicationId) {
+      return res.status(502).json({
+        success: false,
+        error: 'Lead was created upstream, but the application ID was missing from the response.',
+      });
+    }
+
+    try {
+      await moveManualLeadToTargetStatus(
+        createdApplicationId,
+        normalizedTargetStatus,
+        String(reviewed_by || '').trim() || DEFAULT_MANUAL_LEAD_REVIEWER
+      );
+    } catch (transitionError: any) {
+      const partialApp = await fetchFreshApplicationById(createdApplicationId);
+      return res.status(500).json({
+        success: false,
+        error: `Lead was created but could not be moved to ${normalizedTargetStatus}. ${transitionError?.message || ''}`.trim(),
+        data: {
+          created_application_id: createdApplicationId,
+          current_status: partialApp?.status || apiRes.data?.status || 'SUBMITTED',
+        },
+      });
+    }
+
+    const freshApp = await fetchFreshApplicationById(createdApplicationId);
+    broadcast('application_updated', freshApp || { id: createdApplicationId, status: normalizedTargetStatus });
+    res.status(201).json({ success: true, data: freshApp || apiRes.data });
   } catch (error: any) {
     logger.error('Failed to create lead:', error);
     res.status(500).json({ success: false, error: error.message });
