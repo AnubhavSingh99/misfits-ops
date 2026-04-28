@@ -260,10 +260,17 @@ export function VenueLeads() {
     setActionLoading(id);
     try {
       const res  = await fetch(`${API_BASE}/venue-leads/${id}/approve`, { method: 'POST' });
-      const data = await res.json();
-      if (data.success) { alert(`Approved! Location ID: ${data.location_id}`); fetchLeads(); fetchStats(); }
-      else alert(data.error || 'Failed to approve');
-    } catch { alert('Failed to approve venue lead'); }
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data?.success) {
+        alert(data?.error || `Failed to approve venue lead${res.status ? ` (${res.status})` : ''}`);
+        return;
+      }
+      alert(`Approved! Location ID: ${data.location_id}`);
+      fetchLeads();
+      fetchStats();
+    } catch {
+      alert('Failed to approve venue lead');
+    }
     finally { setActionLoading(null); }
   };
 
