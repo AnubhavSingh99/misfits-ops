@@ -204,6 +204,8 @@ interface Application {
   admin_created: boolean;
   interview_scheduled_at: string | null;
   calendly_meet_link: string | null;
+  calendly_event_uri?: string | null;
+  calendly_invitee_uri?: string | null;
 }
 
 interface AnalyticsData {
@@ -2708,6 +2710,10 @@ export default function StartYourClub() {
   const [scheduledDetail, setScheduledDetail] = useState<any>(null);
   const [scheduledDetailLoading, setScheduledDetailLoading] = useState(false);
 
+  const getScheduledCallTimestamp = useCallback((app: Application) => {
+    return app.interview_scheduled_at || app.stage_entered_at || app.updated_at || app.created_at;
+  }, []);
+
   // Fetch detail when a scheduled call is expanded
   useEffect(() => {
     if (expandedScheduledId) {
@@ -2730,14 +2736,14 @@ export default function StartYourClub() {
       if (data.success) {
         setScheduledCalls(
           (data.data as Application[])
-            .filter(a => a.interview_scheduled_at)
-            .sort((a, b) => new Date(a.interview_scheduled_at!).getTime() - new Date(b.interview_scheduled_at!).getTime())
+            .filter(a => a.status === 'INTERVIEW_SCHEDULED')
+            .sort((a, b) => new Date(getScheduledCallTimestamp(a)).getTime() - new Date(getScheduledCallTimestamp(b)).getTime())
         );
       }
     } catch (err) {
       console.error('Failed to fetch scheduled calls:', err);
     }
-  }, []);
+  }, [getScheduledCallTimestamp]);
 
   const fetchApplications = useCallback(async () => {
     try {
@@ -3206,12 +3212,14 @@ export default function StartYourClub() {
                 // Group by date
                 const groups: Record<string, Application[]> = {};
                 scheduledCalls.forEach(app => {
-                  const d = new Date(app.interview_scheduled_at!);
+                  const hasScheduledTime = Boolean(app.interview_scheduled_at);
+                  const d = new Date(getScheduledCallTimestamp(app));
                   const today = new Date();
                   const tomorrow = new Date(today);
                   tomorrow.setDate(tomorrow.getDate() + 1);
                   let label: string;
-                  if (d.toDateString() === today.toDateString()) label = 'Today';
+                  if (!hasScheduledTime) label = 'Scheduled (Time Pending)';
+                  else if (d.toDateString() === today.toDateString()) label = 'Today';
                   else if (d.toDateString() === tomorrow.toDateString()) label = 'Tomorrow';
                   else label = d.toLocaleDateString('en-IN', { weekday: 'short', month: 'short', day: 'numeric' });
                   if (!groups[label]) groups[label] = [];
@@ -3222,7 +3230,9 @@ export default function StartYourClub() {
                     <div className="text-xs font-semibold text-slate-500 mb-1.5 px-1">{dateLabel}</div>
                     <div className="space-y-1.5">
                       {apps.map(app => {
-                        const time = new Date(app.interview_scheduled_at!).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
+                        const time = app.interview_scheduled_at
+                          ? new Date(app.interview_scheduled_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })
+                          : 'Time pending';
                         const isExpanded = expandedScheduledId === String(app.id);
                         return (
                           <div key={app.id} className={`rounded-lg border transition-colors ${isExpanded ? 'border-teal-300 bg-white' : 'border-slate-100 bg-slate-50 hover:border-teal-200'}`}>
@@ -3232,6 +3242,11 @@ export default function StartYourClub() {
                                   <span className="text-sm font-medium text-slate-800 truncate">{app.name || 'Unnamed'}</span>
                                   {app.user_phone && <span className="text-[10px] text-slate-400">{app.user_phone}</span>}
                                   {app.admin_created && <span className="text-[9px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full">Admin</span>}
+                                  {!app.interview_scheduled_at && (
+                                    <span className="text-[9px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full">
+                                      Calendly sync pending
+                                    </span>
+                                  )}
                                 </div>
                                 <div className="text-xs text-slate-500">{formatLocation(app.city, app.sub_area)} · {app.activity}</div>
                               </div>
