@@ -336,6 +336,14 @@ const APP_ENRICHED_SELECT = `
   -- correlated subquery (~50% of total runtime). Only used in the detail-view
   -- annotation (StartYourClub.tsx:897); fetch on demand when row is expanded.
   ,ARRAY[]::text[] as applied_activities_history
+  ,(
+    SELECT se.from_status::text
+    FROM ${STATUS_EVENT_TABLE} se
+    WHERE se.application_id = ca.pk
+      AND se.to_status::text = ca.status::text
+    ORDER BY se.created_at DESC
+    LIMIT 1
+  ) as latest_from_status
 `;
 
 type AnalysisLeadRow = {
@@ -950,7 +958,8 @@ router.get('/admin/all', async (req: Request, res: Response) => {
               )
           ) as repeat_rejection_count,
           NULL::text as last_applied_activity,
-          ARRAY[]::text[] as applied_activities_history
+          ARRAY[]::text[] as applied_activities_history,
+          NULL::text as latest_from_status
         FROM club_application ca
         ${localWhere}
         ORDER BY COALESCE(ca.created_at, NOW()) DESC
@@ -1820,6 +1829,29 @@ router.patch('/admin/:id/review', async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, error: 'Invalid action. Must be select_for_interview, reject, or on_hold' });
     }
 
+    const currentResult = await queryProduction(
+      `SELECT ${APP_ENRICHED_SELECT}
+       FROM club_application ca
+       LEFT JOIN users u ON u.pk = ca.user_id
+       WHERE ca.pk = $1`,
+      [id]
+    );
+    if (currentResult.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'Application not found' });
+    }
+    const currentApp = mapAppRow(currentResult.rows[0]);
+
+    // No-op guards for repeated actions that can happen on stale UI state.
+    if (effectiveAction === 'on_hold' && currentApp.status === 'ON_HOLD') {
+      return res.json({ success: true, data: currentApp, noop: true });
+    }
+    if (effectiveAction === 'select_for_interview' && currentApp.status === 'INTERVIEW_PENDING') {
+      return res.json({ success: true, data: currentApp, noop: true });
+    }
+    if (effectiveAction === 'reject' && currentApp.status === 'REJECTED') {
+      return res.json({ success: true, data: currentApp, noop: true });
+    }
+
     const outcomeMap: Record<string, number> = { 'select_for_interview': 1, 'on_hold': 2, 'reject': 3 };
     await callGrpc('SuperAdminService', 'StartYourClubReviewApplication', {
       application_id: parseInt(id),
@@ -1875,6 +1907,20 @@ router.patch('/admin/:id/status', async (req: Request, res: Response) => {
       return res.status(404).json({ success: false, error: 'Application not found' });
     }
     const currentApp = appResult.rows[0];
+
+    // No-op guard: upstream state machine rejects same-status transitions
+    // (e.g. ON_HOLD -> ON_HOLD). Treat as success to keep UI resilient.
+    if (currentApp.status === to_status) {
+      const existing = await queryProduction(
+        `SELECT ${APP_ENRICHED_SELECT}
+         FROM club_application ca
+         LEFT JOIN users u ON u.pk = ca.user_id
+         WHERE ca.pk = $1`,
+        [id]
+      );
+      const sameApp = existing.rows[0] ? mapAppRow(existing.rows[0]) : mapAppRow(currentApp);
+      return res.json({ success: true, data: sameApp, noop: true });
+    }
 
     // Map target status to the appropriate gRPC call
     const statusToGrpc: Record<string, { method: string; data: any }> = {
@@ -2133,8 +2179,26 @@ router.patch('/admin/:id/reject', async (req: Request, res: Response) => {
     const potentialLead = normalizedRejection.reason === 'other'
       && isPotentialLeadDecision(potential_lead, rejection_reason);
 
+    const currentResult = await queryProduction(
+      `SELECT ${APP_ENRICHED_SELECT}
+       FROM club_application ca
+       LEFT JOIN users u ON u.pk = ca.user_id
+       WHERE ca.pk = $1`,
+      [id]
+    );
+    if (currentResult.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'Application not found' });
+    }
+    const currentApp = mapAppRow(currentResult.rows[0]);
+
     if (!normalizedRejection.reason) {
       return res.status(400).json({ success: false, error: 'Rejection reason is required' });
+    }
+
+    // No-op guard: potential-lead reject maps to ON_HOLD. If already ON_HOLD,
+    // upstream rejects ON_HOLD -> ON_HOLD; keep this idempotent.
+    if (potentialLead && currentApp.status === 'ON_HOLD') {
+      return res.json({ success: true, data: currentApp, noop: true });
     }
 
     if (potentialLead) {

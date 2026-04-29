@@ -45,7 +45,7 @@ const SECTIONS = [
   { id: 'submitted', label: 'Submitted', icon: ClipboardList, statuses: ['SUBMITTED', 'UNDER_REVIEW'] },
   { id: 'interview', label: 'Interview Phase', icon: Calendar, statuses: ['INTERVIEW_PENDING', 'INTERVIEW_SCHEDULED', 'ON_HOLD', 'INTERVIEW_DONE'] },
   { id: 'selected', label: 'Selected', icon: CheckCircle, statuses: ['SELECTED', 'CLUB_CREATED'] },
-  { id: 'dropped', label: 'Dropped', icon: UserX, statuses: ['NOT_INTERESTED', 'REJECTED'] },
+  { id: 'dropped', label: 'Dropped', icon: UserX, statuses: ['NOT_INTERESTED', 'ON_HOLD', 'REJECTED'] },
 ];
 
 // Subsections per tab for structured hierarchy display
@@ -55,6 +55,23 @@ type SubsectionConfig = {
   isGroup?: boolean;    // Group header (not a leaf subsection with its own leads)
   parentGroup?: string; // Indent under this group header
 };
+
+const INTERVIEW_HOLD_ORIGIN_STATUSES = new Set(['INTERVIEW_PENDING', 'INTERVIEW_SCHEDULED', 'INTERVIEW_DONE']);
+
+function isInterviewOnHoldLead(app: Application): boolean {
+  if (app.status !== 'ON_HOLD') return false;
+
+  const originStatus = String(app.latest_from_status || '').trim().toUpperCase();
+  if (originStatus) return INTERVIEW_HOLD_ORIGIN_STATUSES.has(originStatus);
+
+  // Backward compatibility for legacy rows without latest_from_status.
+  return Boolean(
+    app.interview_scheduled_at ||
+    app.calendly_event_uri ||
+    app.calendly_invitee_uri ||
+    app.calendly_meet_link
+  );
+}
 
 const SECTION_SUBSECTIONS: Record<string, SubsectionConfig[]> = {
   followup: [
@@ -82,8 +99,8 @@ const SECTION_SUBSECTIONS: Record<string, SubsectionConfig[]> = {
       filter: (app: Application) => app.status === 'INTERVIEW_PENDING' },
     { id: 'scheduled', label: 'Scheduled', borderClass: 'border-l-indigo-400', bgClass: 'bg-indigo-50/60', headerClass: 'text-indigo-700', countClass: 'bg-indigo-100 text-indigo-700',
       filter: (app: Application) => app.status === 'INTERVIEW_SCHEDULED' },
-    { id: 'hold', label: 'On Hold', borderClass: 'border-l-violet-400', bgClass: 'bg-violet-50/60', headerClass: 'text-violet-700', countClass: 'bg-violet-100 text-violet-700',
-      filter: (app: Application) => app.status === 'ON_HOLD' },
+    { id: 'hold_interview', label: 'On Hold (Interview)', borderClass: 'border-l-violet-400', bgClass: 'bg-violet-50/60', headerClass: 'text-violet-700', countClass: 'bg-violet-100 text-violet-700',
+      filter: (app: Application) => isInterviewOnHoldLead(app) },
     { id: 'done', label: 'Done', borderClass: 'border-l-indigo-500', bgClass: 'bg-indigo-50/80', headerClass: 'text-indigo-800', countClass: 'bg-indigo-200 text-indigo-800',
       filter: (app: Application) => app.status === 'INTERVIEW_DONE' },
   ],
@@ -100,6 +117,8 @@ const SECTION_SUBSECTIONS: Record<string, SubsectionConfig[]> = {
   dropped: [
     { id: 'not_interested', label: 'Not Interested', borderClass: 'border-l-slate-400', bgClass: 'bg-slate-50/60', headerClass: 'text-slate-600', countClass: 'bg-slate-100 text-slate-600',
       filter: (app: Application) => app.status === 'NOT_INTERESTED' },
+    { id: 'potential_on_hold', label: 'On Hold (Potential Leads)', borderClass: 'border-l-fuchsia-400', bgClass: 'bg-fuchsia-50/60', headerClass: 'text-fuchsia-700', countClass: 'bg-fuchsia-100 text-fuchsia-700',
+      filter: (app: Application) => app.status === 'ON_HOLD' && !isInterviewOnHoldLead(app) },
     { id: 'rejected_screening', label: 'Rejected (Screening)', borderClass: 'border-l-red-400', bgClass: 'bg-red-50/60', headerClass: 'text-red-700', countClass: 'bg-red-100 text-red-700',
       filter: (app: Application) => app.status === 'REJECTED' && ['SUBMITTED', 'UNDER_REVIEW', 'ON_HOLD'].includes(app.rejected_from_status || '') },
     { id: 'rejected_interview', label: 'Rejected (Interview)', borderClass: 'border-l-orange-400', bgClass: 'bg-orange-50/60', headerClass: 'text-orange-700', countClass: 'bg-orange-100 text-orange-700',
@@ -113,9 +132,9 @@ const SECTION_SUBSECTIONS: Record<string, SubsectionConfig[]> = {
 const SUBSECTION_TO_STATUSES: Record<string, Record<string, string[]>> = {
   followup: { active: ['ACTIVE'], screening: ['ABANDONED'], activity: ['ABANDONED'], basics: ['ABANDONED'], login: ['ABANDONED'], story: ['ABANDONED'] },
   submitted: { new: ['SUBMITTED'], under_review: ['UNDER_REVIEW'] },
-  interview: { pending: ['INTERVIEW_PENDING'], scheduled: ['INTERVIEW_SCHEDULED'], hold: ['ON_HOLD'], done: ['INTERVIEW_DONE'] },
+  interview: { pending: ['INTERVIEW_PENDING'], scheduled: ['INTERVIEW_SCHEDULED'], hold_interview: ['ON_HOLD'], done: ['INTERVIEW_DONE'] },
   selected: { selected: ['SELECTED'], onboarded: ['CLUB_CREATED'], onboarded_incomplete: ['CLUB_CREATED'], onboarded_complete: ['CLUB_CREATED'] },
-  dropped: { not_interested: ['NOT_INTERESTED'], rejected_screening: ['REJECTED'], rejected_interview: ['REJECTED'], rejected_other: ['REJECTED'] },
+  dropped: { not_interested: ['NOT_INTERESTED'], potential_on_hold: ['ON_HOLD'], rejected_screening: ['REJECTED'], rejected_interview: ['REJECTED'], rejected_other: ['REJECTED'] },
 };
 
 // Reverse lookup: status → subsection (returns null if ambiguous)
@@ -185,6 +204,7 @@ interface Application {
   updated_at: string;
   stage_entered_at?: string | null;
   stage_age_hours?: number | null;
+  latest_from_status?: string | null;
   submitted_at: string | null;
   selected_at: string | null;
   club_created_at: string | null;
@@ -243,6 +263,33 @@ interface AnalyticsData {
   dropped_analysis: {
     rejection_reasons: { reason: string; count: number }[];
   };
+}
+
+function hasInterviewScheduleDetails(app: Pick<Application, 'interview_scheduled_at' | 'calendly_meet_link' | 'calendly_event_uri'>): boolean {
+  return Boolean(app.interview_scheduled_at || app.calendly_meet_link || app.calendly_event_uri);
+}
+
+function normalizeInterviewSchedulingStatus(app: Application): Application {
+  if (app.status !== 'INTERVIEW_PENDING' && app.status !== 'INTERVIEW_SCHEDULED') {
+    return app;
+  }
+
+  // Never downgrade INTERVIEW_SCHEDULED to pending based on partial/missing
+  // Calendly fields — backend status is the source of truth for that case.
+  if (app.status === 'INTERVIEW_SCHEDULED') {
+    return app;
+  }
+
+  // Promote pending -> scheduled when scheduling details are already present.
+  if (hasInterviewScheduleDetails(app)) {
+    return { ...app, status: 'INTERVIEW_SCHEDULED' };
+  }
+
+  return app;
+}
+
+function normalizeInterviewSchedulingStatusList(apps: Application[]): Application[] {
+  return apps.map(normalizeInterviewSchedulingStatus);
 }
 
 interface DetailData extends Omit<Application, 'activity'> {
@@ -659,6 +706,14 @@ function LeadRow({
   };
 
   const handleStatusTransition = async (toStatus: string) => {
+    const currentStatus = detail?.status || app.status;
+    if (currentStatus === toStatus) {
+      // No-op transition (e.g. ON_HOLD -> ON_HOLD): keep UI quiet and fresh.
+      refetchDetail();
+      onRefresh();
+      return;
+    }
+
     const res = await fetch(`${API_BASE}/admin/${app.id}/status`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to_status: toStatus }),
     });
@@ -2719,8 +2774,6 @@ export default function StartYourClub() {
       (a, b) => new Date(getScheduledCallTimestamp(a)).getTime() - new Date(getScheduledCallTimestamp(b)).getTime()
     );
   }, [getScheduledCallTimestamp]);
-
-
   // Fetch detail when a scheduled call is expanded
   useEffect(() => {
     if (expandedScheduledId) {
@@ -2741,10 +2794,10 @@ export default function StartYourClub() {
       const res = await fetch(`${API_BASE}/admin/all?statuses=INTERVIEW_SCHEDULED&sort=created_at&order=desc&page=1&limit=200`);
       const data = await res.json();
       if (data.success) {
+        const normalized = normalizeInterviewSchedulingStatusList(data.data as Application[]);
         setScheduledCalls(sortScheduledCalls(
-          (data.data as Application[]).filter(a => a.status === 'INTERVIEW_SCHEDULED')
+          normalized.filter(a => a.status === 'INTERVIEW_SCHEDULED')
         ));
-
       }
     } catch (err) {
       console.error('Failed to fetch scheduled calls:', err);
@@ -2764,9 +2817,10 @@ export default function StartYourClub() {
         merged.set(String(app.id), app);
       });
 
-    return sortScheduledCalls(Array.from(merged.values()));
+    return sortScheduledCalls(
+      Array.from(merged.values()).filter((app) => app.status === 'INTERVIEW_SCHEDULED')
+    );
   }, [applications, scheduledCalls, sortScheduledCalls]);
-
 
   const fetchApplications = useCallback(async () => {
     try {
@@ -2794,7 +2848,7 @@ export default function StartYourClub() {
 
       const data = await res.json();
       if (data.success) {
-        setApplications(data.data);
+        setApplications(normalizeInterviewSchedulingStatusList(data.data as Application[]));
         setTotal(data.total);
         setTotalPages(data.totalPages);
         setApplicationsError(null);
@@ -3236,7 +3290,6 @@ export default function StartYourClub() {
                 // Group by date
                 const groups: Record<string, Application[]> = {};
                 effectiveScheduledCalls.forEach(app => {
-
                   const hasScheduledTime = Boolean(app.interview_scheduled_at);
                   const d = new Date(getScheduledCallTimestamp(app));
                   const today = new Date();
