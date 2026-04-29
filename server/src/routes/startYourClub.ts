@@ -332,6 +332,13 @@ const APP_ENRICHED_SELECT = `
     ORDER BY prev.created_at DESC
     LIMIT 1
   ) as last_applied_activity
+  ,EXISTS(
+    SELECT 1
+    FROM club_application_activity act
+    WHERE act.application_id = ca.pk
+      AND act.type = 'note'
+      AND act.content ILIKE 'Potential lead note:%'
+  ) as is_potential_lead_rejection
   -- applied_activities_history dropped from list query: it was a per-row ARRAY_AGG
   -- correlated subquery (~50% of total runtime). Only used in the detail-view
   -- annotation (StartYourClub.tsx:897); fetch on demand when row is expanded.
@@ -2229,6 +2236,9 @@ router.patch('/admin/:id/reject', async (req: Request, res: Response) => {
         if (normalizedRejection.note) {
           await appendRejectionNote(parseInt(id), normalizedRejection.note);
         }
+        if (potentialLead && normalizedRejection.note) {
+          await appendPotentialLeadNote(parseInt(id), normalizedRejection.note);
+        }
         // Review already handled rejection — skip the separate reject call
       } catch (reviewErr: any) {
         // If review fails (e.g., wrong status), fall back to direct reject
@@ -2237,11 +2247,17 @@ router.patch('/admin/:id/reject', async (req: Request, res: Response) => {
         if (normalizedRejection.note) {
           await appendRejectionNote(parseInt(id), normalizedRejection.note);
         }
+        if (potentialLead && normalizedRejection.note) {
+          await appendPotentialLeadNote(parseInt(id), normalizedRejection.note);
+        }
       }
     } else {
       await callGrpc('SuperAdminService', 'StartYourClubRejectApplication', { application_id: parseInt(id), rejection_reason: normalizedRejection.reason });
       if (normalizedRejection.note) {
         await appendRejectionNote(parseInt(id), normalizedRejection.note);
+      }
+      if (potentialLead && normalizedRejection.note) {
+        await appendPotentialLeadNote(parseInt(id), normalizedRejection.note);
       }
     }
 
