@@ -318,8 +318,6 @@ const APP_ENRICHED_SELECT = `
     SELECT COUNT(*)::int
     FROM club_application rej
     WHERE rej.status = 'REJECTED'
-      AND LOWER(BTRIM(COALESCE(rej.city_name, ''))) = LOWER(BTRIM(COALESCE(ca.city_name, '')))
-      AND LOWER(BTRIM(COALESCE(rej.activity_name, ''))) = LOWER(BTRIM(COALESCE(ca.activity_name, '')))
       AND ${applicantMatchClause('rej', 'rej_u')}
       AND (rej.pk <> ca.pk OR ca.status = 'REJECTED')
   ) as repeat_rejection_count
@@ -954,8 +952,6 @@ router.get('/admin/all', async (req: Request, res: Response) => {
             FROM club_application rej
             WHERE rej.id <> ca.id
               AND rej.status = 'REJECTED'
-              AND LOWER(BTRIM(COALESCE(rej.city, ''))) = LOWER(BTRIM(COALESCE(ca.city, '')))
-              AND LOWER(BTRIM(COALESCE(rej.activity, ''))) = LOWER(BTRIM(COALESCE(ca.activity, '')))
               AND (
                 (ca.user_id IS NOT NULL AND rej.user_id = ca.user_id)
                 OR (
