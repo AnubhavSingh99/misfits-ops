@@ -117,14 +117,14 @@ const SECTION_SUBSECTIONS: Record<string, SubsectionConfig[]> = {
   dropped: [
     { id: 'not_interested', label: 'Not Interested', borderClass: 'border-l-slate-400', bgClass: 'bg-slate-50/60', headerClass: 'text-slate-600', countClass: 'bg-slate-100 text-slate-600',
       filter: (app: Application) => app.status === 'NOT_INTERESTED' },
-    { id: 'potential_on_hold', label: 'On Hold (Potential Leads)', borderClass: 'border-l-fuchsia-400', bgClass: 'bg-fuchsia-50/60', headerClass: 'text-fuchsia-700', countClass: 'bg-fuchsia-100 text-fuchsia-700',
-      filter: (app: Application) => app.status === 'ON_HOLD' && !isInterviewOnHoldLead(app) },
+    { id: 'potential_leads', label: 'Potential Leads', borderClass: 'border-l-violet-400', bgClass: 'bg-violet-50/60', headerClass: 'text-violet-700', countClass: 'bg-violet-100 text-violet-700',
+      filter: (app: Application) => app.status === 'REJECTED' && !!app.is_potential_lead_rejection },
     { id: 'rejected_screening', label: 'Rejected (Screening)', borderClass: 'border-l-red-400', bgClass: 'bg-red-50/60', headerClass: 'text-red-700', countClass: 'bg-red-100 text-red-700',
-      filter: (app: Application) => app.status === 'REJECTED' && ['SUBMITTED', 'UNDER_REVIEW', 'ON_HOLD'].includes(app.rejected_from_status || '') },
+      filter: (app: Application) => app.status === 'REJECTED' && !app.is_potential_lead_rejection && ['SUBMITTED', 'UNDER_REVIEW', 'ON_HOLD'].includes(app.rejected_from_status || '') },
     { id: 'rejected_interview', label: 'Rejected (Interview)', borderClass: 'border-l-orange-400', bgClass: 'bg-orange-50/60', headerClass: 'text-orange-700', countClass: 'bg-orange-100 text-orange-700',
-      filter: (app: Application) => app.status === 'REJECTED' && app.rejected_from_status === 'INTERVIEW_DONE' },
+      filter: (app: Application) => app.status === 'REJECTED' && !app.is_potential_lead_rejection && app.rejected_from_status === 'INTERVIEW_DONE' },
     { id: 'rejected_other', label: 'Rejected (Other)', borderClass: 'border-l-red-300', bgClass: 'bg-red-50/30', headerClass: 'text-red-500', countClass: 'bg-red-50 text-red-500',
-      filter: (app: Application) => app.status === 'REJECTED' && !app.rejected_from_status },
+      filter: (app: Application) => app.status === 'REJECTED' && !app.is_potential_lead_rejection && !app.rejected_from_status },
   ],
 };
 
@@ -134,7 +134,7 @@ const SUBSECTION_TO_STATUSES: Record<string, Record<string, string[]>> = {
   submitted: { new: ['SUBMITTED'], under_review: ['UNDER_REVIEW'] },
   interview: { pending: ['INTERVIEW_PENDING'], scheduled: ['INTERVIEW_SCHEDULED'], hold_interview: ['ON_HOLD'], done: ['INTERVIEW_DONE'] },
   selected: { selected: ['SELECTED'], onboarded: ['CLUB_CREATED'], onboarded_incomplete: ['CLUB_CREATED'], onboarded_complete: ['CLUB_CREATED'] },
-  dropped: { not_interested: ['NOT_INTERESTED'], potential_on_hold: ['ON_HOLD'], rejected_screening: ['REJECTED'], rejected_interview: ['REJECTED'], rejected_other: ['REJECTED'] },
+  dropped: { not_interested: ['NOT_INTERESTED'], potential_leads: ['REJECTED'], rejected_screening: ['REJECTED'], rejected_interview: ['REJECTED'], rejected_other: ['REJECTED'] },
 };
 
 // Reverse lookup: status → subsection (returns null if ambiguous)
@@ -158,9 +158,9 @@ const REJECTION_REASON_LABEL_MAP: Record<string, string> = Object.fromEntries(
   REJECTION_REASONS.map((reason) => [reason.value, reason.label])
 );
 
-function getRejectionReasonLabel(reason: string | null | undefined): string {
+function getRejectionReasonLabel(reason: string | null | undefined, isPotentialLeadRejection = false): string {
+  if (isPotentialLeadRejection || reason === 'potential_lead') return 'Potential lead';
   if (!reason) return '-';
-  if (reason === 'potential_lead') return 'Potential lead';
   return REJECTION_REASON_LABEL_MAP[reason] || reason.replace(/_/g, ' ');
 }
 
@@ -226,6 +226,7 @@ interface Application {
   calendly_meet_link: string | null;
   calendly_event_uri?: string | null;
   calendly_invitee_uri?: string | null;
+  is_potential_lead_rejection?: boolean;
 }
 
 interface AnalyticsData {
@@ -861,6 +862,11 @@ function LeadRow({
           <span className={`inline-flex items-center px-2 py-0.5 text-[11px] font-medium rounded-full border ${cfg.badgeClass}`}>
             {cfg.label}
           </span>
+          {app.status === 'REJECTED' && app.is_potential_lead_rejection && (
+            <span className="ml-1.5 inline-flex items-center px-2 py-0.5 text-[10px] font-medium rounded-full border bg-violet-50 text-violet-700 border-violet-200">
+              Potential lead
+            </span>
+          )}
           {app.reviewed_by && (
             <div className="text-[10px] text-slate-400 mt-0.5 flex items-center gap-0.5">
               <User className="h-2.5 w-2.5" /> {app.reviewed_by}
@@ -1304,7 +1310,7 @@ function LeadRow({
                           {detail.rejection_reason && (
                             <div className="p-3 bg-red-50 rounded-lg border border-red-200">
                               <div className="text-xs font-medium text-red-600">Rejection Reason</div>
-                              <div className="text-sm text-red-700">{REJECTION_REASONS.find(r => r.value === detail.rejection_reason)?.label || detail.rejection_reason}</div>
+                              <div className="text-sm text-red-700">{getRejectionReasonLabel(detail.rejection_reason, !!detail.is_potential_lead_rejection)}</div>
                               {detail.rejection_reason === 'other' && rejectionCommentFromLog && (
                                 <div className="mt-1.5 text-xs text-red-700/90">Comment: {rejectionCommentFromLog}</div>
                               )}
@@ -1936,7 +1942,7 @@ function LeadRow({
                           {detail.rejection_reason && (
                             <div className="p-3 bg-red-50 rounded-lg border border-red-200">
                               <div className="text-xs font-medium text-red-600 mb-0.5">Rejection Reason</div>
-                              <div className="text-sm text-red-700">{REJECTION_REASONS.find(r => r.value === detail.rejection_reason)?.label || detail.rejection_reason}</div>
+                              <div className="text-sm text-red-700">{getRejectionReasonLabel(detail.rejection_reason, !!detail.is_potential_lead_rejection)}</div>
                               {detail.rejection_reason === 'other' && rejectionCommentFromLog && (
                                 <div className="mt-1.5 text-xs text-red-700/90">Comment: {rejectionCommentFromLog}</div>
                               )}
@@ -3079,7 +3085,7 @@ export default function StartYourClub() {
         'All Applied Activities (Latest->Oldest)': (app.applied_activities_history || []).join(' -> '),
         'Subsection': getSubsectionLabelForApp(app),
         'Reviewed By': app.reviewed_by || '',
-        'Rejection Reason': app.rejection_reason ? (REJECTION_REASONS.find(r => r.value === app.rejection_reason)?.label || app.rejection_reason) : '',
+        'Rejection Reason': app.rejection_reason ? getRejectionReasonLabel(app.rejection_reason, !!app.is_potential_lead_rejection) : '',
         'Rejected From Status': app.rejected_from_status ? (STATUS_CONFIG[app.rejected_from_status]?.label || app.rejected_from_status) : '',
         'First Call Done': app.first_call_done ? 'Yes' : 'No',
         'Venue Sorted': app.venue_sorted ? 'Yes' : 'No',

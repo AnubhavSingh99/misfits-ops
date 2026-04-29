@@ -332,6 +332,13 @@ const APP_ENRICHED_SELECT = `
     ORDER BY prev.created_at DESC
     LIMIT 1
   ) as last_applied_activity
+  ,EXISTS(
+    SELECT 1
+    FROM club_application_activity act
+    WHERE act.application_id = ca.pk
+      AND act.type = 'note'
+      AND act.content ILIKE 'Potential lead note:%'
+  ) as is_potential_lead_rejection
   -- applied_activities_history dropped from list query: it was a per-row ARRAY_AGG
   -- correlated subquery (~50% of total runtime). Only used in the detail-view
   -- annotation (StartYourClub.tsx:897); fetch on demand when row is expanded.
@@ -2179,29 +2186,24 @@ router.patch('/admin/:id/reject', async (req: Request, res: Response) => {
     const potentialLead = normalizedRejection.reason === 'other'
       && isPotentialLeadDecision(potential_lead, rejection_reason);
 
-    const currentResult = await queryProduction(
-      `SELECT ${APP_ENRICHED_SELECT}
-       FROM club_application ca
-       LEFT JOIN users u ON u.pk = ca.user_id
-       WHERE ca.pk = $1`,
+    const currentStatusResult = await queryProduction(
+      'SELECT status FROM club_application WHERE pk = $1',
       [id]
     );
-    if (currentResult.rows.length === 0) {
+    if (currentStatusResult.rows.length === 0) {
       return res.status(404).json({ success: false, error: 'Application not found' });
     }
-    const currentApp = mapAppRow(currentResult.rows[0]);
+    const currentStatus = String(currentStatusResult.rows[0].status || '').trim().toUpperCase();
+    // Business rule:
+    // If a lead is already ON_HOLD, rejecting (even with "Potential Lead") should
+    // move it to REJECTED, not keep it in ON_HOLD.
+    const shouldMoveToOnHold = potentialLead && currentStatus !== 'ON_HOLD';
 
     if (!normalizedRejection.reason) {
       return res.status(400).json({ success: false, error: 'Rejection reason is required' });
     }
 
-    // No-op guard: potential-lead reject maps to ON_HOLD. If already ON_HOLD,
-    // upstream rejects ON_HOLD -> ON_HOLD; keep this idempotent.
-    if (potentialLead && currentApp.status === 'ON_HOLD') {
-      return res.json({ success: true, data: currentApp, noop: true });
-    }
-
-    if (potentialLead) {
+    if (shouldMoveToOnHold) {
       try {
         await callGrpc('SuperAdminService', 'StartYourClubReviewApplication', {
           application_id: parseInt(id),
@@ -2234,6 +2236,9 @@ router.patch('/admin/:id/reject', async (req: Request, res: Response) => {
         if (normalizedRejection.note) {
           await appendRejectionNote(parseInt(id), normalizedRejection.note);
         }
+        if (potentialLead && normalizedRejection.note) {
+          await appendPotentialLeadNote(parseInt(id), normalizedRejection.note);
+        }
         // Review already handled rejection — skip the separate reject call
       } catch (reviewErr: any) {
         // If review fails (e.g., wrong status), fall back to direct reject
@@ -2242,11 +2247,17 @@ router.patch('/admin/:id/reject', async (req: Request, res: Response) => {
         if (normalizedRejection.note) {
           await appendRejectionNote(parseInt(id), normalizedRejection.note);
         }
+        if (potentialLead && normalizedRejection.note) {
+          await appendPotentialLeadNote(parseInt(id), normalizedRejection.note);
+        }
       }
     } else {
       await callGrpc('SuperAdminService', 'StartYourClubRejectApplication', { application_id: parseInt(id), rejection_reason: normalizedRejection.reason });
       if (normalizedRejection.note) {
         await appendRejectionNote(parseInt(id), normalizedRejection.note);
+      }
+      if (potentialLead && normalizedRejection.note) {
+        await appendPotentialLeadNote(parseInt(id), normalizedRejection.note);
       }
     }
 
@@ -2259,8 +2270,7 @@ router.patch('/admin/:id/reject', async (req: Request, res: Response) => {
     );
     const freshApp = mapAppRow(updated.rows[0]);
 
-    const nextStatus = potentialLead ? 'ON_HOLD' : 'REJECTED';
-    broadcast('application_updated', { id, status: nextStatus });
+    broadcast('application_updated', { id, status: freshApp.status || 'REJECTED' });
     res.json({ success: true, data: freshApp });
   } catch (error: any) {
     logger.error('Failed to reject application:', error);
