@@ -3080,7 +3080,7 @@ export default function StartYourClub() {
         'Stage Entered At': app.stage_entered_at ? new Date(app.stage_entered_at).toLocaleString() : '',
         'Duplicate Lead': app.is_duplicate_lead ? 'Yes' : 'No',
         'Repeat Application': app.is_repeat_application ? 'Yes' : 'No',
-        'Rejected Count (Same City + Activity)': app.repeat_rejection_count || 0,
+        'Rejected Count': app.repeat_rejection_count || 0,
         'Last Applied Activity': app.last_applied_activity || '',
         'All Applied Activities (Latest->Oldest)': (app.applied_activities_history || []).join(' -> '),
         'Subsection': getSubsectionLabelForApp(app),

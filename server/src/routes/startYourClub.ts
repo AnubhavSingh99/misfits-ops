@@ -318,8 +318,6 @@ const APP_ENRICHED_SELECT = `
     SELECT COUNT(*)::int
     FROM club_application rej
     WHERE rej.status = 'REJECTED'
-      AND LOWER(BTRIM(COALESCE(rej.city_name, ''))) = LOWER(BTRIM(COALESCE(ca.city_name, '')))
-      AND LOWER(BTRIM(COALESCE(rej.activity_name, ''))) = LOWER(BTRIM(COALESCE(ca.activity_name, '')))
       AND ${applicantMatchClause('rej', 'rej_u')}
       AND (rej.pk <> ca.pk OR ca.status = 'REJECTED')
   ) as repeat_rejection_count
@@ -363,6 +361,7 @@ type AnalysisLeadRow = {
 type LeaderSupplyRow = {
   activity: string;
   city: string;
+  sub_area: string;
   leaders_ready: number;
   leaders_in_progress: number;
   leaders_backlog: number;
@@ -380,12 +379,18 @@ function normalizeCityKey(city?: string | null): string {
   return String(city || 'Others').trim().toLowerCase().replace(/\s+/g, ' ');
 }
 
+function normalizeSubAreaKey(subArea?: string | null): string {
+  return String(subArea || 'Unknown').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
 function mapLeaderSupplyRows(rows: any[]): LeaderSupplyRow[] {
   return (rows || []).map((row: any) => {
     const parsedCity = splitCityAndSubArea(row.city_name);
+    const subAreaRaw = String(row.area_name || row.sub_area || parsedCity.sub_area || '').trim();
     return {
       activity: String(row.activity_name || 'Others'),
       city: parsedCity.city || String(row.city_name || 'Others'),
+      sub_area: subAreaRaw || 'Unknown',
       leaders_ready: parseInt(String(row.leaders_ready || 0), 10) || 0,
       leaders_in_progress: parseInt(String(row.leaders_in_progress || row.leaders_in_pipeline || 0), 10) || 0,
       leaders_backlog: parseInt(String(row.leaders_backlog || 0), 10) || 0,
@@ -410,17 +415,19 @@ async function fetchSupplyRowsFromRequirementsApi(baseUrl: string): Promise<Lead
     const activity = String(req?.activity_name || req?.activity || 'Others').trim() || 'Others';
     const parsedCity = splitCityAndSubArea(req?.city_name || req?.city);
     const city = parsedCity.city || String(req?.city_name || req?.city || 'Others').trim() || 'Others';
+    const subArea = String(req?.area_name || req?.sub_area || parsedCity.sub_area || '').trim() || 'Unknown';
     const status = String(req?.status || '').trim().toLowerCase();
     const leadersRequiredRaw = Number(req?.leaders_required);
     const leadersRequired = Number.isFinite(leadersRequiredRaw) && leadersRequiredRaw > 0
       ? Math.floor(leadersRequiredRaw)
       : 1;
-    const key = `${normalizeActivityKey(activity)}||${normalizeCityKey(city)}`;
+    const key = `${normalizeActivityKey(activity)}||${normalizeCityKey(city)}||${normalizeSubAreaKey(subArea)}`;
 
     if (!grouped.has(key)) {
       grouped.set(key, {
         activity,
         city,
+        sub_area: subArea,
         leaders_ready: 0,
         leaders_in_progress: 0,
         leaders_backlog: 0,
@@ -443,10 +450,11 @@ async function fetchSupplyRowsFromRequirementsApi(baseUrl: string): Promise<Lead
 function computeAnalysisDashboard(rows: any[], supplyRows: LeaderSupplyRow[] = []) {
   const leads: AnalysisLeadRow[] = rows.map((row) => {
     const parsed = splitCityAndSubArea(row.city_name ?? row.city);
+    const rawSubArea = String(row.sub_area || '').trim();
     return {
       activity: String(row.activity_name ?? row.activity ?? 'Others').trim() || 'Others',
       city: parsed.city || 'Others',
-      sub_area: parsed.sub_area || null,
+      sub_area: rawSubArea || parsed.sub_area || null,
       status: String(row.status || '').trim().toUpperCase(),
     };
   });
@@ -460,14 +468,54 @@ function computeAnalysisDashboard(rows: any[], supplyRows: LeaderSupplyRow[] = [
   const activityCityCounts = new Map<string, Map<string, number>>();
   const citySubAreaCounts = new Map<string, Map<string, number>>();
   const potentialLeadCounts = new Map<string, number>();
+  const demandByCitySubAreaActivity = new Map<string, { city: string; sub_area: string; activity: string; applicants: number }>();
+  const othersBreakdownMap = new Map<string, { city: string; sub_area: string; applicants: number; potential_leads: number }>();
+  const cityCoverageMap = new Map<string, { city: string; applicants: number; required: number; completed: number }>();
 
   for (const lead of leads) {
+    const subArea = String(lead.sub_area || '').trim() || 'Unknown';
+    const demandKey = `${normalizeCityKey(lead.city)}||${normalizeSubAreaKey(subArea)}||${normalizeActivityKey(lead.activity)}`;
+
     activitySet.add(lead.activity);
     citySet.add(lead.city);
     activityCounts.set(lead.activity, (activityCounts.get(lead.activity) || 0) + 1);
     cityCounts.set(lead.city, (cityCounts.get(lead.city) || 0) + 1);
+    if (!cityCoverageMap.has(lead.city)) {
+      cityCoverageMap.set(lead.city, { city: lead.city, applicants: 0, required: 0, completed: 0 });
+    }
+    cityCoverageMap.get(lead.city)!.applicants += 1;
+
     if (lead.status === 'ON_HOLD') {
       potentialLeadCounts.set(lead.activity, (potentialLeadCounts.get(lead.activity) || 0) + 1);
+    }
+
+    const demandBucket = demandByCitySubAreaActivity.get(demandKey);
+    if (demandBucket) {
+      demandBucket.applicants += 1;
+    } else {
+      demandByCitySubAreaActivity.set(demandKey, {
+        city: lead.city,
+        sub_area: subArea,
+        activity: lead.activity,
+        applicants: 1,
+      });
+    }
+
+    if (normalizeActivityKey(lead.activity) === 'others') {
+      const othersKey = `${normalizeCityKey(lead.city)}||${normalizeSubAreaKey(subArea)}`;
+      if (!othersBreakdownMap.has(othersKey)) {
+        othersBreakdownMap.set(othersKey, {
+          city: lead.city,
+          sub_area: subArea,
+          applicants: 0,
+          potential_leads: 0,
+        });
+      }
+      const othersBucket = othersBreakdownMap.get(othersKey)!;
+      othersBucket.applicants += 1;
+      if (lead.status === 'ON_HOLD') {
+        othersBucket.potential_leads += 1;
+      }
     }
 
     if (!cityActivityCounts.has(lead.city)) cityActivityCounts.set(lead.city, new Map());
@@ -478,11 +526,9 @@ function computeAnalysisDashboard(rows: any[], supplyRows: LeaderSupplyRow[] = [
     const activityCityMap = activityCityCounts.get(lead.activity)!;
     activityCityMap.set(lead.city, (activityCityMap.get(lead.city) || 0) + 1);
 
-    if (lead.sub_area) {
-      if (!citySubAreaCounts.has(lead.city)) citySubAreaCounts.set(lead.city, new Map());
-      const citySubAreaMap = citySubAreaCounts.get(lead.city)!;
-      citySubAreaMap.set(lead.sub_area, (citySubAreaMap.get(lead.sub_area) || 0) + 1);
-    }
+    if (!citySubAreaCounts.has(lead.city)) citySubAreaCounts.set(lead.city, new Map());
+    const citySubAreaMap = citySubAreaCounts.get(lead.city)!;
+    citySubAreaMap.set(subArea, (citySubAreaMap.get(subArea) || 0) + 1);
   }
 
   const activities = [...activitySet].sort((a, b) => (activityCounts.get(b) || 0) - (activityCounts.get(a) || 0));
@@ -491,11 +537,23 @@ function computeAnalysisDashboard(rows: any[], supplyRows: LeaderSupplyRow[] = [
   const supplyByActivity = new Map<string, number>();
   const supplyInProgressByActivity = new Map<string, number>();
   const supplyBacklogByActivity = new Map<string, number>();
+  const supplyByCitySubAreaActivity = new Map<string, {
+    city: string;
+    sub_area: string;
+    activity: string;
+    required: number;
+    completed: number;
+    in_progress: number;
+  }>();
   let totalSupplyReady = 0;
   let totalSupplyInProgress = 0;
   let totalSupplyBacklog = 0;
   for (const row of supplyRows) {
+    const subArea = String(row.sub_area || '').trim() || 'Unknown';
     const normalizedActivity = normalizeActivityKey(row.activity);
+    const supplyKey = `${normalizeCityKey(row.city)}||${normalizeSubAreaKey(subArea)}||${normalizeActivityKey(row.activity)}`;
+    const required = row.leaders_ready + row.leaders_in_progress;
+
     totalSupplyReady += row.leaders_ready;
     totalSupplyInProgress += row.leaders_in_progress;
     totalSupplyBacklog += row.leaders_backlog;
@@ -508,6 +566,28 @@ function computeAnalysisDashboard(rows: any[], supplyRows: LeaderSupplyRow[] = [
       normalizedActivity,
       (supplyBacklogByActivity.get(normalizedActivity) || 0) + row.leaders_backlog
     );
+
+    if (!supplyByCitySubAreaActivity.has(supplyKey)) {
+      supplyByCitySubAreaActivity.set(supplyKey, {
+        city: row.city,
+        sub_area: subArea,
+        activity: row.activity,
+        required: 0,
+        completed: 0,
+        in_progress: 0,
+      });
+    }
+    const supplyBucket = supplyByCitySubAreaActivity.get(supplyKey)!;
+    supplyBucket.required += required;
+    supplyBucket.completed += row.leaders_ready;
+    supplyBucket.in_progress += row.leaders_in_progress;
+
+    if (!cityCoverageMap.has(row.city)) {
+      cityCoverageMap.set(row.city, { city: row.city, applicants: 0, required: 0, completed: 0 });
+    }
+    const cityCoverage = cityCoverageMap.get(row.city)!;
+    cityCoverage.required += required;
+    cityCoverage.completed += row.leaders_ready;
   }
 
   const activityBreakdown = activities.map((activity, index) => {
@@ -634,6 +714,58 @@ function computeAnalysisDashboard(rows: any[], supplyRows: LeaderSupplyRow[] = [
   const totalGap = Math.max(totalLeads - totalSupplyEffective, 0);
   const readyOnlyGap = Math.max(totalLeads - totalSupplyReady, 0);
   const overallCoverage = totalLeads > 0 ? round1((totalSupplyEffective / totalLeads) * 100) : 0;
+  const totalOthersApplicants = [...othersBreakdownMap.values()].reduce((sum, row) => sum + row.applicants, 0);
+  const othersBreakdown = [...othersBreakdownMap.values()]
+    .map((row) => ({
+      ...row,
+      share_pct: totalOthersApplicants > 0 ? round1((row.applicants / totalOthersApplicants) * 100) : 0,
+    }))
+    .sort((a, b) => b.applicants - a.applicants || b.potential_leads - a.potential_leads);
+
+  const subAreaRequirementBreakdown = [...new Set([
+    ...demandByCitySubAreaActivity.keys(),
+    ...supplyByCitySubAreaActivity.keys(),
+  ])]
+    .map((key) => {
+      const demand = demandByCitySubAreaActivity.get(key);
+      const supply = supplyByCitySubAreaActivity.get(key);
+      const city = demand?.city || supply?.city || 'Others';
+      const subArea = demand?.sub_area || supply?.sub_area || 'Unknown';
+      const activity = demand?.activity || supply?.activity || 'Others';
+      const applicants = demand?.applicants || 0;
+      const required = supply?.required || 0;
+      const completed = supply?.completed || 0;
+      const inProgress = supply?.in_progress || 0;
+      const gap = Math.max(required - completed, 0);
+      const coveragePct = required > 0 ? round1((completed / required) * 100) : 0;
+      return {
+        city,
+        sub_area: subArea,
+        activity,
+        applicants,
+        required,
+        completed,
+        in_progress: inProgress,
+        gap,
+        coverage_pct: coveragePct,
+      };
+    })
+    .sort((a, b) => b.gap - a.gap || b.applicants - a.applicants || a.sub_area.localeCompare(b.sub_area));
+
+  const cityCoverageSnapshot = [...cityCoverageMap.values()]
+    .map((row) => {
+      const gap = Math.max(row.required - row.completed, 0);
+      const coveragePct = row.required > 0 ? round1((row.completed / row.required) * 100) : 0;
+      return {
+        city: row.city,
+        applicants: row.applicants,
+        required: row.required,
+        completed: row.completed,
+        gap,
+        coverage_pct: coveragePct,
+      };
+    })
+    .sort((a, b) => b.gap - a.gap || b.applicants - a.applicants);
 
   return {
     total_leads: totalLeads,
@@ -656,6 +788,9 @@ function computeAnalysisDashboard(rows: any[], supplyRows: LeaderSupplyRow[] = [
     city_breakdown: cityBreakdown,
     activity_location_matrix: activityLocationMatrix,
     applying_rate_by_city: applyingRateByCity,
+    others_breakdown: othersBreakdown,
+    sub_area_requirement_breakdown: subAreaRequirementBreakdown,
+    city_coverage_snapshot: cityCoverageSnapshot,
     insights: {
       highest_demand_activity: `${highestDemandActivity} has the highest applicant volume.`,
       lowest_demand_activity: `${lowestDemandActivity} currently has the lowest applicant volume.`,
@@ -954,8 +1089,6 @@ router.get('/admin/all', async (req: Request, res: Response) => {
             FROM club_application rej
             WHERE rej.id <> ca.id
               AND rej.status = 'REJECTED'
-              AND LOWER(BTRIM(COALESCE(rej.city, ''))) = LOWER(BTRIM(COALESCE(ca.city, '')))
-              AND LOWER(BTRIM(COALESCE(rej.activity, ''))) = LOWER(BTRIM(COALESCE(ca.activity, '')))
               AND (
                 (ca.user_id IS NOT NULL AND rej.user_id = ca.user_id)
                 OR (
@@ -1283,11 +1416,12 @@ router.get('/admin/analysis-dashboard', async (req: Request, res: Response) => {
     const supplyQuery = `SELECT
       COALESCE(activity_name, 'Others') as activity_name,
       COALESCE(city_name, 'Others') as city_name,
+      COALESCE(area_name, 'Unknown') as area_name,
       COALESCE(SUM(COALESCE(leaders_required, 1)) FILTER (WHERE status = 'done'), 0)::int as leaders_ready,
       COALESCE(SUM(COALESCE(leaders_required, 1)) FILTER (WHERE status = 'in_progress'), 0)::int as leaders_in_progress,
       COALESCE(SUM(COALESCE(leaders_required, 1)) FILTER (WHERE status IN ('not_picked', 'deprioritised')), 0)::int as leaders_backlog
      FROM leader_requirements
-     GROUP BY COALESCE(activity_name, 'Others'), COALESCE(city_name, 'Others')`;
+     GROUP BY COALESCE(activity_name, 'Others'), COALESCE(city_name, 'Others'), COALESCE(area_name, 'Unknown')`;
     try {
       const localSupply = await queryLocal(supplyQuery);
       supplyRows = mapLeaderSupplyRows(localSupply.rows || []);
@@ -1330,11 +1464,12 @@ router.get('/admin/analysis-dashboard', async (req: Request, res: Response) => {
           `SELECT
             COALESCE(activity_name, 'Others') as activity_name,
             COALESCE(city_name, 'Others') as city_name,
+            COALESCE(area_name, 'Unknown') as area_name,
             COALESCE(SUM(COALESCE(leaders_required, 1)) FILTER (WHERE status = 'done'), 0)::int as leaders_ready,
             COALESCE(SUM(COALESCE(leaders_required, 1)) FILTER (WHERE status = 'in_progress'), 0)::int as leaders_in_progress,
             COALESCE(SUM(COALESCE(leaders_required, 1)) FILTER (WHERE status IN ('not_picked', 'deprioritised')), 0)::int as leaders_backlog
            FROM leader_requirements
-           GROUP BY COALESCE(activity_name, 'Others'), COALESCE(city_name, 'Others')`
+           GROUP BY COALESCE(activity_name, 'Others'), COALESCE(city_name, 'Others'), COALESCE(area_name, 'Unknown')`
         );
         supplyLocalRows = mapLeaderSupplyRows(supplyLocal.rows || []);
       } catch {

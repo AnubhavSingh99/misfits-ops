@@ -80,11 +80,40 @@ function normalizeAnalysisData(rawData: AnalysisData): AnalysisData {
     rawData.demand_supply_summary?.total_supply_effective,
     totalSupplyReady + totalSupplyInProgress
   );
+  const othersBreakdown = (rawData.others_breakdown || []).map((row) => ({
+    city: String(row.city || 'Others'),
+    sub_area: String(row.sub_area || 'Unknown'),
+    applicants: toNumber(row.applicants),
+    potential_leads: toNumber(row.potential_leads),
+    share_pct: toNumber(row.share_pct),
+  }));
+  const subAreaRequirementBreakdown = (rawData.sub_area_requirement_breakdown || []).map((row) => ({
+    city: String(row.city || 'Others'),
+    sub_area: String(row.sub_area || 'Unknown'),
+    activity: String(row.activity || 'Others'),
+    applicants: toNumber(row.applicants),
+    required: toNumber(row.required),
+    completed: toNumber(row.completed),
+    in_progress: toNumber(row.in_progress),
+    gap: toNumber(row.gap),
+    coverage_pct: toNumber(row.coverage_pct),
+  }));
+  const cityCoverageSnapshot = (rawData.city_coverage_snapshot || []).map((row) => ({
+    city: String(row.city || 'Others'),
+    applicants: toNumber(row.applicants),
+    required: toNumber(row.required),
+    completed: toNumber(row.completed),
+    gap: toNumber(row.gap),
+    coverage_pct: toNumber(row.coverage_pct),
+  }));
 
   return {
     ...rawData,
     activity_breakdown: activityBreakdown,
     city_breakdown: cityBreakdown,
+    others_breakdown: othersBreakdown,
+    sub_area_requirement_breakdown: subAreaRequirementBreakdown,
+    city_coverage_snapshot: cityCoverageSnapshot,
     demand_supply_summary: {
       ...rawData.demand_supply_summary,
       total_demand: totalDemand,
@@ -166,6 +195,32 @@ interface AnalysisData {
       percentage: number;
     }>;
   }>;
+  others_breakdown: Array<{
+    city: string;
+    sub_area: string;
+    applicants: number;
+    potential_leads: number;
+    share_pct: number;
+  }>;
+  sub_area_requirement_breakdown: Array<{
+    city: string;
+    sub_area: string;
+    activity: string;
+    applicants: number;
+    required: number;
+    completed: number;
+    in_progress: number;
+    gap: number;
+    coverage_pct: number;
+  }>;
+  city_coverage_snapshot: Array<{
+    city: string;
+    applicants: number;
+    required: number;
+    completed: number;
+    gap: number;
+    coverage_pct: number;
+  }>;
   insights: {
     highest_demand_activity: string;
     lowest_demand_activity: string;
@@ -182,6 +237,8 @@ export function Analytics() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
+  const [activeDeepDiveTab, setActiveDeepDiveTab] = useState<'overview' | 'others' | 'subarea' | 'cityCoverage'>('overview');
+  const [selectedSubAreaCity, setSelectedSubAreaCity] = useState('');
 
   const fetchData = useCallback(async (silent = false) => {
     try {
@@ -209,6 +266,15 @@ export function Analytics() {
     const interval = setInterval(() => fetchData(true), 30000);
     return () => clearInterval(interval);
   }, [fetchData]);
+
+  useEffect(() => {
+    if (!data) return;
+    const firstCity = data.city_breakdown?.[0]?.city || '';
+    const knownCities = new Set((data.sub_area_requirement_breakdown || []).map((row) => row.city));
+    if (!selectedSubAreaCity || !knownCities.has(selectedSubAreaCity)) {
+      setSelectedSubAreaCity(firstCity);
+    }
+  }, [data, selectedSubAreaCity]);
 
   const topCities = useMemo(
     () => (data?.city_breakdown || []).slice(0, 6),
@@ -250,6 +316,47 @@ export function Analytics() {
         return bGap - aGap || b.potential_leads - a.potential_leads;
       })
       .slice(0, 5),
+    [data]
+  );
+  const mainActivitySet = useMemo(
+    () => new Set(riskActivities.map((row) => row.activity)),
+    [riskActivities]
+  );
+  const otherActivitiesRows = useMemo(
+    () => (data?.activity_breakdown || [])
+      .filter((row) => !mainActivitySet.has(row.activity))
+      .slice()
+      .sort((a, b) => b.leads - a.leads || b.potential_leads - a.potential_leads),
+    [data, mainActivitySet]
+  );
+  const otherActivitiesSummary = useMemo(
+    () => otherActivitiesRows.reduce(
+      (acc, row) => {
+        const required = row.required_count ?? row.supply_effective;
+        const completed = row.completed_count ?? row.supply_ready;
+        acc.applicants += row.leads;
+        acc.potential += row.potential_leads;
+        acc.openGap += Math.max(required - completed, 0);
+        return acc;
+      },
+      { applicants: 0, potential: 0, openGap: 0 }
+    ),
+    [otherActivitiesRows]
+  );
+  const subAreaCities = useMemo(
+    () => Array.from(new Set((data?.sub_area_requirement_breakdown || []).map((row) => row.city))).sort(),
+    [data]
+  );
+  const subAreaRequirementRows = useMemo(() => {
+    if (!data) return [];
+    const city = selectedSubAreaCity || data.city_breakdown?.[0]?.city;
+    return (data.sub_area_requirement_breakdown || [])
+      .filter((row) => row.city === city)
+      .slice()
+      .sort((a, b) => b.gap - a.gap || b.required - a.required || b.applicants - a.applicants);
+  }, [data, selectedSubAreaCity]);
+  const cityCoverageRows = useMemo(
+    () => (data?.city_coverage_snapshot || []).slice().sort((a, b) => b.gap - a.gap || b.applicants - a.applicants),
     [data]
   );
 
@@ -420,52 +527,231 @@ export function Analytics() {
       <details className="bg-white border border-slate-200 rounded-xl p-4">
         <summary className="cursor-pointer text-sm font-semibold text-slate-800">Deep Dive (charts & full details)</summary>
         <div className="mt-4 space-y-4">
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-            <div className="border border-slate-200 rounded-xl p-4">
-              <h3 className="text-sm font-semibold text-slate-700 mb-3">Applicants vs Required (Top Priorities)</h3>
-              <div className="h-80">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={topPriorityActivities}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                    <XAxis dataKey="activity" tick={{ fontSize: 11 }} interval={0} angle={-20} textAnchor="end" height={70} />
-                    <YAxis allowDecimals={false} />
-                    <Tooltip />
-                    <Legend />
-                    <Bar dataKey="leads" fill="#4f46e5" name="Applicants" radius={[4, 4, 0, 0]} />
-                    <Bar dataKey="required_count" fill="#0ea5e9" name="Required" radius={[4, 4, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
+          <div className="flex flex-wrap gap-2">
+            {[
+              { id: 'overview', label: 'Overview' },
+              { id: 'others', label: 'Others Drilldown' },
+              { id: 'subarea', label: 'Sub-area Leader Requirement' },
+              { id: 'cityCoverage', label: 'City Coverage Snapshot' },
+            ].map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setActiveDeepDiveTab(tab.id as 'overview' | 'others' | 'subarea' | 'cityCoverage')}
+                className={`px-3 py-1.5 text-xs font-semibold rounded-full border transition-colors ${
+                  activeDeepDiveTab === tab.id
+                    ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
+                    : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+
+          {activeDeepDiveTab === 'overview' && (
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                <div className="border border-slate-200 rounded-xl p-4">
+                  <h3 className="text-sm font-semibold text-slate-700 mb-3">Applicants vs Required (Top Priorities)</h3>
+                  <div className="h-80">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={topPriorityActivities}>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                        <XAxis dataKey="activity" tick={{ fontSize: 11 }} interval={0} angle={-20} textAnchor="end" height={70} />
+                        <YAxis allowDecimals={false} />
+                        <Tooltip />
+                        <Legend />
+                        <Bar dataKey="leads" fill="#4f46e5" name="Applicants" radius={[4, 4, 0, 0]} />
+                        <Bar dataKey="required_count" fill="#0ea5e9" name="Required" radius={[4, 4, 0, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+
+                <div className="border border-slate-200 rounded-xl p-4">
+                  <h3 className="text-sm font-semibold text-slate-700 mb-3">City Lead Share</h3>
+                  <div className="h-80">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <PieChart>
+                        <Pie data={topCities} dataKey="leads" nameKey="city" cx="50%" cy="50%" outerRadius={108} label>
+                          {topCities.map((entry, index) => (
+                            <Cell key={entry.city} fill={PIE_COLORS[index % PIE_COLORS.length]} />
+                          ))}
+                        </Pie>
+                        <Tooltip />
+                      </PieChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+              </div>
+
+              <div className="border border-slate-200 rounded-xl p-4">
+                <h3 className="text-sm font-semibold text-slate-700 mb-2">Key Insights</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm text-slate-700">
+                  <p>{data.insights.highest_demand_activity}</p>
+                  <p>{data.insights.top_city}</p>
+                  <p>{data.insights.largest_gap}</p>
+                  <p>{data.insights.best_combo}</p>
+                  <p>{data.insights.lowest_demand_activity}</p>
+                  <p>{data.insights.weakest_city}</p>
+                </div>
               </div>
             </div>
+          )}
 
-            <div className="border border-slate-200 rounded-xl p-4">
-              <h3 className="text-sm font-semibold text-slate-700 mb-3">City Lead Share</h3>
-              <div className="h-80">
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie data={topCities} dataKey="leads" nameKey="city" cx="50%" cy="50%" outerRadius={108} label>
-                      {topCities.map((entry, index) => (
-                        <Cell key={entry.city} fill={PIE_COLORS[index % PIE_COLORS.length]} />
+          {activeDeepDiveTab === 'others' && (
+            <div className="space-y-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="border border-slate-200 rounded-lg p-3 bg-slate-50">
+                  <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Other Activities</div>
+                  <div className="text-lg font-bold text-slate-900 mt-1">{otherActivitiesRows.length}</div>
+                </div>
+                <div className="border border-slate-200 rounded-lg p-3 bg-slate-50">
+                  <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Other Applicants</div>
+                  <div className="text-lg font-bold text-slate-900 mt-1">{otherActivitiesSummary.applicants}</div>
+                </div>
+                <div className="border border-slate-200 rounded-lg p-3 bg-slate-50">
+                  <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Open Gap</div>
+                  <div className="text-lg font-bold text-slate-900 mt-1">{otherActivitiesSummary.openGap}</div>
+                </div>
+              </div>
+              {otherActivitiesRows.length === 0 ? (
+                <p className="text-sm text-slate-500 border border-slate-200 rounded-lg p-4">No non-main activities found yet.</p>
+              ) : (
+                <div className="overflow-x-auto border border-slate-200 rounded-xl">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="bg-slate-50">
+                        <th className="px-4 py-2 text-left text-slate-600">Activity</th>
+                        <th className="px-3 py-2 text-right text-slate-600">Applicants</th>
+                        <th className="px-3 py-2 text-right text-slate-600">Required</th>
+                        <th className="px-3 py-2 text-right text-slate-600">Completed</th>
+                        <th className="px-3 py-2 text-right text-slate-600">Gap</th>
+                        <th className="px-3 py-2 text-right text-slate-600">Potential Leads</th>
+                        <th className="px-4 py-2 text-left text-slate-600">Priority</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {otherActivitiesRows.map((row) => {
+                        const required = row.required_count ?? row.supply_effective;
+                        const completed = row.completed_count ?? row.supply_ready;
+                        const gap = Math.max(required - completed, 0);
+                        return (
+                        <tr key={`other-activity-${row.activity}`} className="border-t border-slate-100">
+                          <td className="px-4 py-2 text-slate-800">{row.activity}</td>
+                          <td className="px-3 py-2 text-right text-slate-700">{row.leads}</td>
+                          <td className="px-3 py-2 text-right text-slate-700">{required}</td>
+                          <td className="px-3 py-2 text-right text-slate-700">{completed}</td>
+                          <td className="px-3 py-2 text-right font-semibold text-red-700">{gap}</td>
+                          <td className="px-3 py-2 text-right text-slate-700">{row.potential_leads}</td>
+                          <td className="px-4 py-2">
+                            <span className={`px-2 py-0.5 rounded-full text-xs border ${
+                              row.priority_tag === 'High'
+                                ? 'bg-red-50 text-red-700 border-red-200'
+                                : row.priority_tag === 'Medium'
+                                  ? 'bg-amber-50 text-amber-700 border-amber-200'
+                                  : 'bg-slate-50 text-slate-600 border-slate-200'
+                            }`}>
+                              {row.priority_tag}
+                            </span>
+                          </td>
+                        </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
+
+          {activeDeepDiveTab === 'subarea' && (
+            <div className="space-y-3">
+              <div className="flex items-center gap-2">
+                <label htmlFor="sub-area-city" className="text-xs font-semibold text-slate-600 uppercase tracking-wide">City</label>
+                <select
+                  id="sub-area-city"
+                  value={selectedSubAreaCity}
+                  onChange={(e) => setSelectedSubAreaCity(e.target.value)}
+                  className="px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white text-slate-700"
+                >
+                  {(subAreaCities.length > 0 ? subAreaCities : ['']).map((city) => (
+                    <option key={city || 'none'} value={city}>{city || 'No city data'}</option>
+                  ))}
+                </select>
+              </div>
+              {subAreaRequirementRows.length === 0 ? (
+                <p className="text-sm text-slate-500 border border-slate-200 rounded-lg p-4">
+                  No sub-area leader requirement data available for this city yet.
+                </p>
+              ) : (
+                <div className="overflow-x-auto border border-slate-200 rounded-xl">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="bg-slate-50">
+                        <th className="px-4 py-2 text-left text-slate-600">Sub-area</th>
+                        <th className="px-4 py-2 text-left text-slate-600">Activity</th>
+                        <th className="px-3 py-2 text-right text-slate-600">Applicants</th>
+                        <th className="px-3 py-2 text-right text-slate-600">Required</th>
+                        <th className="px-3 py-2 text-right text-slate-600">Completed</th>
+                        <th className="px-3 py-2 text-right text-slate-600">Gap</th>
+                        <th className="px-3 py-2 text-right text-slate-600">Coverage%</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {subAreaRequirementRows.map((row, idx) => (
+                        <tr key={`subarea-${row.city}-${row.sub_area}-${row.activity}-${idx}`} className="border-t border-slate-100">
+                          <td className="px-4 py-2 text-slate-800">{row.sub_area || 'Unknown'}</td>
+                          <td className="px-4 py-2 text-slate-700">{row.activity}</td>
+                          <td className="px-3 py-2 text-right text-slate-700">{row.applicants}</td>
+                          <td className="px-3 py-2 text-right text-slate-700">{row.required}</td>
+                          <td className="px-3 py-2 text-right text-slate-700">{row.completed}</td>
+                          <td className="px-3 py-2 text-right font-semibold text-red-700">{row.gap}</td>
+                          <td className="px-3 py-2 text-right text-slate-700">{row.coverage_pct}%</td>
+                        </tr>
                       ))}
-                    </Pie>
-                    <Tooltip />
-                  </PieChart>
-                </ResponsiveContainer>
-              </div>
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
-          </div>
+          )}
 
-          <div className="border border-slate-200 rounded-xl p-4">
-            <h3 className="text-sm font-semibold text-slate-700 mb-2">Key Insights</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm text-slate-700">
-              <p>{data.insights.highest_demand_activity}</p>
-              <p>{data.insights.top_city}</p>
-              <p>{data.insights.largest_gap}</p>
-              <p>{data.insights.best_combo}</p>
-              <p>{data.insights.lowest_demand_activity}</p>
-              <p>{data.insights.weakest_city}</p>
+          {activeDeepDiveTab === 'cityCoverage' && (
+            <div className="space-y-3">
+              {cityCoverageRows.length === 0 ? (
+                <p className="text-sm text-slate-500 border border-slate-200 rounded-lg p-4">No city coverage data available yet.</p>
+              ) : (
+                <div className="overflow-x-auto border border-slate-200 rounded-xl">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="bg-slate-50">
+                        <th className="px-4 py-2 text-left text-slate-600">City</th>
+                        <th className="px-3 py-2 text-right text-slate-600">Applicants</th>
+                        <th className="px-3 py-2 text-right text-slate-600">Required</th>
+                        <th className="px-3 py-2 text-right text-slate-600">Completed</th>
+                        <th className="px-3 py-2 text-right text-slate-600">Gap</th>
+                        <th className="px-3 py-2 text-right text-slate-600">Coverage%</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {cityCoverageRows.map((row) => (
+                        <tr key={`city-coverage-${row.city}`} className="border-t border-slate-100">
+                          <td className="px-4 py-2 text-slate-800">{row.city}</td>
+                          <td className="px-3 py-2 text-right text-slate-700">{row.applicants}</td>
+                          <td className="px-3 py-2 text-right text-slate-700">{row.required}</td>
+                          <td className="px-3 py-2 text-right text-slate-700">{row.completed}</td>
+                          <td className="px-3 py-2 text-right font-semibold text-red-700">{row.gap}</td>
+                          <td className="px-3 py-2 text-right text-slate-700">{row.coverage_pct}%</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
-          </div>
+          )}
         </div>
       </details>
 
