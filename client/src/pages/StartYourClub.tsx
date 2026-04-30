@@ -118,7 +118,7 @@ const SECTION_SUBSECTIONS: Record<string, SubsectionConfig[]> = {
     { id: 'not_interested', label: 'Not Interested', borderClass: 'border-l-slate-400', bgClass: 'bg-slate-50/60', headerClass: 'text-slate-600', countClass: 'bg-slate-100 text-slate-600',
       filter: (app: Application) => app.status === 'NOT_INTERESTED' },
     { id: 'potential_leads', label: 'Potential Leads', borderClass: 'border-l-violet-400', bgClass: 'bg-violet-50/60', headerClass: 'text-violet-700', countClass: 'bg-violet-100 text-violet-700',
-      filter: (app: Application) => app.status === 'REJECTED' && !!app.is_potential_lead_rejection },
+      filter: (app: Application) => app.status === 'ON_HOLD' || (app.status === 'REJECTED' && !!app.is_potential_lead_rejection) },
     { id: 'rejected_screening', label: 'Rejected (Screening)', borderClass: 'border-l-red-400', bgClass: 'bg-red-50/60', headerClass: 'text-red-700', countClass: 'bg-red-100 text-red-700',
       filter: (app: Application) => app.status === 'REJECTED' && !app.is_potential_lead_rejection && ['SUBMITTED', 'UNDER_REVIEW', 'ON_HOLD'].includes(app.rejected_from_status || '') },
     { id: 'rejected_interview', label: 'Rejected (Interview)', borderClass: 'border-l-orange-400', bgClass: 'bg-orange-50/60', headerClass: 'text-orange-700', countClass: 'bg-orange-100 text-orange-700',
@@ -134,7 +134,7 @@ const SUBSECTION_TO_STATUSES: Record<string, Record<string, string[]>> = {
   submitted: { new: ['SUBMITTED'], under_review: ['UNDER_REVIEW'] },
   interview: { pending: ['INTERVIEW_PENDING'], scheduled: ['INTERVIEW_SCHEDULED'], hold_interview: ['ON_HOLD'], done: ['INTERVIEW_DONE'] },
   selected: { selected: ['SELECTED'], onboarded: ['CLUB_CREATED'], onboarded_incomplete: ['CLUB_CREATED'], onboarded_complete: ['CLUB_CREATED'] },
-  dropped: { not_interested: ['NOT_INTERESTED'], potential_leads: ['REJECTED'], rejected_screening: ['REJECTED'], rejected_interview: ['REJECTED'], rejected_other: ['REJECTED'] },
+  dropped: { not_interested: ['NOT_INTERESTED'], potential_leads: ['ON_HOLD', 'REJECTED'], rejected_screening: ['REJECTED'], rejected_interview: ['REJECTED'], rejected_other: ['REJECTED'] },
 };
 
 // Reverse lookup: status → subsection (returns null if ambiguous)
@@ -862,7 +862,7 @@ function LeadRow({
           <span className={`inline-flex items-center px-2 py-0.5 text-[11px] font-medium rounded-full border ${cfg.badgeClass}`}>
             {cfg.label}
           </span>
-          {app.status === 'REJECTED' && app.is_potential_lead_rejection && (
+          {(app.status === 'ON_HOLD' || (app.status === 'REJECTED' && app.is_potential_lead_rejection)) && (
             <span className="ml-1.5 inline-flex items-center px-2 py-0.5 text-[10px] font-medium rounded-full border bg-violet-50 text-violet-700 border-violet-200">
               Potential lead
             </span>
