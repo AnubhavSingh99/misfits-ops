@@ -743,7 +743,11 @@ function LeadRow({
   const handleReject = async () => {
     if (!canSubmitRejection) return;
     const body: any = { rejection_reason: normalizedRejectionReason };
+    const interviewNotScheduledNote = interviewNotScheduledComment.trim();
     if (normalizedRejectionNote) body.rejection_note = normalizedRejectionNote;
+    if (!body.rejection_note && detail?.status === 'INTERVIEW_PENDING' && interviewNotScheduledNote) {
+      body.rejection_note = interviewNotScheduledNote;
+    }
     if (requiresPotentialLeadDecision) body.potential_lead = isPotentialLead;
     // Include ratings if we're in review states
     if (['UNDER_REVIEW', 'ON_HOLD'].includes(detail?.status || '')) {
@@ -1594,7 +1598,14 @@ function LeadRow({
                             </div>
                           )}
                           {!showRejectForm ? (
-                            <button onClick={() => { resetInterviewNotScheduledForm(); resetAddCommentForm(); setShowRejectForm(true); }} disabled={!allInterviewRated} className="w-full py-2 text-xs font-medium text-red-600 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100 disabled:opacity-40 disabled:cursor-not-allowed" title={!allInterviewRated ? "Rate all dimensions before rejecting" : ""}>Reject</button>
+                            <button
+                              onClick={() => { resetInterviewNotScheduledForm(); resetAddCommentForm(); setShowRejectForm(true); }}
+                              disabled={detail.status !== 'INTERVIEW_PENDING' && !allInterviewRated}
+                              className="w-full py-2 text-xs font-medium text-red-600 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100 disabled:opacity-40 disabled:cursor-not-allowed"
+                              title={detail.status !== 'INTERVIEW_PENDING' && !allInterviewRated ? "Rate all dimensions before rejecting" : ""}
+                            >
+                              Reject
+                            </button>
                           ) : (
                             <div className="p-3 bg-red-50 rounded-lg border border-red-200">
                               {renderRejectionFields()}
