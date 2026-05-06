@@ -1,7 +1,7 @@
 import express from 'express';
 import { logger } from '../utils/logger';
 import { calculateClubHealth, calculateSystemHealth } from '../services/healthEngine';
-import { queryProduction } from '../services/database';
+import { queryProduction, queryLocal } from '../services/database';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -331,6 +331,21 @@ router.get('/clubs', async (req, res) => {
 
     const result = await queryMisfits(healthQuery, queryParams.length > 0 ? queryParams : undefined);
 
+    let priorityClubPkSet = new Set<number>();
+    try {
+      const priorityResult = await queryLocal(`
+        SELECT club_pk
+        FROM health_club_priorities
+      `);
+      priorityClubPkSet = new Set(
+        (priorityResult.rows || [])
+          .map((row: any) => Number(row.club_pk))
+          .filter((value: number) => Number.isInteger(value) && value > 0)
+      );
+    } catch (priorityError) {
+      logger.warn('Failed to load club priorities from local DB:', priorityError);
+    }
+
     if (result.rows && result.rows.length > 0) {
       // Process each club through the health engine using last week data
       const clubs = result.rows.map(row => {
@@ -361,12 +376,14 @@ router.get('/clubs', async (req, res) => {
         const healthResult = calculateClubHealth(clubHealthData);
 
         return {
+          club_pk: row.club_pk,
           id: row.club_id,
           name: row.club_name,
           club_status: row.club_status,
           activity: row.activity || 'Unknown',
           city: row.city || 'Unknown',
           area: row.area || 'Unknown',
+          is_priority: priorityClubPkSet.has(Number(row.club_pk)),
           capacity: healthResult.capacity,
           capacity_health: healthResult.capacity_health,
           repeat_rate: healthResult.repeat_rate,
@@ -455,6 +472,189 @@ router.get('/clubs', async (req, res) => {
       ...buildHealthFallback(),
       warning: error instanceof Error ? error.message : 'Unknown database error'
     });
+  }
+});
+
+router.get('/clubs/:clubPk/comments', async (req, res) => {
+  try {
+    const clubPk = Number(req.params.clubPk);
+
+    if (!Number.isInteger(clubPk) || clubPk <= 0) {
+      return res.status(400).json({ success: false, error: 'Invalid club id' });
+    }
+
+    const result = await queryLocal(
+      `
+        SELECT id, club_pk, club_id, club_name, club_city, club_area, club_activity, health_status, author_name, comment_text, created_at
+        FROM health_club_comments
+        WHERE club_pk = $1
+        ORDER BY created_at DESC
+      `,
+      [clubPk]
+    );
+
+    res.json({
+      success: true,
+      comments: result.rows || [],
+    });
+  } catch (error) {
+    logger.error('Failed to fetch health club comments:', error);
+    res.status(500).json({ success: false, error: 'Failed to fetch comments' });
+  }
+});
+
+router.post('/clubs/:clubPk/comments', async (req, res) => {
+  try {
+    const clubPk = Number(req.params.clubPk);
+    const {
+      club_id,
+      club_name,
+      club_city,
+      club_area,
+      club_activity,
+      health_status,
+      author_name,
+      comment_text,
+    } = req.body || {};
+
+    if (!Number.isInteger(clubPk) || clubPk <= 0) {
+      return res.status(400).json({ success: false, error: 'Invalid club id' });
+    }
+
+    const normalizedComment = typeof comment_text === 'string' ? comment_text.trim() : '';
+    const normalizedAuthor = typeof author_name === 'string' ? author_name.trim() : '';
+
+    if (!normalizedComment) {
+      return res.status(400).json({ success: false, error: 'Comment text is required' });
+    }
+
+    const result = await queryLocal(
+      `
+        INSERT INTO health_club_comments (
+          club_pk,
+          club_id,
+          club_name,
+          club_city,
+          club_area,
+          club_activity,
+          health_status,
+          author_name,
+          comment_text
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        RETURNING id, club_pk, club_id, club_name, club_city, club_area, club_activity, health_status, author_name, comment_text, created_at
+      `,
+      [
+        clubPk,
+        club_id || null,
+        club_name || null,
+        club_city || null,
+        club_area || null,
+        club_activity || null,
+        health_status || null,
+        normalizedAuthor || 'Operations',
+        normalizedComment,
+      ]
+    );
+
+    res.json({
+      success: true,
+      comment: result.rows[0] || null,
+    });
+  } catch (error) {
+    logger.error('Failed to save health club comment:', error);
+    res.status(500).json({ success: false, error: 'Failed to save comment' });
+  }
+});
+
+router.post('/clubs/:clubPk/priority', async (req, res) => {
+  try {
+    const clubPk = Number(req.params.clubPk);
+    const {
+      club_id,
+      club_name,
+      club_city,
+      club_area,
+      club_activity,
+      health_status,
+      priority_note,
+      added_by,
+    } = req.body || {};
+
+    if (!Number.isInteger(clubPk) || clubPk <= 0) {
+      return res.status(400).json({ success: false, error: 'Invalid club id' });
+    }
+
+    const normalizedName = typeof club_name === 'string' ? club_name.trim() : '';
+    if (!normalizedName) {
+      return res.status(400).json({ success: false, error: 'Club name is required' });
+    }
+
+    const result = await queryLocal(
+      `
+        INSERT INTO health_club_priorities (
+          club_pk,
+          club_id,
+          club_name,
+          club_city,
+          club_area,
+          club_activity,
+          health_status,
+          priority_note,
+          added_by,
+          updated_at
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, CURRENT_TIMESTAMP)
+        ON CONFLICT (club_pk)
+        DO UPDATE SET
+          club_id = EXCLUDED.club_id,
+          club_name = EXCLUDED.club_name,
+          club_city = EXCLUDED.club_city,
+          club_area = EXCLUDED.club_area,
+          club_activity = EXCLUDED.club_activity,
+          health_status = EXCLUDED.health_status,
+          priority_note = EXCLUDED.priority_note,
+          added_by = EXCLUDED.added_by,
+          updated_at = CURRENT_TIMESTAMP
+        RETURNING id, club_pk, club_id, club_name, club_city, club_area, club_activity, health_status, priority_note, added_by, created_at, updated_at
+      `,
+      [
+        clubPk,
+        club_id || null,
+        normalizedName,
+        club_city || null,
+        club_area || null,
+        club_activity || null,
+        health_status || null,
+        typeof priority_note === 'string' ? priority_note.trim() : null,
+        typeof added_by === 'string' && added_by.trim() ? added_by.trim() : 'Operations',
+      ]
+    );
+
+    res.json({
+      success: true,
+      priority: result.rows[0] || null,
+    });
+  } catch (error) {
+    logger.error('Failed to save health club priority:', error);
+    res.status(500).json({ success: false, error: 'Failed to save priority' });
+  }
+});
+
+router.delete('/clubs/:clubPk/priority', async (req, res) => {
+  try {
+    const clubPk = Number(req.params.clubPk);
+
+    if (!Number.isInteger(clubPk) || clubPk <= 0) {
+      return res.status(400).json({ success: false, error: 'Invalid club id' });
+    }
+
+    await queryLocal(`DELETE FROM health_club_priorities WHERE club_pk = $1`, [clubPk]);
+
+    res.json({ success: true });
+  } catch (error) {
+    logger.error('Failed to remove health club priority:', error);
+    res.status(500).json({ success: false, error: 'Failed to remove priority' });
   }
 });
 

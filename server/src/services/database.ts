@@ -429,6 +429,39 @@ async function runMigrations() {
     `);
 
     await queryLocal(`
+      CREATE TABLE IF NOT EXISTS health_club_priorities (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        club_pk INTEGER NOT NULL UNIQUE,
+        club_id VARCHAR(100),
+        club_name VARCHAR(255) NOT NULL,
+        club_city VARCHAR(255),
+        club_area VARCHAR(255),
+        club_activity VARCHAR(255),
+        health_status VARCHAR(50),
+        priority_note TEXT,
+        added_by VARCHAR(255) DEFAULT 'Operations',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    await queryLocal(`
+      CREATE TABLE IF NOT EXISTS health_club_comments (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        club_pk INTEGER NOT NULL,
+        club_id VARCHAR(100),
+        club_name VARCHAR(255) NOT NULL,
+        club_city VARCHAR(255),
+        club_area VARCHAR(255),
+        club_activity VARCHAR(255),
+        health_status VARCHAR(50),
+        author_name VARCHAR(255) NOT NULL,
+        comment_text TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    await queryLocal(`
       CREATE TABLE IF NOT EXISTS system_patterns (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         pattern_type VARCHAR(100) NOT NULL,
@@ -536,6 +569,8 @@ async function runMigrations() {
     await queryLocal('CREATE INDEX IF NOT EXISTS idx_tasks_assigned_to ON intelligent_tasks(assigned_to);');
     await queryLocal('CREATE INDEX IF NOT EXISTS idx_tasks_club_id ON intelligent_tasks(club_id);');
     await queryLocal('CREATE INDEX IF NOT EXISTS idx_notifications_recipient ON smart_notifications(recipient);');
+    await queryLocal('CREATE INDEX IF NOT EXISTS idx_health_club_priorities_created_at ON health_club_priorities(created_at DESC);');
+    await queryLocal('CREATE INDEX IF NOT EXISTS idx_health_club_comments_club_pk_created_at ON health_club_comments(club_pk, created_at DESC);');
 
     // Create POC structure table
     await queryLocal(`

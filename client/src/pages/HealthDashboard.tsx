@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import {
   Activity,
   Users,
@@ -20,19 +20,35 @@ import {
   BarChart3,
   Info,
   X,
-  Heart
+  Heart,
+  Bell,
+  MessageSquarePlus,
+  FileSpreadsheet,
 } from 'lucide-react';
+import * as XLSX from 'xlsx';
 import ScalingPlanner from '../components/ScalingPlanner';
 import { API_URL } from '../config/api';
 import { getTeamForClub, TEAMS, TEAM_KEYS, TeamKey } from '../../../shared/teamConfig';
 import { MultiSelectDropdown } from '../components/ui/MultiSelectDropdown';
+import ClubMeetupHoverPopup, {
+  type ClubMeetupPopupData,
+  type ClubMeetupPopupPosition,
+} from '../components/ClubMeetupHoverPopup';
+import {
+  HealthClubCommentModal,
+  HealthDashboardPriorityDrawer,
+  type HealthClubComment,
+  type HealthDashboardClub,
+} from '../components/HealthDashboardOverlays';
 
 interface ClubHealth {
+  club_pk?: number;
   id: number;
   name: string;
   activity: string;
   city: string;
   area: string;
+  club_created_date?: string | null;
   club_status: 'ACTIVE' | 'INACTIVE';
   capacity: number;
   capacity_health?: 'Green' | 'Yellow' | 'Red' | 'Gray';
@@ -51,6 +67,7 @@ interface ClubHealth {
     rating: number;
     revenue: number;
   };
+  is_priority?: boolean;
   last_week_metrics?: {
     capacity: number;
     repeat_rate: number;
@@ -86,6 +103,8 @@ interface HealthMetrics {
   week_over_week_change?: number;
 }
 
+type HealthPopupClub = ClubHealth | null;
+
 // No mock data - using only real database data
 
 export function HealthDashboard() {
@@ -114,12 +133,191 @@ export function HealthDashboard() {
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [showHealthInfo, setShowHealthInfo] = useState(false);
+  const [hoveredClub, setHoveredClub] = useState<HealthPopupClub>(null);
+  const [hoveredClubPosition, setHoveredClubPosition] = useState<ClubMeetupPopupPosition | null>(null);
+  const [hoveredClubLoadingId, setHoveredClubLoadingId] = useState<number | null>(null);
+  const [hoveredClubError, setHoveredClubError] = useState<string | null>(null);
+  const [hoveredClubDataById, setHoveredClubDataById] = useState<Record<number, ClubMeetupPopupData>>({});
+  const popupHideTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const popupHoverRef = useRef(false);
+  const hoveredClubIdRef = useRef<number | null>(null);
+  const popupRequestSeqRef = useRef(0);
+  const commentLoadSeqRef = useRef(0);
+  const [reloadToken, setReloadToken] = useState(0);
+  const [commentModalClub, setCommentModalClub] = useState<HealthPopupClub>(null);
+  const [clubCommentsById, setClubCommentsById] = useState<Record<number, HealthClubComment[]>>({});
+  const [commentAuthorName, setCommentAuthorName] = useState(() => {
+    if (typeof window === 'undefined') return 'Operations';
+    return window.localStorage.getItem('health-dashboard-comment-author') || 'Operations';
+  });
+  const [commentText, setCommentText] = useState('');
+  const [commentLoadingId, setCommentLoadingId] = useState<number | null>(null);
+  const [commentSaving, setCommentSaving] = useState(false);
+  const [showPriorityDrawer, setShowPriorityDrawer] = useState(false);
+
+  const getClubKey = useCallback((club: Pick<ClubHealth, 'club_pk' | 'id'>) => club.club_pk ?? Number(club.id), []);
+
+  const priorityClubs = useMemo(() => {
+    return clubs
+      .filter(club => club.is_priority)
+      .sort((a, b) => {
+        const aTime = new Date(a.club_created_date || 0).getTime();
+        const bTime = new Date(b.club_created_date || 0).getTime();
+        return bTime - aTime;
+      });
+  }, [clubs]);
+
+  const priorityDigest = useMemo(() => {
+    return priorityClubs.map(club => `${getClubKey(club)}:${club.club_created_date || ''}`).join('|');
+  }, [getClubKey, priorityClubs]);
+
+  const loadClubComments = useCallback(async (club: ClubHealth) => {
+    const clubPk = getClubKey(club);
+    const requestSeq = ++commentLoadSeqRef.current;
+
+    try {
+      setCommentLoadingId(clubPk);
+      const response = await fetch(`${API_URL}/api/health/clubs/${clubPk}/comments`);
+
+      if (!response.ok) {
+        throw new Error('Failed to load comments');
+      }
+
+      const result = await response.json();
+      if (commentLoadSeqRef.current !== requestSeq) {
+        return;
+      }
+
+      setClubCommentsById(prev => ({
+        ...prev,
+        [clubPk]: result.comments || [],
+      }));
+    } catch (error) {
+      console.error('Failed to load comments:', error);
+      if (commentLoadSeqRef.current === requestSeq) {
+        setClubCommentsById(prev => ({
+          ...prev,
+          [clubPk]: prev[clubPk] || [],
+        }));
+      }
+    } finally {
+      if (commentLoadSeqRef.current === requestSeq) {
+        setCommentLoadingId(null);
+      }
+    }
+  }, [getClubKey]);
+
+  const openCommentModal = useCallback((club: ClubHealth) => {
+    setCommentModalClub(club);
+    setCommentText('');
+    void loadClubComments(club);
+  }, [loadClubComments]);
+
+  const togglePriority = useCallback(async (club: ClubHealth) => {
+    const clubPk = getClubKey(club);
+    const isPriority = !!club.is_priority;
+
+    try {
+      if (isPriority) {
+        const response = await fetch(`${API_URL}/api/health/clubs/${clubPk}/priority`, {
+          method: 'DELETE',
+        });
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.error || 'Failed to remove priority');
+        }
+      } else {
+        const response = await fetch(`${API_URL}/api/health/clubs/${clubPk}/priority`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            club_id: String(club.id),
+            club_name: club.name,
+            club_city: club.city,
+            club_area: club.area,
+            club_activity: club.activity,
+            health_status: club.health_status,
+            added_by: commentAuthorName.trim() || 'Operations',
+          }),
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.error || 'Failed to add priority');
+        }
+      }
+
+      setClubs(prev => prev.map(item => (
+        getClubKey(item) === clubPk
+          ? { ...item, is_priority: !isPriority }
+          : item
+      )));
+      setShowPriorityDrawer(true);
+    } catch (error) {
+      console.error('Priority update failed:', error);
+      window.alert(error instanceof Error ? error.message : 'Failed to update priority');
+    }
+  }, [commentAuthorName, getClubKey]);
+
+  const saveComment = useCallback(async () => {
+    if (!commentModalClub) return;
+
+    const text = commentText.trim();
+    const author = commentAuthorName.trim();
+    if (!text || !author) return;
+
+    const clubPk = getClubKey(commentModalClub);
+
+    try {
+      setCommentSaving(true);
+      const response = await fetch(`${API_URL}/api/health/clubs/${clubPk}/comments`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          club_id: String(commentModalClub.id),
+          club_name: commentModalClub.name,
+          club_city: commentModalClub.city,
+          club_area: commentModalClub.area,
+          club_activity: commentModalClub.activity,
+          health_status: commentModalClub.health_status,
+          author_name: author,
+          comment_text: text,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || 'Failed to save comment');
+      }
+
+      const result = await response.json();
+      const savedComment = result.comment as HealthClubComment | undefined;
+      if (savedComment) {
+        setClubCommentsById(prev => ({
+          ...prev,
+          [clubPk]: [savedComment, ...(prev[clubPk] || [])],
+        }));
+      } else {
+        await loadClubComments(commentModalClub);
+      }
+
+      setCommentText('');
+      if (typeof window !== 'undefined') {
+        window.localStorage.setItem('health-dashboard-comment-author', author);
+      }
+    } catch (error) {
+      console.error('Failed to save comment:', error);
+      window.alert(error instanceof Error ? error.message : 'Failed to save comment');
+    } finally {
+      setCommentSaving(false);
+    }
+  }, [commentAuthorName, commentModalClub, commentText, getClubKey, loadClubComments]);
 
   useEffect(() => {
     fetchHealthData();
 
     // Set up auto-refresh every 30 seconds if enabled
-    let interval: NodeJS.Timeout;
+    let interval: NodeJS.Timeout | undefined;
     if (autoRefresh) {
       interval = setInterval(() => {
         fetchHealthData();
@@ -129,7 +327,7 @@ export function HealthDashboard() {
     return () => {
       if (interval) clearInterval(interval);
     };
-  }, [selectedClubStatus, autoRefresh]);
+  }, [selectedClubStatus, autoRefresh, reloadToken]);
 
   const fetchHealthData = async () => {
     try {
@@ -159,6 +357,21 @@ export function HealthDashboard() {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    if (!priorityClubs.length) {
+      setShowPriorityDrawer(false);
+      return;
+    }
+
+    const seenDigest = typeof window !== 'undefined'
+      ? window.localStorage.getItem('health-dashboard-priority-digest')
+      : null;
+
+    if (seenDigest !== priorityDigest) {
+      setShowPriorityDrawer(true);
+    }
+  }, [priorityClubs.length, priorityDigest]);
 
   const getHealthStatusColor = (status: string) => {
     switch (status) {
@@ -282,6 +495,231 @@ export function HealthDashboard() {
     }));
   };
 
+  const hideHoverPopup = useCallback(() => {
+    if (popupHideTimeoutRef.current) {
+      clearTimeout(popupHideTimeoutRef.current);
+      popupHideTimeoutRef.current = null;
+    }
+
+    if (hoveredClubIdRef.current !== null) {
+      hoveredClubIdRef.current = null;
+    }
+
+    setHoveredClub(null);
+    setHoveredClubPosition(null);
+    setHoveredClubLoadingId(null);
+    setHoveredClubError(null);
+  }, []);
+
+  const scheduleHideHoverPopup = useCallback(() => {
+    if (popupHideTimeoutRef.current) {
+      clearTimeout(popupHideTimeoutRef.current);
+    }
+
+    popupHideTimeoutRef.current = setTimeout(() => {
+      if (!popupHoverRef.current) {
+        hideHoverPopup();
+      }
+    }, 80);
+  }, [hideHoverPopup]);
+
+  const loadClubMeetupData = useCallback(async (clubId: number) => {
+    const requestSeq = ++popupRequestSeqRef.current;
+
+    try {
+      setHoveredClubLoadingId(clubId);
+      setHoveredClubError(null);
+
+      const response = await fetch(`/api/targets/clubs/${clubId}/meetup-details`);
+      if (!response.ok) {
+        throw new Error('Failed to load meetup details');
+      }
+
+      const result = (await response.json()) as ClubMeetupPopupData;
+      if (popupRequestSeqRef.current !== requestSeq || hoveredClubIdRef.current !== clubId) {
+        return;
+      }
+
+      setHoveredClubDataById(prev => ({
+        ...prev,
+        [clubId]: result,
+      }));
+    } catch (error) {
+      if (popupRequestSeqRef.current !== requestSeq || hoveredClubIdRef.current !== clubId) {
+        return;
+      }
+
+      setHoveredClubError(error instanceof Error ? error.message : 'Failed to load meetup details');
+    } finally {
+      if (popupRequestSeqRef.current === requestSeq && hoveredClubIdRef.current === clubId) {
+        setHoveredClubLoadingId(null);
+      }
+    }
+  }, []);
+
+  const updateHoverPopupPosition = useCallback((rect: DOMRect) => {
+    const popupWidth = Math.min(720, window.innerWidth - 32);
+    const popupHeight = Math.min(640, window.innerHeight - 32);
+    const viewportPadding = 16;
+    const gap = 16;
+
+    let left = rect.right + gap;
+    if (left + popupWidth > window.innerWidth - viewportPadding) {
+      left = rect.left - popupWidth - gap;
+    }
+    if (left < viewportPadding) {
+      left = viewportPadding;
+    }
+    if (left + popupWidth > window.innerWidth - viewportPadding) {
+      left = Math.max(viewportPadding, window.innerWidth - popupWidth - viewportPadding);
+    }
+
+    let top = rect.top - 20;
+    if (top + popupHeight > window.innerHeight - viewportPadding) {
+      top = window.innerHeight - popupHeight - viewportPadding;
+    }
+    if (top < viewportPadding) {
+      top = viewportPadding;
+    }
+
+    setHoveredClubPosition({ top, left });
+  }, []);
+
+  const handleClubRowEnter = useCallback((club: ClubHealth, event: React.MouseEvent<HTMLTableRowElement>) => {
+    if (popupHideTimeoutRef.current) {
+      clearTimeout(popupHideTimeoutRef.current);
+      popupHideTimeoutRef.current = null;
+    }
+
+    const clubPk = club.club_pk ?? Number(club.id);
+
+    hoveredClubIdRef.current = clubPk;
+    popupHoverRef.current = false;
+    setHoveredClub(club);
+    setHoveredClubError(null);
+    updateHoverPopupPosition(event.currentTarget.getBoundingClientRect());
+
+    if (hoveredClubDataById[clubPk]) {
+      setHoveredClubLoadingId(null);
+      return;
+    }
+
+    void loadClubMeetupData(clubPk);
+  }, [hoveredClubDataById, loadClubMeetupData, updateHoverPopupPosition]);
+
+  const handleClubRowLeave = useCallback(() => {
+    scheduleHideHoverPopup();
+  }, [scheduleHideHoverPopup]);
+
+  const handlePopupMouseEnter = useCallback(() => {
+    popupHoverRef.current = true;
+    if (popupHideTimeoutRef.current) {
+      clearTimeout(popupHideTimeoutRef.current);
+      popupHideTimeoutRef.current = null;
+    }
+  }, []);
+
+  const handlePopupMouseLeave = useCallback(() => {
+    popupHoverRef.current = false;
+    scheduleHideHoverPopup();
+  }, [scheduleHideHoverPopup]);
+
+  const clearDashboardSelection = useCallback(() => {
+    setFilters({
+      activities: [],
+      cities: [],
+      teams: [],
+      health: [],
+    });
+    setSelectedClubStatus('all');
+    setSortBy('health_score');
+    setSortOrder('desc');
+    setShowTrends(false);
+    hideHoverPopup();
+    setCommentModalClub(null);
+    setShowPriorityDrawer(false);
+  }, [hideHoverPopup]);
+
+  const handleRefreshDashboard = useCallback(() => {
+    clearDashboardSelection();
+    setReloadToken(token => token + 1);
+  }, [clearDashboardSelection]);
+
+  const handleExportSpreadsheet = useCallback(() => {
+    if (filteredClubs.length === 0) {
+      window.alert('No clubs available to export.');
+      return;
+    }
+
+    const workbook = XLSX.utils.book_new();
+    const today = new Date().toISOString().split('T')[0];
+
+    const summarySheet = XLSX.utils.json_to_sheet([
+      {
+        metric: 'Total Clubs',
+        value: metrics?.total_clubs ?? filteredClubs.length,
+      },
+      {
+        metric: 'Healthy Clubs',
+        value: metrics?.healthy_clubs ?? 0,
+      },
+      {
+        metric: 'At Risk Clubs',
+        value: metrics?.at_risk_clubs ?? 0,
+      },
+      {
+        metric: 'Critical Clubs',
+        value: metrics?.critical_clubs ?? 0,
+      },
+      {
+        metric: 'Filtered Clubs',
+        value: filteredClubs.length,
+      },
+      {
+        metric: 'Last Updated',
+        value: lastUpdated ? lastUpdated.toLocaleString() : 'N/A',
+      },
+    ]);
+
+    const clubsSheet = XLSX.utils.json_to_sheet(filteredClubs.map(club => ({
+      Club: club.name,
+      Activity: club.activity,
+      City: club.city,
+      Area: club.area,
+      Status: club.health_status,
+      Score: club.health_score,
+      Capacity: club.capacity,
+      'Repeat Rate': club.is_new_club ? 'N/A' : club.repeat_rate,
+      Rating: club.rating,
+      Revenue: club.revenue,
+      'Last Event': club.last_event,
+      'Total Events': club.total_events,
+    })));
+
+    XLSX.utils.book_append_sheet(workbook, summarySheet, 'Summary');
+    XLSX.utils.book_append_sheet(workbook, clubsSheet, 'Clubs');
+    XLSX.writeFile(workbook, `health-dashboard-${selectedClubStatus}-${today}.xlsx`);
+  }, [filteredClubs, lastUpdated, metrics?.at_risk_clubs, metrics?.critical_clubs, metrics?.healthy_clubs, metrics?.total_clubs, selectedClubStatus]);
+
+  const closePriorityDrawer = useCallback(() => {
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem('health-dashboard-priority-digest', priorityDigest);
+    }
+    setShowPriorityDrawer(false);
+  }, [priorityDigest]);
+
+  const openPriorityDrawer = useCallback(() => {
+    setShowPriorityDrawer(true);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (popupHideTimeoutRef.current) {
+        clearTimeout(popupHideTimeoutRef.current);
+      }
+    };
+  }, []);
+
   if (loading) {
     return (
       <div className="p-6 max-w-7xl mx-auto">
@@ -363,6 +801,7 @@ export function HealthDashboard() {
             </button>
           </div>
           <p className="text-gray-600 mt-1">Monitor club health across 4 key metrics</p>
+          <p className="text-xs text-gray-500 mt-1">Hover any club row to preview last week&apos;s meetups.</p>
         </div>
         <div className="flex space-x-3">
           <button
@@ -373,11 +812,21 @@ export function HealthDashboard() {
             Week-over-Week Trends
           </button>
           <button
-            onClick={fetchHealthData}
+            onClick={handleRefreshDashboard}
             className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
           >
             <RefreshCw className={`h-4 w-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
             Refresh
+          </button>
+          <button
+            onClick={openPriorityDrawer}
+            className="inline-flex items-center gap-2 rounded-md border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-medium text-blue-700 hover:bg-blue-100"
+          >
+            <Bell className="h-4 w-4" />
+            Priority Clubs
+            <span className="rounded-full bg-white px-2 py-0.5 text-[11px] font-semibold text-blue-700">
+              {priorityClubs.length}
+            </span>
           </button>
 
           {/* Auto-refresh toggle */}
@@ -397,9 +846,12 @@ export function HealthDashboard() {
               </span>
             )}
           </div>
-          <button className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50">
-            <Download className="h-4 w-4 mr-2" />
-            Export
+          <button
+            onClick={handleExportSpreadsheet}
+            className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
+          >
+            <FileSpreadsheet className="h-4 w-4 mr-2" />
+            Export Spreadsheet
           </button>
         </div>
       </div>
@@ -672,9 +1124,16 @@ export function HealthDashboard() {
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
               {filteredClubs.map((club) => (
-                <tr key={club.id} className="hover:bg-gray-50">
+                <tr
+                  key={club.id}
+                  className="hover:bg-gray-50"
+                >
                   <td className="px-6 py-4 whitespace-nowrap">
-                    <div>
+                    <div
+                      className="inline-block cursor-pointer"
+                      onMouseEnter={(event) => handleClubRowEnter(club, event)}
+                      onMouseLeave={handleClubRowLeave}
+                    >
                       <div className="text-sm font-medium text-gray-900">{club.name}</div>
                       <div className="text-sm text-gray-500 flex items-center">
                         <MapPin className="h-3 w-3 mr-1" />
@@ -790,6 +1249,20 @@ export function HealthDashboard() {
                     <button className="text-blue-600 hover:text-blue-900 mr-3">
                       <Eye className="h-4 w-4" />
                     </button>
+                    <button
+                      onClick={() => openCommentModal(club)}
+                      className="text-gray-600 hover:text-gray-900 mr-3"
+                      title="Add comment"
+                    >
+                      <MessageSquarePlus className="h-4 w-4" />
+                    </button>
+                    <button
+                      onClick={() => togglePriority(club)}
+                      className={`mr-3 ${club.is_priority ? 'text-amber-500 hover:text-amber-600' : 'text-gray-600 hover:text-gray-900'}`}
+                      title={club.is_priority ? 'Remove from priority' : 'Add to priority'}
+                    >
+                      <Star className="h-4 w-4" fill={club.is_priority ? 'currentColor' : 'none'} />
+                    </button>
                     <button className="text-gray-600 hover:text-gray-900">
                       <BarChart3 className="h-4 w-4" />
                     </button>
@@ -800,6 +1273,21 @@ export function HealthDashboard() {
           </table>
         </div>
       </div>
+
+      {hoveredClub && hoveredClubPosition && (
+        <ClubMeetupHoverPopup
+          visible={true}
+          position={hoveredClubPosition}
+          clubName={hoveredClub.name}
+          clubCity={hoveredClub.city}
+          clubArea={hoveredClub.area}
+          loading={hoveredClubLoadingId === (hoveredClub.club_pk ?? Number(hoveredClub.id))}
+          error={hoveredClubError}
+          data={hoveredClubDataById[hoveredClub.club_pk ?? Number(hoveredClub.id)] || null}
+          onMouseEnter={handlePopupMouseEnter}
+          onMouseLeave={handlePopupMouseLeave}
+        />
+      )}
 
 
       {/* Quick Actions */}
@@ -831,6 +1319,31 @@ export function HealthDashboard() {
           </div>
         </div>
       </div>
+
+      <HealthDashboardPriorityDrawer
+        visible={showPriorityDrawer}
+        clubs={priorityClubs}
+        onClose={closePriorityDrawer}
+        onAddComment={openCommentModal}
+        onTogglePriority={togglePriority}
+      />
+
+      <HealthClubCommentModal
+        visible={commentModalClub !== null}
+        club={commentModalClub}
+        comments={commentModalClub ? (clubCommentsById[getClubKey(commentModalClub)] || []) : []}
+        loading={commentModalClub ? commentLoadingId === getClubKey(commentModalClub) : false}
+        saving={commentSaving}
+        authorName={commentAuthorName}
+        commentText={commentText}
+        onAuthorNameChange={setCommentAuthorName}
+        onCommentTextChange={setCommentText}
+        onSubmit={saveComment}
+        onClose={() => {
+          setCommentModalClub(null);
+          setCommentText('');
+        }}
+      />
 
       {/* Health Score Info Modal */}
       {showHealthInfo && (

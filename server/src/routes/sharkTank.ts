@@ -5,8 +5,8 @@ import { queryLocal, queryProduction } from '../services/database';
 const router = Router();
 
 // Team activity assignments (mirrors shared/teamConfig.ts)
-const BLUE_ACTIVITIES = ['Board Gaming', 'Football', 'Mafia', 'Quiz'];
-const YELLOW_ACTIVITIES = ['Badminton', 'Art', 'Journaling', 'Box Cricket'];
+const BLUE_ACTIVITIES = ['Board Gaming', 'Mafia', 'Quiz'];
+const YELLOW_ACTIVITIES = ['Badminton', 'Art', 'Journaling', 'Box Cricket', 'Football'];
 
 function getTeam(activity: string): string {
   if (BLUE_ACTIVITIES.includes(activity)) return 'Blue';

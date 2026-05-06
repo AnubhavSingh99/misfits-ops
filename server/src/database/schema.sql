@@ -169,6 +169,35 @@ CREATE TABLE real_time_notifications (
   resolved_at TIMESTAMP
 );
 
+CREATE TABLE health_club_priorities (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  club_pk INTEGER NOT NULL UNIQUE,
+  club_id VARCHAR(100),
+  club_name VARCHAR(255) NOT NULL,
+  club_city VARCHAR(255),
+  club_area VARCHAR(255),
+  club_activity VARCHAR(255),
+  health_status VARCHAR(50),
+  priority_note TEXT,
+  added_by VARCHAR(255) DEFAULT 'Operations',
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE health_club_comments (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  club_pk INTEGER NOT NULL,
+  club_id VARCHAR(100),
+  club_name VARCHAR(255) NOT NULL,
+  club_city VARCHAR(255),
+  club_area VARCHAR(255),
+  club_activity VARCHAR(255),
+  health_status VARCHAR(50),
+  author_name VARCHAR(255) NOT NULL,
+  comment_text TEXT NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 -- 7. Team Performance & Gamification
 CREATE TABLE team_performance (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -199,6 +228,8 @@ CREATE INDEX idx_meetups_poc_city ON meetups(city_head_id);
 CREATE INDEX idx_poc_structure_activities ON poc_structure USING GIN(activities);
 CREATE INDEX idx_poc_structure_cities ON poc_structure USING GIN(cities);
 CREATE INDEX idx_health_metrics_meetup_time ON health_metrics(meetup_id, measured_at);
+CREATE INDEX idx_health_club_priorities_created_at ON health_club_priorities(created_at DESC);
+CREATE INDEX idx_health_club_comments_club_pk_created_at ON health_club_comments(club_pk, created_at DESC);
 
 -- TRIGGERS for Real-time Updates
 CREATE OR REPLACE FUNCTION update_meetup_health()

@@ -61,8 +61,8 @@ export const TEAMS: Record<TeamKey, TeamConfig> = {
 // Activity assignments apply to ALL cities platform-wide
 // Teams are assigned by activity type, not by geography
 export const TEAM_ACTIVITIES: Record<TeamKey, string[]> = {
-  blue: ['Board Gaming', 'Football', 'Mafia', 'Quiz'],
-  yellow: ['Badminton', 'Art', 'Journaling', 'Box Cricket'],
+  blue: ['Board Gaming', 'Mafia', 'Quiz'],
+  yellow: ['Badminton', 'Art', 'Journaling', 'Box Cricket', 'Football'],
   green: [] // Green handles all OTHER activities not listed above
 };
 
