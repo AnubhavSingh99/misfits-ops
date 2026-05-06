@@ -51,8 +51,8 @@ exports.TEAMS = {
 // Activity assignments apply to ALL cities platform-wide
 // Teams are assigned by activity type, not by geography
 exports.TEAM_ACTIVITIES = {
-    blue: ['Board Gaming', 'Football', 'Mafia', 'Quiz'],
-    yellow: ['Badminton', 'Art', 'Journaling', 'Box Cricket'],
+    blue: ['Board Gaming', 'Mafia', 'Quiz'],
+    yellow: ['Badminton', 'Art', 'Journaling', 'Box Cricket', 'Football'],
     green: [] // Green handles all OTHER activities not listed above
 };
 // Legacy constants (kept for backward compatibility, but no longer used in logic)
