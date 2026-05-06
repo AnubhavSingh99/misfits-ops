@@ -14,7 +14,7 @@ const CITY_SUB_AREA_DEFAULTS: Record<string, string[]> = {
   Delhi: DELHI_SUB_AREAS,
   Noida: ['Sector 18', 'Sector 62', 'Sector 75', 'Sector 104', 'Sector 137', 'Greater Noida'],
   Gurgaon: ['Golf Course Road', 'DLF Phase 1', 'DLF Phase 2', 'Sohna Road', 'Sector 46', 'Sector 56', 'Cyber City'],
-  Bangalore: ['Indiranagar', 'Koramangala', 'HSR Layout', 'Whitefield', 'JP Nagar', 'Bellandur'],
+  Bangalore: ['South City', 'Indiranagar', 'Koramangala', 'HSR Layout', 'Whitefield', 'JP Nagar', 'Bellandur'],
 };
 const CITY_ALIAS_TO_PARENT: Record<string, { city: string; subArea: string }> = {
   'north delhi': { city: 'Delhi', subArea: 'North Delhi' },
@@ -23,6 +23,7 @@ const CITY_ALIAS_TO_PARENT: Record<string, { city: string; subArea: string }> = 
   'west delhi': { city: 'Delhi', subArea: 'West Delhi' },
   'new delhi': { city: 'Delhi', subArea: 'New Delhi' },
   'central delhi': { city: 'Delhi', subArea: 'Central Delhi' },
+  'south city': { city: 'Bangalore', subArea: 'South City' },
 };
 const MANUAL_LEAD_TARGET_STATUSES = new Set([
   'SUBMITTED',
@@ -185,7 +186,8 @@ function formatCityWithSubArea(city?: string | null, subArea?: string | null): s
 function normalizedCitySql(column: string): string {
   return `CASE
     WHEN ${column} IS NULL OR NULLIF(BTRIM(${column}), '') IS NULL THEN NULL
-    WHEN LOWER(BTRIM(${column})) IN ('north delhi', 'south delhi', 'east delhi', 'west delhi', 'new delhi', 'central delhi') THEN 'Delhi'
+  WHEN LOWER(BTRIM(${column})) IN ('north delhi', 'south delhi', 'east delhi', 'west delhi', 'new delhi', 'central delhi') THEN 'Delhi'
+    WHEN LOWER(BTRIM(${column})) = 'south city' THEN 'Bangalore'
     WHEN POSITION('${CITY_SUB_AREA_SEPARATOR}' IN ${column}) > 0 THEN NULLIF(BTRIM(split_part(${column}, '${CITY_SUB_AREA_SEPARATOR}', 1)), '')
     ELSE BTRIM(${column})
   END`;
@@ -194,12 +196,13 @@ function normalizedCitySql(column: string): string {
 function normalizedSubAreaSql(column: string): string {
   return `CASE
     WHEN ${column} IS NULL OR NULLIF(BTRIM(${column}), '') IS NULL THEN NULL
-    WHEN LOWER(BTRIM(${column})) = 'north delhi' THEN 'North Delhi'
-    WHEN LOWER(BTRIM(${column})) = 'south delhi' THEN 'South Delhi'
-    WHEN LOWER(BTRIM(${column})) = 'east delhi' THEN 'East Delhi'
-    WHEN LOWER(BTRIM(${column})) = 'west delhi' THEN 'West Delhi'
-    WHEN LOWER(BTRIM(${column})) = 'new delhi' THEN 'New Delhi'
-    WHEN LOWER(BTRIM(${column})) = 'central delhi' THEN 'Central Delhi'
+  WHEN LOWER(BTRIM(${column})) = 'north delhi' THEN 'North Delhi'
+  WHEN LOWER(BTRIM(${column})) = 'south delhi' THEN 'South Delhi'
+  WHEN LOWER(BTRIM(${column})) = 'east delhi' THEN 'East Delhi'
+  WHEN LOWER(BTRIM(${column})) = 'west delhi' THEN 'West Delhi'
+  WHEN LOWER(BTRIM(${column})) = 'new delhi' THEN 'New Delhi'
+  WHEN LOWER(BTRIM(${column})) = 'central delhi' THEN 'Central Delhi'
+    WHEN LOWER(BTRIM(${column})) = 'south city' THEN 'South City'
     WHEN POSITION('${CITY_SUB_AREA_SEPARATOR}' IN ${column}) > 0 THEN NULLIF(BTRIM(split_part(${column}, '${CITY_SUB_AREA_SEPARATOR}', 2)), '')
     ELSE NULL
   END`;
