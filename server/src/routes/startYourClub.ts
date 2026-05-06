@@ -2448,13 +2448,13 @@ router.post('/admin/:id/upload-contract', contractUpload.single('contract'), asy
       return res.status(400).json({ success: false, error: 'No file uploaded' });
     }
 
-    // Validate application exists and is SELECTED
+    // Validate application exists and is in a launch-ready state
     const appResult = await queryProduction('SELECT status FROM club_application WHERE pk = $1', [id]);
     if (appResult.rows.length === 0) {
       return res.status(404).json({ success: false, error: 'Application not found' });
     }
-    if (appResult.rows[0].status !== 'SELECTED') {
-      return res.status(409).json({ success: false, error: 'Contracts can only be uploaded for SELECTED applications' });
+    if (!['SELECTED', 'CLUB_CREATED'].includes(appResult.rows[0].status)) {
+      return res.status(409).json({ success: false, error: 'Contracts can only be uploaded for SELECTED or CLUB_CREATED applications' });
     }
 
     const fileUrl = `/api/start-club/contracts/${file.filename}`;
