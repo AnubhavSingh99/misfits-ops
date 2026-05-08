@@ -1833,6 +1833,39 @@ router.get('/admin/reviewers', async (req: Request, res: Response) => {
   }
 });
 
+// GET /admin/calendly/health — Heartbeat snapshot for the dashboard banner.
+// Proxies straight to the Go backend; Go derives state from club_admin_config.
+// MUST be registered BEFORE /admin/:id or Express will treat 'calendly' as :id.
+router.get('/admin/calendly/health', async (_req: Request, res: Response) => {
+  try {
+    const apiRes = await misfitsApi('GET', '/start-your-club/admin/calendly/health');
+    if (!apiRes.ok) {
+      return res.status(apiRes.status || 500).json({ success: false, error: apiRes.error || 'failed to fetch calendly health' });
+    }
+    res.json({ success: true, data: apiRes.data });
+  } catch (error: any) {
+    logger.error('Failed to fetch calendly health:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// POST /admin/calendly/provision — Self-service Calendly reconnect.
+// Recreates the Calendly webhook subscription with a fresh signing key written
+// to club_admin_config atomically. The single legitimate way to recover from
+// a disabled/disconnected Calendly subscription. MUST be before /admin/:id.
+router.post('/admin/calendly/provision', async (_req: Request, res: Response) => {
+  try {
+    const apiRes = await misfitsApi('POST', '/start-your-club/admin/calendly/provision', {});
+    if (!apiRes.ok) {
+      return res.status(apiRes.status || 500).json({ success: false, error: apiRes.error || 'failed to provision calendly webhook' });
+    }
+    res.json({ success: true, data: apiRes.data });
+  } catch (error: any) {
+    logger.error('Failed to provision calendly webhook:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // GET /admin/:id — Full detail for one application
 router.get('/admin/:id', async (req: Request, res: Response) => {
   try {
@@ -2548,6 +2581,25 @@ router.patch('/admin/:id/reschedule', async (req: Request, res: Response) => {
     res.json({ success: true, data: { id, status: 'INTERVIEW_PENDING' } });
   } catch (error: any) {
     logger.error('Failed to reschedule:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// POST /admin/:id/recover-calendly — Backfill Calendly fields from the Calendly API.
+// Used to heal applicants whose webhook never landed (subscription was disabled,
+// admin-flipped status, etc.). Idempotent. Transitions PENDING → SCHEDULED if
+// applicable.
+router.post('/admin/:id/recover-calendly', async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const apiRes = await misfitsApi('POST', `/start-your-club/admin/${id}/recover-calendly`, {});
+    if (!apiRes.ok) {
+      return res.status(apiRes.status || 500).json({ success: false, error: apiRes.error || apiRes.data?.message || 'failed to recover calendly data' });
+    }
+    broadcast('application_updated', { id });
+    res.json({ success: true, data: apiRes.data });
+  } catch (error: any) {
+    logger.error('Failed to recover calendly data:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });

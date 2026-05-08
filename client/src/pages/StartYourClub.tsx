@@ -1542,9 +1542,11 @@ function LeadRow({
                       {/* Interview actions */}
                       {detail.status === 'INTERVIEW_PENDING' && (
                         <div className="space-y-2">
-                          <button onClick={() => handleStatusTransition('INTERVIEW_SCHEDULED')} className="w-full py-2 text-xs font-medium text-indigo-600 bg-indigo-50 border border-indigo-200 rounded-lg hover:bg-indigo-100">
-                            Mark Interview Scheduled
-                          </button>
+                          {/* "Mark Interview Scheduled" was the foot-gun that produced 30+ zombie rows
+                              (status SCHEDULED but no Calendly data) when the webhook was disabled
+                              for 28 days. The Go backend now rejects that transition with 422
+                              calendly_sync_required. Use "Get booking details" on the row instead —
+                              it pulls real data from the Calendly API. */}
                           {!showInterviewNotScheduledForm ? (
                             <button
                               onClick={() => {
@@ -2807,6 +2809,34 @@ export default function StartYourClub() {
   // Get statuses for current section
   const currentSection = SECTIONS.find(s => s.id === activeSection)!;
 
+  // Calendly integration health — drives the banner that surfaces drift
+  // (signing-key mismatch, sub disabled, no recent events). Without this banner
+  // the integration died silently for 28 days in May 2026; the banner makes
+  // future drift visible within minutes.
+  const [calendlyHealth, setCalendlyHealth] = useState<{
+    healthy: boolean;
+    state: 'active' | 'disconnected' | 'error' | 'stale';
+    last_event_at: string;
+    last_event_age_hours: number | null;
+    last_error: string;
+    last_error_at: string;
+  } | null>(null);
+  const [reconnectingCalendly, setReconnectingCalendly] = useState(false);
+  const fetchCalendlyHealth = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE}/admin/calendly/health`);
+      const data = await res.json();
+      if (data.success) setCalendlyHealth(data.data);
+    } catch {
+      // Silent — the banner shows what it can; backend errors don't need to alarm here.
+    }
+  }, []);
+  useEffect(() => {
+    fetchCalendlyHealth();
+    const id = setInterval(fetchCalendlyHealth, 5 * 60 * 1000);
+    return () => clearInterval(id);
+  }, [fetchCalendlyHealth]);
+
   // Scheduled calls tile (INTERVIEW_SCHEDULED leads — fetched independently so it works on every tab)
   const [scheduledCallsCollapsed, setScheduledCallsCollapsed] = useState(true);
   const [scheduledCalls, setScheduledCalls] = useState<Application[]>([]);
@@ -3288,6 +3318,64 @@ export default function StartYourClub() {
         </div>
       </div>
 
+      {/* ──── Calendly heartbeat banner ────
+          Visible only when the integration isn't fully healthy. Drives
+          self-service recovery: red when disconnected (subscription dead /
+          no signing key) → click Reconnect; amber when stale (no events in
+          72h or active error). When healthy + active, the banner hides. */}
+      {calendlyHealth && !calendlyHealth.healthy && (() => {
+        const isError = calendlyHealth.state === 'disconnected' || calendlyHealth.state === 'error';
+        const colour = isError
+          ? 'bg-red-50 border-red-200 text-red-800'
+          : 'bg-amber-50 border-amber-200 text-amber-800';
+        const buttonColour = isError
+          ? 'bg-white border-red-300 text-red-700 hover:bg-red-100'
+          : 'bg-white border-amber-300 text-amber-700 hover:bg-amber-100';
+        const headline = (() => {
+          switch (calendlyHealth.state) {
+            case 'disconnected': return 'Calendly is disconnected. New bookings are NOT reaching the dashboard.';
+            case 'error': return 'Calendly signing key mismatch. New bookings are being rejected.';
+            case 'stale':
+              if (!calendlyHealth.last_event_at) return 'No Calendly bookings have arrived yet. Click Reconnect if you expected one to come through.';
+              return `No Calendly bookings in ${Math.floor(calendlyHealth.last_event_age_hours || 0)} hours. Either nothing is being booked, or sync has broken.`;
+            default: return 'Calendly integration needs attention.';
+          }
+        })();
+        return (
+          <div className={`${colour} border rounded-lg p-3 mb-4 flex items-center gap-3`}>
+            <AlertTriangle className="h-5 w-5 flex-shrink-0" />
+            <div className="flex-1 text-sm">
+              <strong>{headline}</strong>
+              {calendlyHealth.last_error && (
+                <span className="block text-xs opacity-80 mt-0.5">Last error: {calendlyHealth.last_error}</span>
+              )}
+            </div>
+            <button
+              disabled={reconnectingCalendly}
+              onClick={async () => {
+                if (!confirm('Reconnect Calendly? This will recreate the webhook subscription with a fresh signing key. Existing bookings are not affected.')) return;
+                setReconnectingCalendly(true);
+                try {
+                  const res = await fetch(`${API_BASE}/admin/calendly/provision`, { method: 'POST' });
+                  const data = await res.json();
+                  if (data.success) {
+                    alert('Calendly reconnected. Subscription is live; banner will turn green after the next booking comes through.');
+                    fetchCalendlyHealth();
+                  } else {
+                    alert(data.error || 'Could not reconnect Calendly.');
+                  }
+                } finally {
+                  setReconnectingCalendly(false);
+                }
+              }}
+              className={`${buttonColour} px-3 py-1.5 text-xs font-medium border rounded-lg disabled:opacity-50`}
+            >
+              {reconnectingCalendly ? 'Reconnecting…' : 'Reconnect'}
+            </button>
+          </div>
+        );
+      })()}
+
       {/* ──── Funnel Summary Cards ──── */}
       {f && (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-5">
@@ -3369,11 +3457,10 @@ export default function StartYourClub() {
                                   <span className="text-sm font-medium text-slate-800 truncate">{app.name || 'Unnamed'}</span>
                                   {app.user_phone && <span className="text-[10px] text-slate-400">{app.user_phone}</span>}
                                   {app.admin_created && <span className="text-[9px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full">Admin</span>}
-                                  {!app.interview_scheduled_at && (
-                                    <span className="text-[9px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full">
-                                      Calendly sync pending
-                                    </span>
-                                  )}
+                                  {/* No badge here — when interview_scheduled_at is null,
+                                      the "Get booking details" button renders in the actions
+                                      column below. Presence of the button IS the problem signal,
+                                      no jargon needed for ops staff. */}
                                 </div>
                                 <div className="text-xs text-slate-500">{formatLocation(app.city, app.sub_area)} · {app.activity}</div>
                               </div>
@@ -3389,6 +3476,23 @@ export default function StartYourClub() {
                                   >
                                     <Video className="h-3 w-3" /> Join
                                   </a>
+                                ) : !app.interview_scheduled_at ? (
+                                  <button
+                                    onClick={async (e) => {
+                                      e.stopPropagation();
+                                      const res = await fetch(`${API_BASE}/admin/${app.id}/recover-calendly`, { method: 'POST' });
+                                      const data = await res.json();
+                                      if (data.success) {
+                                        handleRefresh();
+                                      } else {
+                                        alert(data.error || 'Could not find this booking on Calendly. Did they book using the link you shared?');
+                                      }
+                                    }}
+                                    className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-amber-700 bg-amber-50 border border-amber-200 rounded-lg hover:bg-amber-100"
+                                    title="Fetch the booking time + meet link from Calendly"
+                                  >
+                                    <RefreshCw className="h-3 w-3" /> Get booking details
+                                  </button>
                                 ) : (
                                   <span className="px-2.5 py-1.5 text-xs text-slate-400 bg-slate-100 rounded-lg">No link</span>
                                 )}
