@@ -827,6 +827,7 @@ function LeadRow({
   const allInterviewRated = ratingDimsLoaded && (
     interviewDims.length === 0 || interviewDims.every(d => interviewRatings[d.key] >= 1 && interviewRatings[d.key] <= 5)
   );
+  const interviewDoneRejectNeedsRatings = detail?.status === 'INTERVIEW_DONE' && !allInterviewRated;
   const repeatActivityHistory = (app.applied_activities_history || []).filter((activity) => Boolean(activity));
   const repeatActivityTrail = repeatActivityHistory.join(' -> ');
   const cfg = STATUS_CONFIG[app.status] || STATUS_CONFIG.ACTIVE;
@@ -1700,7 +1701,14 @@ function LeadRow({
                                 </div>
                               )}
                               {!showRejectForm ? (
-                                <button onClick={() => setShowRejectForm(true)} disabled={!allInterviewRated} className="w-full py-2 text-xs font-medium text-red-600 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100 disabled:opacity-40 disabled:cursor-not-allowed" title={!allInterviewRated ? "Rate all dimensions before rejecting" : ""}>Reject</button>
+                                <button
+                                  onClick={() => setShowRejectForm(true)}
+                                  disabled={interviewDoneRejectNeedsRatings}
+                                  className="w-full py-2 text-xs font-medium text-red-600 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100 disabled:opacity-40 disabled:cursor-not-allowed"
+                                  title={interviewDoneRejectNeedsRatings ? "Rate all dimensions before rejecting" : ""}
+                                >
+                                  Reject
+                                </button>
                               ) : (
                                 <div className="p-3 bg-red-50 rounded-lg border border-red-200">
                                   {renderRejectionFields()}
