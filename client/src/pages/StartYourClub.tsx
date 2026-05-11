@@ -341,6 +341,27 @@ function formatLocation(city: string | null | undefined, subArea?: string | null
   return safeCity || safeSubArea || '-';
 }
 
+function formatLeadSource(source: string | null | undefined): string {
+  const normalized = String(source || '').trim().toLowerCase();
+  switch (normalized) {
+    case 'app':
+      return 'App';
+    case 'instagram':
+      return 'Instagram';
+    case 'ads':
+      return 'Ads';
+    case 'whatsapp':
+      return 'WhatsApp';
+    case 'admin':
+      return 'Admin';
+    case 'website':
+    case '':
+      return 'Website';
+    default:
+      return normalized.replace(/_/g, ' ');
+  }
+}
+
 function normalizeLocationDisplay(city: string | null | undefined, subArea?: string | null): { city: string | null; subArea: string | null } {
   const safeCity = city ? city.trim() : '';
   const safeSubArea = subArea ? subArea.trim() : '';
@@ -880,6 +901,11 @@ function LeadRow({
         <td className="px-4 py-3 text-slate-500 text-xs">{app.user_phone || '-'}</td>
         <td className="px-4 py-3 text-slate-600">{formatLocation(app.city, app.sub_area)}</td>
         <td className="px-4 py-3 text-slate-600">{app.activity || '-'}</td>
+        <td className="px-4 py-3">
+          <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-medium text-slate-600">
+            {formatLeadSource(app.source)}
+          </span>
+        </td>
         <td className="px-4 py-3 text-slate-600 text-center font-medium">
           {app.repeat_rejection_count || 0}
         </td>
@@ -972,7 +998,7 @@ function LeadRow({
                       <h3 className="text-base font-bold text-slate-800">{detail.name || 'Anonymous'}</h3>
                       <div className="flex items-center gap-2 mt-0.5 text-xs text-slate-500">
                         <span>{formatLocation(detail.city, detail.sub_area)}</span><span>·</span><span>{detail.activity}</span>
-                        <span>·</span><span>Source: {detail.source}</span>
+                        <span>·</span><span>Source: {formatLeadSource(detail.source)}</span>
                         {detail.application_ref && (<><span>·</span><span className="font-medium text-indigo-600">{detail.application_ref}</span></>)}
                         {detail.user_phone && (<><span>·</span><Phone className="h-3 w-3 inline" /> {detail.user_phone}</>)}
                         {detail.reviewed_by && (<><span>·</span><User className="h-3 w-3 inline" /> Reviewed by: {detail.reviewed_by}</>)}
@@ -3148,6 +3174,7 @@ export default function StartYourClub() {
         'City': app.city || '',
         'Sub Area': app.sub_area || '',
         'Activity': app.activity || '',
+        'Source': formatLeadSource(app.source),
         'Status': STATUS_CONFIG[app.status]?.label || app.status,
         'Current Stage Age': computeLeadAge(app.stage_entered_at, app.created_at),
         'Stage Entered At': app.stage_entered_at ? new Date(app.stage_entered_at).toLocaleString() : '',
@@ -3778,6 +3805,7 @@ export default function StartYourClub() {
                 <th className="px-4 py-3 text-left font-semibold text-slate-600 cursor-pointer hover:text-slate-800" onClick={() => handleSort('activity_name')}>
                   <div className="flex items-center gap-1">Activity {sortField === 'activity_name' && (sortDir === 'asc' ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />)}</div>
                 </th>
+                <th className="px-4 py-3 text-left font-semibold text-slate-600">Source</th>
                 <th className="px-4 py-3 text-center font-semibold text-slate-600">Rejected Count</th>
                 <th className="px-4 py-3 text-left font-semibold text-slate-600">Status</th>
                 {activeSection === 'followup' && (

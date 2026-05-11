@@ -221,6 +221,7 @@ function normalizeCityList(rows: any[], key: string): string[] {
 function mapAppRow(row: any) {
   if (!row) return row;
   if (row.pk != null) row.id = row.pk;
+  row.source = String(row.source || (row.admin_created ? 'admin' : 'website'));
   const parsedLocation = splitCityAndSubArea(row.city_name ?? row.city);
   // Map production column names to ops frontend names
   if (row.city_name !== undefined && row.city === undefined) row.city = parsedLocation.city || row.city_name;
