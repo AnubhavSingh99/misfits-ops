@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
-import { queryProduction, queryLocal } from '../services/database';
+import { queryProduction, queryProductionWrite, queryLocal } from '../services/database';
 import { broadcast } from '../services/startYourClub/sseManager';
 import { misfitsApi } from '../services/startYourClub/misfitsApi';
 import { callGrpc } from '../services/grpcClient';
@@ -48,6 +48,112 @@ const DEFAULT_MANUAL_INTERVIEW_RATINGS = {
   objective: 3,
 };
 
+function getStartClubWriteError(action: string, error: any): { status: number; message: string } {
+  const message = String(error?.message || '').trim();
+  if (error?.code === '42501' || /not configured/i.test(message) || /permission denied/i.test(message)) {
+    return {
+      status: 503,
+      message: message || `Start Your Club ${action} is not configured on this server.`,
+    };
+  }
+  return {
+    status: 500,
+    message: message || `Failed to ${action}`,
+  };
+}
+
+function hasOnboardingCompletionMarker(row: any): boolean {
+  return !!String(row?.contract_pdf_url ?? row?.contract_url ?? '').trim() || !!row?.contract_uploaded_at;
+}
+
+function shouldTreatManualClubCreatedLeadAsSelected(row: any): boolean {
+  return String(row?.status || '').trim().toUpperCase() === 'CLUB_CREATED'
+    && !!row?.admin_created
+    && !hasOnboardingCompletionMarker(row);
+}
+
+async function persistContractUploadDirectly(
+  applicationId: number,
+  column: 'contract_url' | 'signed_contract_url',
+  fileUrl: string,
+) {
+  const uploadedAtColumn = column === 'contract_url' ? 'contract_uploaded_at' : 'signed_contract_uploaded_at';
+  await queryProductionWrite(
+    `UPDATE club_application
+     SET ${column} = $2,
+         ${uploadedAtColumn} = NOW(),
+         updated_at = NOW()
+     WHERE pk = $1`,
+    [applicationId, fileUrl]
+  );
+}
+
+async function ensureManualOnboardingTable() {
+  await queryLocal(`
+    CREATE TABLE IF NOT EXISTS syc_manual_onboarding (
+      application_id BIGINT PRIMARY KEY,
+      completed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await queryLocal(`
+    CREATE INDEX IF NOT EXISTS idx_syc_manual_onboarding_completed_at
+      ON syc_manual_onboarding (completed_at DESC)
+  `);
+}
+
+async function fetchManualOnboardingMarkerMap(applicationIds: Array<number | string | null | undefined>) {
+  await ensureManualOnboardingTable();
+
+  const normalizedIds = Array.from(
+    new Set(
+      applicationIds
+        .map((id) => Number.parseInt(String(id ?? ''), 10))
+        .filter((id) => Number.isFinite(id))
+    )
+  );
+
+  if (normalizedIds.length === 0) {
+    return new Map<string, string>();
+  }
+
+  const result = await queryLocal(
+    `SELECT application_id, completed_at
+     FROM syc_manual_onboarding
+     WHERE application_id = ANY($1)`,
+    [normalizedIds]
+  );
+
+  return new Map<string, string>(
+    result.rows.map((row: any) => [String(row.application_id), row.completed_at])
+  );
+}
+
+async function enrichRowsWithManualOnboardingMarkers(rows: any[]) {
+  if (!rows?.length) return rows;
+
+  const markers = await fetchManualOnboardingMarkerMap(rows.map((row) => row?.pk ?? row?.id));
+  for (const row of rows) {
+    const marker = markers.get(String(row?.pk ?? row?.id ?? ''));
+    if (marker && !row.contract_uploaded_at) {
+      row.contract_uploaded_at = marker;
+    }
+  }
+
+  return rows;
+}
+
+async function mapEnrichedAppRow(row: any) {
+  if (!row) return row;
+  const [enrichedRow] = await enrichRowsWithManualOnboardingMarkers([row]);
+  return mapAppRow(enrichedRow);
+}
+
+async function mapEnrichedAppRows(rows: any[]) {
+  const enrichedRows = await enrichRowsWithManualOnboardingMarkers(rows || []);
+  return mapAppRows(enrichedRows);
+}
+
 function extractCreatedApplicationId(payload: any): number | null {
   const candidates = [payload?.id, payload?.pk, payload?.application_id];
   for (const candidate of candidates) {
@@ -65,7 +171,7 @@ async function fetchFreshApplicationById(applicationId: number) {
      WHERE ca.pk = $1`,
     [applicationId]
   );
-  return updated.rows[0] ? mapAppRow(updated.rows[0]) : null;
+  return updated.rows[0] ? await mapEnrichedAppRow(updated.rows[0]) : null;
 }
 
 async function moveManualLeadToTargetStatus(applicationId: number, targetStatus: string, reviewedBy = DEFAULT_MANUAL_LEAD_REVIEWER) {
@@ -241,6 +347,9 @@ function mapAppRow(row: any) {
   row.venue_sorted = row.venue_sorted_at != null;
   row.toolkit_shared = row.toolkit_shared_at != null;
   row.marketing_launched = row.marketing_launched_at != null;
+  if (shouldTreatManualClubCreatedLeadAsSelected(row)) {
+    row.status = 'SELECTED';
+  }
   return row;
 }
 function mapAppRows(rows: any[]) {
@@ -996,7 +1105,7 @@ router.get('/admin/all', async (req: Request, res: Response) => {
 
     res.json({
       success: true,
-      data: mapAppRows(dataResult.rows),
+      data: await mapEnrichedAppRows(dataResult.rows),
       total,
       page: pageNum,
       limit: limitNum,
@@ -1110,7 +1219,7 @@ router.get('/admin/all', async (req: Request, res: Response) => {
         [...localParams, localLimitNum, localOffset]
       );
 
-      const mapped = mapAppRows(localResult.rows || []);
+      const mapped = await mapEnrichedAppRows(localResult.rows || []);
       return res.json({
         success: true,
         data: mapped,
@@ -1882,7 +1991,7 @@ router.get('/admin/:id', async (req: Request, res: Response) => {
       return res.status(404).json({ success: false, error: 'Application not found' });
     }
 
-    const app = mapAppRow(appResult.rows[0]);
+    const app = await mapEnrichedAppRow(appResult.rows[0]);
 
     // Timeline
     const timeline = await queryProduction(
@@ -2292,6 +2401,61 @@ router.patch('/admin/:id/milestones', async (req: Request, res: Response) => {
   }
 });
 
+// POST /admin/:id/manual-onboard — Mark onboarding complete even if done offline
+router.post('/admin/:id/manual-onboard', async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    await ensureManualOnboardingTable();
+
+    const appResult = await queryProduction(
+      'SELECT status, contract_url, contract_uploaded_at FROM club_application WHERE pk = $1',
+      [id]
+    );
+    if (appResult.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'Application not found' });
+    }
+
+    const currentStatus = String(appResult.rows[0].status || '').trim().toUpperCase();
+    if (!['SELECTED', 'CLUB_CREATED'].includes(currentStatus)) {
+      return res.status(400).json({ success: false, error: 'Manual onboarding is only available for SELECTED or CLUB_CREATED applications' });
+    }
+
+    if (currentStatus === 'SELECTED') {
+      const apiRes = await misfitsApi('PATCH', `/start-your-club/admin/${id}/status`, { status: 'CLUB_CREATED' });
+      if (!apiRes.ok) {
+        return res.status(apiRes.status || 500).json({
+          success: false,
+          error: apiRes.error || apiRes.data?.message || 'Failed to mark application as CLUB_CREATED',
+        });
+      }
+    }
+
+    await queryLocal(
+      `INSERT INTO syc_manual_onboarding (application_id, completed_at, updated_at)
+       VALUES ($1, NOW(), NOW())
+       ON CONFLICT (application_id)
+       DO UPDATE SET completed_at = COALESCE(syc_manual_onboarding.completed_at, EXCLUDED.completed_at),
+                     updated_at = NOW()`,
+      [parseInt(id, 10)]
+    );
+
+    const updated = await queryProduction(
+      `SELECT ${APP_ENRICHED_SELECT}
+       FROM club_application ca
+       LEFT JOIN users u ON u.pk = ca.user_id
+       WHERE ca.pk = $1`,
+      [id]
+    );
+    const freshApp = await mapEnrichedAppRow(updated.rows[0]);
+
+    broadcast('application_updated', { id, status: 'CLUB_CREATED', type: 'manual_onboarded' });
+    res.json({ success: true, data: freshApp });
+  } catch (error: any) {
+    logger.error('Failed to mark application as manually onboarded:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // POST /admin/:id/note — Add note
 router.post('/admin/:id/note', async (req: Request, res: Response) => {
   try {
@@ -2491,8 +2655,20 @@ router.post('/admin/:id/upload-contract', contractUpload.single('contract'), asy
     }
 
     const fileUrl = `/api/start-club/contracts/${file.filename}`;
+    const applicationId = parseInt(id, 10);
+    const currentStatus = String(appResult.rows[0].status || '').trim().toUpperCase();
 
-    await callGrpc('SuperAdminService', 'StartYourClubUploadContract', { application_id: parseInt(id), contract_pdf_url: fileUrl });
+    if (currentStatus === 'CLUB_CREATED') {
+      // Some manual leads auto-advance to CLUB_CREATED before the contract is uploaded.
+      // Persist the file locally so ops can finish onboarding without depending on the
+      // upstream SELECTED-only guard.
+      await persistContractUploadDirectly(applicationId, 'contract_url', fileUrl);
+    } else {
+      await callGrpc('SuperAdminService', 'StartYourClubUploadContract', {
+        application_id: applicationId,
+        contract_pdf_url: fileUrl,
+      });
+    }
 
     const updated = await queryProduction(
       `SELECT ${APP_ENRICHED_SELECT}
@@ -2507,7 +2683,8 @@ router.post('/admin/:id/upload-contract', contractUpload.single('contract'), asy
     res.json({ success: true, data: { contract_url: fileUrl, filename: file.originalname, ...freshApp } });
   } catch (error: any) {
     logger.error('Failed to upload contract:', error);
-    res.status(500).json({ success: false, error: error.message });
+    const writeError = getStartClubWriteError('upload contract', error);
+    res.status(writeError.status).json({ success: false, error: writeError.message });
   }
 });
 
@@ -2522,8 +2699,21 @@ router.post('/admin/:id/upload-signed-contract', contractUpload.single('contract
     }
 
     const fileUrl = `/api/start-club/contracts/${file.filename}`;
+    const applicationId = parseInt(id, 10);
+    const appResult = await queryProduction('SELECT status FROM club_application WHERE pk = $1', [id]);
+    if (appResult.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'Application not found' });
+    }
 
-    await callGrpc('SuperAdminService', 'StartYourClubUploadSignedContract', { application_id: parseInt(id), signed_contract_url: fileUrl });
+    const currentStatus = String(appResult.rows[0].status || '').trim().toUpperCase();
+    if (currentStatus === 'CLUB_CREATED') {
+      await persistContractUploadDirectly(applicationId, 'signed_contract_url', fileUrl);
+    } else {
+      await callGrpc('SuperAdminService', 'StartYourClubUploadSignedContract', {
+        application_id: applicationId,
+        signed_contract_url: fileUrl,
+      });
+    }
 
     const updated = await queryProduction(
       `SELECT ${APP_ENRICHED_SELECT}
@@ -2538,7 +2728,8 @@ router.post('/admin/:id/upload-signed-contract', contractUpload.single('contract
     res.json({ success: true, data: { signed_contract_url: fileUrl, ...freshApp } });
   } catch (error: any) {
     logger.error('Failed to upload signed contract:', error);
-    res.status(500).json({ success: false, error: error.message });
+    const writeError = getStartClubWriteError('upload signed contract', error);
+    res.status(writeError.status).json({ success: false, error: writeError.message });
   }
 });
 

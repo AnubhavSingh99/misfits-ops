@@ -35,6 +35,18 @@ function sleep(ms: number) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+function splitSqlStatements(sql: string): string[] {
+  const sanitized = sql
+    .split('\n')
+    .filter((line) => !line.trim().startsWith('--'))
+    .join('\n');
+
+  return sanitized
+    .split(';')
+    .map((statement) => statement.trim())
+    .filter((statement) => statement.length > 0);
+}
+
 async function isPortReachable(host: string, port: number, timeoutMs = TUNNEL_CHECK_TIMEOUT_MS): Promise<boolean> {
   return new Promise((resolve) => {
     const socket = net.createConnection({ host, port });
@@ -726,10 +738,7 @@ async function runDimensionalTargetsMigration() {
     const schemaSql = fs.readFileSync(schemaPath, 'utf8');
 
     // Split by semicolons and execute each statement
-    const statements = schemaSql
-      .split(';')
-      .map(s => s.trim())
-      .filter(s => s.length > 0 && !s.startsWith('--'));
+    const statements = splitSqlStatements(schemaSql);
 
     for (const statement of statements) {
       if (statement.trim()) {
@@ -797,10 +806,7 @@ async function runMigrationFiles() {
       const sql = fs.readFileSync(filePath, 'utf8');
 
       // Split by semicolons and execute each statement
-      const statements = sql
-        .split(';')
-        .map(s => s.trim())
-        .filter(s => s.length > 0 && !s.startsWith('--'));
+      const statements = splitSqlStatements(sql);
 
       for (const statement of statements) {
         if (statement.trim()) {
