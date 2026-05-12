@@ -110,9 +110,9 @@ const SECTION_SUBSECTIONS: Record<string, SubsectionConfig[]> = {
     { id: 'onboarded', label: 'Onboarded', borderClass: 'border-l-green-500', bgClass: 'bg-green-50/40', headerClass: 'text-green-800', countClass: 'bg-green-100 text-green-800', isGroup: true,
       filter: (app: Application) => app.status === 'CLUB_CREATED' },
     { id: 'onboarded_incomplete', label: 'Incomplete', borderClass: 'border-l-amber-400', bgClass: 'bg-amber-50/60', headerClass: 'text-amber-700', countClass: 'bg-amber-100 text-amber-700', parentGroup: 'onboarded',
-      filter: (app: Application) => app.status === 'CLUB_CREATED' && !app.contract_url },
+      filter: (app: Application) => app.status === 'CLUB_CREATED' && !hasOnboardingCompletion(app) },
     { id: 'onboarded_complete', label: 'Complete', borderClass: 'border-l-green-400', bgClass: 'bg-green-50/60', headerClass: 'text-green-700', countClass: 'bg-green-100 text-green-700', parentGroup: 'onboarded',
-      filter: (app: Application) => app.status === 'CLUB_CREATED' && !!app.contract_url },
+      filter: (app: Application) => app.status === 'CLUB_CREATED' && hasOnboardingCompletion(app) },
   ],
   dropped: [
     { id: 'not_interested', label: 'Not Interested', borderClass: 'border-l-slate-400', bgClass: 'bg-slate-50/60', headerClass: 'text-slate-600', countClass: 'bg-slate-100 text-slate-600',
@@ -227,6 +227,10 @@ interface Application {
   calendly_event_uri?: string | null;
   calendly_invitee_uri?: string | null;
   is_potential_lead_rejection?: boolean;
+}
+
+function hasOnboardingCompletion(app: Pick<Application, 'contract_url' | 'contract_uploaded_at'>): boolean {
+  return Boolean(app.contract_url || app.contract_uploaded_at);
 }
 
 interface AnalyticsData {
@@ -747,6 +751,20 @@ function LeadRow({
     if (data.success) { refetchDetail(); onRefresh(); }
   };
 
+  const handleManualOnboard = async () => {
+    const confirmed = window.confirm('Mark this lead as onboarded manually? Use this when onboarding was completed offline.');
+    if (!confirmed) return;
+
+    const res = await fetch(`${API_BASE}/admin/${app.id}/manual-onboard`, { method: 'POST' });
+    const data = await res.json();
+    if (data.success) {
+      refetchDetail();
+      onRefresh();
+    } else {
+      alert(data.error || 'Could not mark lead as onboarded');
+    }
+  };
+
   const handleStatusTransition = async (toStatus: string) => {
     const currentStatus = detail?.status || app.status;
     if (currentStatus === toStatus) {
@@ -971,8 +989,8 @@ function LeadRow({
                   </span>
                 </>
               ) : (
-                <span className={`text-[10px] px-1.5 py-0.5 rounded border ${app.contract_url ? 'bg-green-50 text-green-600 border-green-200' : 'bg-red-50 text-red-400 border-red-200'}`}>
-                  {app.contract_url ? '\u2713' : '\u2717'} Contract
+                <span className={`text-[10px] px-1.5 py-0.5 rounded border ${hasOnboardingCompletion(app) ? 'bg-green-50 text-green-600 border-green-200' : 'bg-red-50 text-red-400 border-red-200'}`}>
+                  {hasOnboardingCompletion(app) ? '\u2713' : '\u2717'} {app.contract_url ? 'Contract' : 'Onboarded'}
                 </span>
               )}
             </div>
@@ -1205,6 +1223,17 @@ function LeadRow({
                                 )}
                               </>
                             )}
+                            {!hasOnboardingCompletion(detail) && (
+                              <div className="border-t border-slate-200 pt-2">
+                                <button
+                                  onClick={handleManualOnboard}
+                                  className="w-full px-2.5 py-1.5 text-[10px] font-medium text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-md hover:bg-emerald-100"
+                                >
+                                  Mark Onboarded Manually
+                                </button>
+                                <p className="text-[9px] text-slate-400 mt-1">Use when the onboarding was completed outside the contract upload flow.</p>
+                              </div>
+                            )}
                           </>
                         )}
                       </div>
@@ -1252,16 +1281,31 @@ function LeadRow({
                       <div className="px-3 py-2.5 bg-slate-50 rounded-lg border border-slate-200 space-y-2">
                         <h4 className="text-xs font-bold text-slate-700">Contract</h4>
                         {!detail.contract_url ? (
-                          <label className="flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] font-medium text-purple-600 bg-white border border-purple-200 rounded-md hover:bg-purple-50 cursor-pointer">
-                            <Upload className="h-3 w-3" /> Upload Contract
-                            <input type="file" className="hidden" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png" onChange={async (e) => {
-                              const file = e.target.files?.[0]; if (!file) return;
-                              const fd = new FormData(); fd.append('contract', file);
-                              const res = await fetch(`${API_BASE}/admin/${app.id}/upload-contract`, { method: 'POST', body: fd });
-                              const data = await res.json();
-                              if (data.success) { refetchDetail(); onRefresh(); } else alert(data.error);
-                            }} />
-                          </label>
+                          <div className="space-y-2">
+                            {detail.contract_uploaded_at ? (
+                              <div className="rounded-md border border-emerald-200 bg-emerald-50 px-2.5 py-2">
+                                <div className="text-[10px] font-medium text-emerald-700">Marked onboarded manually</div>
+                                <div className="text-[9px] text-emerald-600 mt-0.5">{formatDateTime(detail.contract_uploaded_at)}</div>
+                              </div>
+                            ) : (
+                              <button
+                                onClick={handleManualOnboard}
+                                className="w-full px-2.5 py-1.5 text-[10px] font-medium text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-md hover:bg-emerald-100"
+                              >
+                                Mark Onboarded Manually
+                              </button>
+                            )}
+                            <label className="flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] font-medium text-purple-600 bg-white border border-purple-200 rounded-md hover:bg-purple-50 cursor-pointer">
+                              <Upload className="h-3 w-3" /> Upload Contract
+                              <input type="file" className="hidden" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png" onChange={async (e) => {
+                                const file = e.target.files?.[0]; if (!file) return;
+                                const fd = new FormData(); fd.append('contract', file);
+                                const res = await fetch(`${API_BASE}/admin/${app.id}/upload-contract`, { method: 'POST', body: fd });
+                                const data = await res.json();
+                                if (data.success) { refetchDetail(); onRefresh(); } else alert(data.error);
+                              }} />
+                            </label>
+                          </div>
                         ) : (
                           <div className="space-y-1">
                             <div className="flex items-center gap-1.5 flex-wrap">
