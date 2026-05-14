@@ -63,7 +63,10 @@ function getStartClubWriteError(action: string, error: any): { status: number; m
 }
 
 function hasOnboardingCompletionMarker(row: any): boolean {
-  return !!String(row?.contract_pdf_url ?? row?.contract_url ?? '').trim() || !!row?.contract_uploaded_at;
+  return !!String(row?.contract_pdf_url ?? row?.contract_url ?? '').trim()
+    || !!row?.contract_uploaded_at
+    || !!row?.club_created_at
+    || !!row?.manual_onboarding_completed_at;
 }
 
 function shouldTreatManualClubCreatedLeadAsSelected(row: any): boolean {
@@ -135,8 +138,8 @@ async function enrichRowsWithManualOnboardingMarkers(rows: any[]) {
   const markers = await fetchManualOnboardingMarkerMap(rows.map((row) => row?.pk ?? row?.id));
   for (const row of rows) {
     const marker = markers.get(String(row?.pk ?? row?.id ?? ''));
-    if (marker && !row.contract_uploaded_at) {
-      row.contract_uploaded_at = marker;
+    if (marker) {
+      row.manual_onboarding_completed_at = marker;
     }
   }
 
@@ -2448,7 +2451,7 @@ router.post('/admin/:id/manual-onboard', async (req: Request, res: Response) => 
     );
     const freshApp = await mapEnrichedAppRow(updated.rows[0]);
 
-    broadcast('application_updated', { id, status: 'CLUB_CREATED', type: 'manual_onboarded' });
+    broadcast('application_updated', { id, status: freshApp.status, type: 'manual_onboarded' });
     res.json({ success: true, data: freshApp });
   } catch (error: any) {
     logger.error('Failed to mark application as manually onboarded:', error);

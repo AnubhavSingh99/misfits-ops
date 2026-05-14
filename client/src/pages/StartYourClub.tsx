@@ -195,6 +195,7 @@ interface Application {
   split_percentage: Record<string, number> | null;
   contract_url: string | null;
   contract_uploaded_at: string | null;
+  manual_onboarding_completed_at?: string | null;
   signed_contract_url: string | null;
   signed_contract_uploaded_at: string | null;
   first_call_done: boolean;
@@ -229,8 +230,8 @@ interface Application {
   is_potential_lead_rejection?: boolean;
 }
 
-function hasOnboardingCompletion(app: Pick<Application, 'contract_url' | 'contract_uploaded_at'>): boolean {
-  return Boolean(app.contract_url || app.contract_uploaded_at);
+function hasOnboardingCompletion(app: Pick<Application, 'contract_url' | 'contract_uploaded_at' | 'manual_onboarding_completed_at' | 'club_created_at'>): boolean {
+  return Boolean(app.contract_url || app.contract_uploaded_at || app.manual_onboarding_completed_at || app.club_created_at);
 }
 
 interface AnalyticsData {
@@ -1256,10 +1257,10 @@ function LeadRow({
                         <h4 className="text-xs font-bold text-slate-700">Contract</h4>
                         {!detail.contract_url ? (
                           <div className="space-y-2">
-                            {detail.contract_uploaded_at ? (
+                            {detail.manual_onboarding_completed_at ? (
                               <div className="rounded-md border border-emerald-200 bg-emerald-50 px-2.5 py-2">
                                 <div className="text-[10px] font-medium text-emerald-700">Marked onboarded manually</div>
-                                <div className="text-[9px] text-emerald-600 mt-0.5">{formatDateTime(detail.contract_uploaded_at)}</div>
+                                <div className="text-[9px] text-emerald-600 mt-0.5">{formatDateTime(detail.manual_onboarding_completed_at)}</div>
                               </div>
                             ) : (
                               <button
