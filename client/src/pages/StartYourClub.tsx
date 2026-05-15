@@ -271,6 +271,13 @@ interface AnalyticsData {
   };
 }
 
+interface FunnelStatsData {
+  by_source: Array<{
+    source: string;
+    count: number;
+  }>;
+}
+
 function hasInterviewScheduleDetails(app: Pick<Application, 'interview_scheduled_at' | 'calendly_meet_link' | 'calendly_event_uri'>): boolean {
   return Boolean(app.interview_scheduled_at || app.calendly_meet_link || app.calendly_event_uri);
 }
@@ -2811,6 +2818,7 @@ export default function StartYourClub() {
   const [applications, setApplications] = useState<Application[]>([]);
   const [applicationsError, setApplicationsError] = useState<string | null>(null);
   const [analytics, setAnalytics] = useState<AnalyticsData | null>(null);
+  const [funnelStats, setFunnelStats] = useState<FunnelStatsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -3032,6 +3040,16 @@ export default function StartYourClub() {
     }
   }, []);
 
+  const fetchFunnelStats = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE}/admin/funnel`);
+      const data = await res.json();
+      if (data.success) setFunnelStats(data.data);
+    } catch (err) {
+      console.error('Failed to fetch funnel stats:', err);
+    }
+  }, []);
+
   const fetchFilterOptions = useCallback(async () => {
     try {
       const controller = new AbortController();
@@ -3096,7 +3114,7 @@ export default function StartYourClub() {
     }
   }, []);
 
-  useEffect(() => { fetchApplications(); fetchAnalytics(); fetchFilterOptions(); fetchRatingDimensions(); }, []);
+  useEffect(() => { fetchApplications(); fetchAnalytics(); fetchFunnelStats(); fetchFilterOptions(); fetchRatingDimensions(); }, []);
   useEffect(() => { fetchApplications(); }, [fetchApplications]);
   useEffect(() => { fetchScheduledCalls(); }, [fetchScheduledCalls]);
   useEffect(() => {
@@ -3114,13 +3132,13 @@ export default function StartYourClub() {
       ? `${import.meta.env.VITE_API_URL}/api/start-club/events`
       : '/api/start-club/events';
     const es = new EventSource(url);
-    es.addEventListener('application_updated', () => { fetchApplications(); fetchAnalytics(); fetchScheduledCalls(); });
+    es.addEventListener('application_updated', () => { fetchApplications(); fetchAnalytics(); fetchFunnelStats(); fetchScheduledCalls(); });
     es.addEventListener('activity_added', () => {});
-    const poll = setInterval(() => { fetchApplications(); fetchAnalytics(); fetchScheduledCalls(); }, 30000);
+    const poll = setInterval(() => { fetchApplications(); fetchAnalytics(); fetchFunnelStats(); fetchScheduledCalls(); }, 30000);
     return () => { es.close(); clearInterval(poll); };
-  }, [fetchApplications, fetchAnalytics, fetchScheduledCalls]);
+  }, [fetchApplications, fetchAnalytics, fetchFunnelStats, fetchScheduledCalls]);
 
-  const handleRefresh = () => { fetchApplications(); fetchAnalytics(); fetchFilterOptions(); fetchScheduledCalls(); };
+  const handleRefresh = () => { fetchApplications(); fetchAnalytics(); fetchFunnelStats(); fetchFilterOptions(); fetchScheduledCalls(); };
 
   const handlePickedForReview = useCallback((id: string, reviewer: string) => {
     setApplications(prev => prev.map(app => (
@@ -3474,6 +3492,23 @@ export default function StartYourClub() {
             <div className="text-2xl font-bold text-red-700">{f.not_interested + f.on_hold + f.rejected}</div>
             <div className="text-xs font-medium text-red-600 mt-1">Dropped / On Hold / Not Interested</div>
             <div className="text-[10px] text-red-500">{f.rejected} rejected, {f.on_hold} on hold, {f.not_interested} not interested</div>
+          </div>
+        </div>
+      )}
+
+      {funnelStats && funnelStats.by_source.length > 0 && (
+        <div className="mb-5 bg-white border border-slate-200 rounded-xl p-4">
+          <div className="text-sm font-semibold text-slate-700 mb-3">Lead Sources</div>
+          <div className="flex flex-wrap gap-2">
+            {funnelStats.by_source.map(({ source, count }) => (
+              <div
+                key={source}
+                className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5"
+              >
+                <span className="text-xs font-medium text-slate-600">{formatLeadSource(source)}</span>
+                <span className="text-xs font-bold text-slate-900">{count}</span>
+              </div>
+            ))}
           </div>
         </div>
       )}

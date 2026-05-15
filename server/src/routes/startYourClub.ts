@@ -1273,12 +1273,26 @@ router.get('/admin/funnel', async (req: Request, res: Response) => {
        ORDER BY count DESC`
     );
 
+    const bySource = await queryProduction(
+      `SELECT CASE
+                WHEN lower(trim(source)) IN ('app', 'instagram', 'ads', 'whatsapp', 'admin', 'website')
+                  THEN lower(trim(source))
+                ELSE 'website'
+              END as source,
+              COUNT(*)::int as count
+       FROM club_application
+       WHERE archived = false
+       GROUP BY 1
+       ORDER BY count DESC, source ASC`
+    );
+
     res.json({
       success: true,
       data: {
         by_status: result.rows,
         by_city: byCity.rows,
         by_activity: byActivity.rows,
+        by_source: bySource.rows,
         total: result.rows.reduce((sum: number, r: any) => sum + r.count, 0),
       },
     });
