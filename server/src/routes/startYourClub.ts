@@ -25,28 +25,24 @@ const CITY_ALIAS_TO_PARENT: Record<string, { city: string; subArea: string }> = 
   'central delhi': { city: 'Delhi', subArea: 'Central Delhi' },
   'south city': { city: 'Bangalore', subArea: 'South City' },
 };
+// All 12 values from the club_app_status DB enum. Manual leads can be
+// placed at any status via the Go force-status endpoint, which bypasses
+// the state machine's transition rules and Calendly zombie guard.
 const MANUAL_LEAD_TARGET_STATUSES = new Set([
+  'ACTIVE',
+  'ABANDONED',
+  'NOT_INTERESTED',
   'SUBMITTED',
   'UNDER_REVIEW',
+  'ON_HOLD',
   'INTERVIEW_PENDING',
+  'INTERVIEW_SCHEDULED',
   'INTERVIEW_DONE',
   'SELECTED',
+  'CLUB_CREATED',
+  'REJECTED',
 ]);
 const DEFAULT_MANUAL_LEAD_REVIEWER = 'Manual Lead';
-const DEFAULT_MANUAL_SCREENING_RATINGS = {
-  intention: 3,
-  passion: 3,
-  time_availability: 3,
-  competency: 3,
-  objective: 3,
-};
-const DEFAULT_MANUAL_INTERVIEW_RATINGS = {
-  intention: 3,
-  passion: 3,
-  time_availability: 3,
-  competency: 3,
-  objective: 3,
-};
 
 function getStartClubWriteError(action: string, error: any): { status: number; message: string } {
   const message = String(error?.message || '').trim();
@@ -180,65 +176,26 @@ async function fetchFreshApplicationById(applicationId: number) {
 async function moveManualLeadToTargetStatus(applicationId: number, targetStatus: string, reviewedBy = DEFAULT_MANUAL_LEAD_REVIEWER) {
   if (targetStatus === 'SUBMITTED') return;
 
-  const sequenceByTarget: Record<string, string[]> = {
-    UNDER_REVIEW: ['UNDER_REVIEW'],
-    INTERVIEW_PENDING: ['UNDER_REVIEW', 'INTERVIEW_PENDING'],
-    INTERVIEW_DONE: ['UNDER_REVIEW', 'INTERVIEW_PENDING', 'INTERVIEW_SCHEDULED', 'INTERVIEW_DONE'],
-    SELECTED: ['UNDER_REVIEW', 'INTERVIEW_PENDING', 'INTERVIEW_SCHEDULED', 'INTERVIEW_DONE', 'SELECTED'],
-  };
-
-  const sequence = sequenceByTarget[targetStatus];
-  if (!sequence) {
-    throw new Error(`Unsupported manual lead target status: ${targetStatus}`);
+  // Manual (admin-created) leads use the Go force-status endpoint, which
+  // bypasses the state machine's transition rules and the INTERVIEW_SCHEDULED
+  // Calendly zombie guard. One call jumps directly to the target status, no
+  // intermediate sequence needed. Ratings/split stay null — ops can fill them
+  // via the standard rating UI later if desired (Saurabh confirmed this is OK).
+  const apiRes = await misfitsApi('PATCH', `/start-your-club/admin/${applicationId}/force-status`, { status: targetStatus });
+  if (!apiRes.ok) {
+    throw new Error(apiRes.error || apiRes.data?.message || `Failed to move lead to ${targetStatus}`);
   }
 
-  for (const step of sequence) {
-    switch (step) {
-      case 'UNDER_REVIEW':
-        await callGrpc('SuperAdminService', 'StartYourClubPickApplication', { application_id: applicationId });
-        try {
-          await queryLocal(
-            `INSERT INTO syc_reviewers (name, last_used_at) VALUES ($1, NOW())
-             ON CONFLICT (name) DO UPDATE SET last_used_at = NOW()`,
-            [reviewedBy.trim() || DEFAULT_MANUAL_LEAD_REVIEWER]
-          );
-        } catch {
-          // Non-critical autocomplete helper.
-        }
-        break;
-      case 'INTERVIEW_PENDING':
-        await callGrpc('SuperAdminService', 'StartYourClubReviewApplication', {
-          application_id: applicationId,
-          outcome: 1,
-          screening_ratings: DEFAULT_MANUAL_SCREENING_RATINGS,
-          rejection_reason: '',
-        });
-        break;
-      case 'INTERVIEW_SCHEDULED': {
-        const apiRes = await misfitsApi('PATCH', `/start-your-club/admin/${applicationId}/status`, { status: 'INTERVIEW_SCHEDULED' });
-        if (!apiRes.ok) {
-          throw new Error(apiRes.error || apiRes.data?.message || 'Failed to move lead to INTERVIEW_SCHEDULED');
-        }
-        break;
-      }
-      case 'INTERVIEW_DONE': {
-        const apiRes = await misfitsApi('PATCH', `/start-your-club/admin/${applicationId}/status`, { status: 'INTERVIEW_DONE' });
-        if (!apiRes.ok) {
-          throw new Error(apiRes.error || apiRes.data?.message || 'Failed to move lead to INTERVIEW_DONE');
-        }
-        break;
-      }
-      case 'SELECTED':
-        await callGrpc('SuperAdminService', 'StartYourClubSelectApplication', {
-          application_id: applicationId,
-          misfits_pct: 70,
-          leader_pct: 30,
-          interview_ratings: { dimensions: DEFAULT_MANUAL_INTERVIEW_RATINGS },
-        });
-        break;
-      default:
-        throw new Error(`Unsupported manual lead transition step: ${step}`);
-    }
+  // Best-effort: record the reviewer name for autocomplete. Doesn't affect
+  // the transition; safe to ignore failures.
+  try {
+    await queryLocal(
+      `INSERT INTO syc_reviewers (name, last_used_at) VALUES ($1, NOW())
+       ON CONFLICT (name) DO UPDATE SET last_used_at = NOW()`,
+      [reviewedBy.trim() || DEFAULT_MANUAL_LEAD_REVIEWER]
+    );
+  } catch {
+    // Non-critical autocomplete helper.
   }
 }
 
@@ -317,13 +274,25 @@ function normalizedSubAreaSql(column: string): string {
   END`;
 }
 
+// Strip "Sector N" / "sec N" / "sector NN" suffixes so dropdown entries
+// like "Gurgaon Sector 29" canonicalize back to "Gurgaon". Pattern matches
+// at end-of-string only, so we don't accidentally chop a legitimate name.
+const CITY_AREA_SUFFIX_RE = /\s+(?:sector|sec)\s+\S+$/i;
+
 function normalizeCityList(rows: any[], key: string): string[] {
-  const unique = new Set<string>();
+  // Map keyed by lowercase city → original casing of first-seen entry.
+  // Ensures "Greater noida" + "Greater Noida" collapse to one entry instead
+  // of two duplicate dropdown options.
+  const seen = new Map<string, string>();
   for (const row of rows) {
     const parsed = splitCityAndSubArea(row?.[key]);
-    if (parsed.city) unique.add(parsed.city);
+    if (!parsed.city) continue;
+    const stripped = parsed.city.replace(CITY_AREA_SUFFIX_RE, '').trim();
+    if (!stripped) continue;
+    const lower = stripped.toLowerCase();
+    if (!seen.has(lower)) seen.set(lower, stripped);
   }
-  return [...unique].sort((a, b) => a.localeCompare(b));
+  return [...seen.values()].sort((a, b) => a.localeCompare(b));
 }
 
 // Map production column names to frontend-expected names
@@ -2278,6 +2247,52 @@ router.patch('/admin/:id/status', async (req: Request, res: Response) => {
   } catch (error: any) {
     logger.error('Failed to update status:', error);
     res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// PATCH /admin/:id/force-status — Free-form status change for admin-created
+// (manual) leads only. Proxies to the Go force-status endpoint, which hard-
+// gates on admin_created=true and bypasses ValidateTransition + the Calendly
+// zombie guard. Used by:
+//   1. Add Lead modal — drop a new lead at any target_status
+//   2. Detail-panel Change Status dropdown — move admin lead forward or backward
+// Organic leads continue to use the regular /admin/:id/status endpoint with
+// full state-machine validation.
+router.patch('/admin/:id/force-status', async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+
+    if (!status) {
+      return res.status(400).json({ success: false, error: 'status is required' });
+    }
+    if (!MANUAL_LEAD_TARGET_STATUSES.has(String(status).toUpperCase())) {
+      return res.status(400).json({
+        success: false,
+        error: `status must be one of: ${Array.from(MANUAL_LEAD_TARGET_STATUSES).join(', ')}`,
+      });
+    }
+
+    const apiRes = await misfitsApi('PATCH', `/start-your-club/admin/${id}/force-status`, {
+      status: String(status).toUpperCase(),
+    });
+    if (!apiRes.ok) {
+      return res.status(apiRes.status || 500).json({
+        success: false,
+        error: apiRes.error || apiRes.data?.message || 'Failed to force-status',
+      });
+    }
+
+    const freshApp = await fetchFreshApplicationById(parseInt(id, 10));
+    if (!freshApp) {
+      return res.status(404).json({ success: false, error: 'Application not found after update' });
+    }
+
+    broadcast('application_updated', { id, status });
+    res.json({ success: true, data: freshApp });
+  } catch (error: any) {
+    logger.error('Failed to force-status lead:', error);
+    res.status(500).json({ success: false, error: error?.message || 'Failed to force-status' });
   }
 });
 
