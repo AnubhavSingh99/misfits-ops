@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
-import { queryProduction, queryProductionWrite, queryLocal } from '../services/database';
+import { queryProduction, queryProductionWrite, queryLocal, withProductionWriteTransaction } from '../services/database';
 import { broadcast } from '../services/startYourClub/sseManager';
 import { misfitsApi } from '../services/startYourClub/misfitsApi';
 import { callGrpc } from '../services/grpcClient';
@@ -171,6 +171,54 @@ async function fetchFreshApplicationById(applicationId: number) {
     [applicationId]
   );
   return updated.rows[0] ? await mapEnrichedAppRow(updated.rows[0]) : null;
+}
+
+async function deleteApplicationDirectly(applicationId: number) {
+  await withProductionWriteTransaction(async (client) => {
+    await client.query('DELETE FROM club_application_activity WHERE application_id = $1', [applicationId]);
+    await client.query('DELETE FROM club_application_event WHERE application_id = $1', [applicationId]);
+    await client.query('DELETE FROM club_application_status_event WHERE application_id = $1', [applicationId]);
+    const result = await client.query('DELETE FROM club_application WHERE pk = $1', [applicationId]);
+    if (result.rowCount === 0) {
+      throw Object.assign(new Error('Application not found'), { status: 404 });
+    }
+  });
+}
+
+async function removeApplicationThroughWorkflow(applicationId: number) {
+  const current = await queryProduction(
+    'SELECT status FROM club_application WHERE pk = $1',
+    [applicationId]
+  );
+  if (current.rows.length === 0) {
+    throw Object.assign(new Error('Application not found'), { status: 404 });
+  }
+
+  const currentStatus = String(current.rows[0].status || '').trim().toUpperCase();
+  const needsRejectBeforeArchive = new Set([
+    'ACTIVE',
+    'SUBMITTED',
+    'UNDER_REVIEW',
+    'INTERVIEW_PENDING',
+    'INTERVIEW_SCHEDULED',
+    'INTERVIEW_DONE',
+    'ON_HOLD',
+    'SELECTED',
+  ]);
+
+  if (needsRejectBeforeArchive.has(currentStatus)) {
+    await callGrpc('SuperAdminService', 'StartYourClubRejectApplication', {
+      application_id: applicationId,
+      rejection_reason: 'other',
+    });
+    await appendRejectionNote(applicationId, 'Deleted from ops lead dashboard.').catch((noteError) => {
+      logger.warn('Failed to add delete note before archive:', noteError?.message || noteError);
+    });
+  }
+
+  await callGrpc('SuperAdminService', 'StartYourClubBulkArchiveApplications', {
+    application_ids: [applicationId],
+  });
 }
 
 async function moveManualLeadToTargetStatus(applicationId: number, targetStatus: string, reviewedBy = DEFAULT_MANUAL_LEAD_REVIEWER) {
@@ -1037,9 +1085,26 @@ router.get('/admin/all', async (req: Request, res: Response) => {
       params.push(activity);
     }
     if (search) {
-      conditions.push(`(ca.name ILIKE $${paramIdx} OR CONCAT(u.first_name, ' ', u.last_name) ILIKE $${paramIdx} OR ca.city_name ILIKE $${paramIdx} OR ${normalizedSubAreaSql('ca.city_name')} ILIKE $${paramIdx} OR ca.activity_name ILIKE $${paramIdx})`);
-      params.push(`%${search}%`);
+      const searchText = String(search);
+      const searchDigits = searchText.replace(/\D/g, '');
+      const searchParts = [
+        `ca.name ILIKE $${paramIdx}`,
+        `CONCAT(u.first_name, ' ', u.last_name) ILIKE $${paramIdx}`,
+        `ca.city_name ILIKE $${paramIdx}`,
+        `${normalizedSubAreaSql('ca.city_name')} ILIKE $${paramIdx}`,
+        `ca.activity_name ILIKE $${paramIdx}`,
+        `${CURRENT_APPLICANT_PHONE} ILIKE $${paramIdx}`,
+      ];
+      params.push(`%${searchText}%`);
       paramIdx++;
+
+      if (searchDigits) {
+        searchParts.push(`REGEXP_REPLACE(COALESCE(${CURRENT_APPLICANT_PHONE}, ''), '\\D', '', 'g') ILIKE $${paramIdx}`);
+        params.push(`%${searchDigits}%`);
+        paramIdx++;
+      }
+
+      conditions.push(`(${searchParts.join(' OR ')})`);
     }
 
     const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
@@ -1129,9 +1194,25 @@ router.get('/admin/all', async (req: Request, res: Response) => {
         localParams.push(fallbackActivity);
       }
       if (fallbackSearch) {
-        localConditions.push(`(ca.name ILIKE $${localIdx} OR ca.city ILIKE $${localIdx} OR ${normalizedSubAreaSql('ca.city')} ILIKE $${localIdx} OR ca.activity ILIKE $${localIdx})`);
-        localParams.push(`%${String(fallbackSearch)}%`);
+        const searchText = String(fallbackSearch);
+        const searchDigits = searchText.replace(/\D/g, '');
+        const searchParts = [
+          `ca.name ILIKE $${localIdx}`,
+          `ca.city ILIKE $${localIdx}`,
+          `${normalizedSubAreaSql('ca.city')} ILIKE $${localIdx}`,
+          `ca.activity ILIKE $${localIdx}`,
+          `ca.user_phone ILIKE $${localIdx}`,
+        ];
+        localParams.push(`%${searchText}%`);
         localIdx++;
+
+        if (searchDigits) {
+          searchParts.push(`REGEXP_REPLACE(COALESCE(ca.user_phone, ''), '\\D', '', 'g') ILIKE $${localIdx}`);
+          localParams.push(`%${searchDigits}%`);
+          localIdx++;
+        }
+
+        localConditions.push(`(${searchParts.join(' OR ')})`);
       }
 
       const localWhere = localConditions.length > 0 ? `WHERE ${localConditions.join(' AND ')}` : '';
@@ -2039,6 +2120,57 @@ router.get('/admin/:id', async (req: Request, res: Response) => {
 
 // (reviewers route moved before /admin/:id)
 
+// DELETE /admin/:id — Permanently delete a lead application
+router.delete('/admin/:id', async (req: Request, res: Response) => {
+  try {
+    const id = Number.parseInt(String(req.params.id), 10);
+    if (!Number.isFinite(id)) {
+      return res.status(400).json({ success: false, error: 'Invalid application ID' });
+    }
+
+    const apiRes = await misfitsApi('DELETE', `/start-your-club/admin/${id}`);
+    if (!apiRes.ok && apiRes.status !== 405 && apiRes.status !== 404) {
+      return res.status(apiRes.status || 500).json({
+        success: false,
+        error: apiRes.error || apiRes.data?.message || 'Failed to delete application',
+      });
+    }
+
+    if (!apiRes.ok) {
+      try {
+        await deleteApplicationDirectly(id);
+      } catch (directError: any) {
+        logger.warn('Hard delete unavailable, removing application through reject/archive workflow:', directError?.message || directError);
+        try {
+          await removeApplicationThroughWorkflow(id);
+        } catch (workflowError: any) {
+          const writeError = getStartClubWriteError('delete application', directError);
+          const upstreamMessage = apiRes.status === 405
+            ? 'The deployed Misfits API does not support delete yet.'
+            : apiRes.error || apiRes.data?.message || 'The deployed Misfits API could not delete this application.';
+          return res.status(workflowError?.status || directError?.status || writeError.status).json({
+            success: false,
+            error: `${upstreamMessage} Hard delete failed: ${writeError.message}. Archive fallback failed: ${workflowError?.message || 'unknown error'}`,
+          });
+        }
+      }
+    }
+
+    try {
+      await ensureManualOnboardingTable();
+      await queryLocal('DELETE FROM syc_manual_onboarding WHERE application_id = $1', [id]);
+    } catch (markerError) {
+      logger.warn('Deleted application, but failed to clear local onboarding marker:', markerError);
+    }
+
+    broadcast('application_deleted', { id });
+    res.json({ success: true, data: apiRes.data || { deleted_id: id } });
+  } catch (error: any) {
+    logger.error('Failed to delete application:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // PATCH /admin/:id/pick — "Pick" a submitted application for review (SUBMITTED → UNDER_REVIEW)
 router.patch('/admin/:id/pick', async (req: Request, res: Response) => {
   try {
@@ -2485,6 +2617,81 @@ router.post('/admin/:id/manual-onboard', async (req: Request, res: Response) => 
     res.json({ success: true, data: freshApp });
   } catch (error: any) {
     logger.error('Failed to mark application as manually onboarded:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// POST /admin/:id/direct-onboard — Fast-track an interview-phase lead to onboarded
+router.post('/admin/:id/direct-onboard', async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    await ensureManualOnboardingTable();
+
+    const applicationId = parseInt(id, 10);
+    const appResult = await queryProduction(
+      'SELECT status FROM club_application WHERE pk = $1',
+      [id]
+    );
+    if (appResult.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'Application not found' });
+    }
+
+    const currentStatus = String(appResult.rows[0].status || '').trim().toUpperCase();
+    if (['REJECTED', 'NOT_INTERESTED', 'ABANDONED'].includes(currentStatus)) {
+      return res.status(400).json({ success: false, error: `Cannot onboard a ${currentStatus} application` });
+    }
+
+    const selectApplication = () => callGrpc('SuperAdminService', 'StartYourClubSelectApplication', {
+      application_id: applicationId,
+      misfits_pct: 70,
+      leader_pct: 30,
+      interview_ratings: { dimensions: DEFAULT_MANUAL_INTERVIEW_RATINGS },
+    });
+
+    if (!['SELECTED', 'CLUB_CREATED'].includes(currentStatus)) {
+      try {
+        await selectApplication();
+      } catch (selectError: any) {
+        logger.warn('Direct select failed:', selectError?.message || selectError);
+        return res.status(409).json({
+          success: false,
+          error: 'Direct onboarding is blocked by the upstream workflow until the lead reaches Interview Done. No Calendly action was taken.',
+        });
+      }
+    }
+
+    if (currentStatus !== 'CLUB_CREATED') {
+      const onboardRes = await misfitsApi('PATCH', `/start-your-club/admin/${id}/status`, { status: 'CLUB_CREATED' });
+      if (!onboardRes.ok) {
+        return res.status(onboardRes.status || 500).json({
+          success: false,
+          error: onboardRes.error || onboardRes.data?.message || 'Failed to mark application as CLUB_CREATED',
+        });
+      }
+    }
+
+    await queryLocal(
+      `INSERT INTO syc_manual_onboarding (application_id, completed_at, updated_at)
+       VALUES ($1, NOW(), NOW())
+       ON CONFLICT (application_id)
+       DO UPDATE SET completed_at = COALESCE(syc_manual_onboarding.completed_at, EXCLUDED.completed_at),
+                     updated_at = NOW()`,
+      [applicationId]
+    );
+
+    const updated = await queryProduction(
+      `SELECT ${APP_ENRICHED_SELECT}
+       FROM club_application ca
+       LEFT JOIN users u ON u.pk = ca.user_id
+       WHERE ca.pk = $1`,
+      [id]
+    );
+    const freshApp = await mapEnrichedAppRow(updated.rows[0]);
+
+    broadcast('application_updated', { id, status: freshApp.status, type: 'direct_onboarded' });
+    res.json({ success: true, data: freshApp });
+  } catch (error: any) {
+    logger.error('Failed to direct onboard application:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });

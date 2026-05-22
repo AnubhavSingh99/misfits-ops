@@ -312,6 +312,23 @@ export async function queryProductionWrite(text: string, params?: any[]) {
   }
 }
 
+export async function withProductionWriteTransaction<T>(
+  callback: (client: PoolClient) => Promise<T>
+): Promise<T> {
+  const client = await getProductionWriteClient();
+  try {
+    await client.query('BEGIN');
+    const result = await callback(client);
+    await client.query('COMMIT');
+    return result;
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 // Default query function - use production for backwards compatibility
 export async function query(text: string, params?: any[]) {
   // If production database is configured, use direct connection

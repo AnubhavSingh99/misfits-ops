@@ -480,7 +480,7 @@ function RatingDisplay({ ratings, label, dims }: { ratings: Record<string, numbe
 function LeadRow({
   app, isExpanded, onToggle, sectionId,
   onRefresh, screeningDims, interviewDims, ratingDimsLoaded, onPickedForReview,
-  isSelected, onSelect,
+  isSelected, onSelect, onDeleted,
 }: {
   app: Application;
   isExpanded: boolean;
@@ -493,6 +493,7 @@ function LeadRow({
   onPickedForReview?: (id: string, reviewer: string) => void;
   isSelected?: boolean;
   onSelect?: (id: string, selected: boolean) => void;
+  onDeleted?: (id: string) => void;
 }) {
   const [detail, setDetail] = useState<DetailData | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -514,6 +515,8 @@ function LeadRow({
   const [interviewNotScheduledComment, setInterviewNotScheduledComment] = useState('');
   const [showAddCommentForm, setShowAddCommentForm] = useState(false);
   const [addCommentText, setAddCommentText] = useState('');
+  const [directOnboarding, setDirectOnboarding] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   // Reviewer name (for pick flow) with autocomplete
   const [reviewerName, setReviewerName] = useState('');
@@ -574,6 +577,7 @@ function LeadRow({
       setInterviewNotScheduledComment('');
       setShowAddCommentForm(false);
       setAddCommentText('');
+      setDirectOnboarding(false);
       setReviewerName('');
       setSplitMisfits('70');
       setSplitLeader('30');
@@ -639,6 +643,32 @@ function LeadRow({
       onRefresh();
     } else {
       alert(data.error || 'Failed to save comment');
+    }
+  };
+
+  const handleDeleteApplication = async (event: React.MouseEvent) => {
+    event.stopPropagation();
+    if (deleting) return;
+
+    const leadName = app.name || app.application_ref || `application ${app.id}`;
+    const confirmed = window.confirm(`Permanently delete ${leadName}? This cannot be undone.`);
+    if (!confirmed) return;
+
+    try {
+      setDeleting(true);
+      const res = await fetch(`${API_BASE}/admin/${app.id}`, { method: 'DELETE' });
+      const data = await res.json();
+      if (data.success) {
+        onDeleted?.(app.id);
+        onRefresh();
+      } else {
+        alert(data.error || 'Failed to delete application');
+      }
+    } catch (err) {
+      console.error('Delete application failed:', err);
+      alert('Failed to delete application');
+    } finally {
+      setDeleting(false);
     }
   };
   const rejectionCommentFromLog = useMemo(() => {
@@ -770,6 +800,32 @@ function LeadRow({
       onRefresh();
     } else {
       alert(data.error || 'Could not mark lead as onboarded');
+    }
+  };
+
+  const handleDirectOnboard = async () => {
+    const confirmed = window.confirm('Move this lead directly to Onboarded? This will skip interview completion and use the default 70/30 split.');
+    if (!confirmed) return;
+
+    try {
+      setDirectOnboarding(true);
+      resetRejectForm();
+      resetInterviewNotScheduledForm();
+      resetAddCommentForm();
+
+      const res = await fetch(`${API_BASE}/admin/${app.id}/direct-onboard`, { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        refetchDetail();
+        onRefresh();
+      } else {
+        alert(data.error || 'Could not move lead to onboarding');
+      }
+    } catch (err) {
+      console.error('Direct onboarding failed:', err);
+      alert('Could not move lead to onboarding');
+    } finally {
+      setDirectOnboarding(false);
     }
   };
 
@@ -1031,7 +1087,18 @@ function LeadRow({
           </td>
         )}
         <td className="px-4 py-3 text-slate-400">
-          {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+          <div className="flex items-center justify-end gap-1.5">
+            <button
+              type="button"
+              onClick={handleDeleteApplication}
+              disabled={deleting}
+              title="Delete application"
+              className="rounded-md p-1.5 text-red-400 transition hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {deleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+            </button>
+            {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+          </div>
         </td>
       </tr>
 
@@ -1666,6 +1733,14 @@ function LeadRow({
                       {/* Interview actions */}
                       {detail.status === 'INTERVIEW_PENDING' && (
                         <div className="space-y-2">
+                          <button
+                            onClick={handleDirectOnboard}
+                            disabled={directOnboarding}
+                            className="w-full py-2 text-xs font-medium text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg hover:bg-emerald-100 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-1.5"
+                          >
+                            {directOnboarding ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <UserPlus className="h-3.5 w-3.5" />}
+                            Direct Onboarding
+                          </button>
                           {/* "Mark Interview Scheduled" was the foot-gun that produced 30+ zombie rows
                               (status SCHEDULED but no Calendly data) when the webhook was disabled
                               for 28 days. The Go backend now rejects that transition with 422
@@ -3190,12 +3265,26 @@ export default function StartYourClub() {
       : '/api/start-club/events';
     const es = new EventSource(url);
     es.addEventListener('application_updated', () => { fetchApplications(); fetchAnalytics(); fetchFunnelStats(); fetchScheduledCalls(); });
+    es.addEventListener('application_deleted', () => { fetchApplications(); fetchAnalytics(); fetchFunnelStats(); fetchScheduledCalls(); });
     es.addEventListener('activity_added', () => {});
     const poll = setInterval(() => { fetchApplications(); fetchAnalytics(); fetchFunnelStats(); fetchScheduledCalls(); }, 30000);
     return () => { es.close(); clearInterval(poll); };
   }, [fetchApplications, fetchAnalytics, fetchFunnelStats, fetchScheduledCalls]);
 
   const handleRefresh = () => { fetchApplications(); fetchAnalytics(); fetchFunnelStats(); fetchFilterOptions(); fetchScheduledCalls(); };
+
+  const handleApplicationDeleted = useCallback((id: string) => {
+    setApplications(prev => prev.filter(app => app.id !== id));
+    setScheduledCalls(prev => prev.filter(app => app.id !== id));
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+    setExpandedId(prev => prev === id ? null : prev);
+    setExpandedScheduledId(prev => prev === id ? null : prev);
+    setTotal(prev => Math.max(0, prev - 1));
+  }, []);
 
   const handlePickedForReview = useCallback((id: string, reviewer: string) => {
     setApplications(prev => prev.map(app => (
@@ -3820,7 +3909,7 @@ export default function StartYourClub() {
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
             <input
               type="text"
-              placeholder="Search by name, city, sub-area, activity..."
+              placeholder="Search by name, phone, city, sub-area, activity..."
               value={searchQuery}
               onChange={e => { setSearchQuery(e.target.value); setPage(1); }}
               className="w-full pl-9 pr-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400"
@@ -3959,7 +4048,7 @@ export default function StartYourClub() {
                 {activeSection === 'selected' && (
                   <th className="px-4 py-3 text-left font-semibold text-slate-600">Milestones</th>
                 )}
-                <th className="px-4 py-3 w-10"></th>
+                <th className="px-4 py-3 w-16"></th>
               </tr>
             </thead>
             <tbody>
@@ -4003,6 +4092,7 @@ export default function StartYourClub() {
                         const q = droppedSearch.toLowerCase();
                         subApps = subApps.filter(a =>
                           (a.name || '').toLowerCase().includes(q) ||
+                          (a.user_phone || '').toLowerCase().includes(q) ||
                           (a.city || '').toLowerCase().includes(q) ||
                           (a.sub_area || '').toLowerCase().includes(q) ||
                           (a.activity || '').toLowerCase().includes(q)
@@ -4043,6 +4133,7 @@ export default function StartYourClub() {
                               interviewDims={interviewDims}
                               ratingDimsLoaded={ratingDimsLoaded}
                               onPickedForReview={handlePickedForReview}
+                              onDeleted={handleApplicationDeleted}
                               isSelected={selectedIds.has(app.id)}
                               onSelect={(id, checked) => setSelectedIds(prev => {
                                 const next = new Set(prev);
