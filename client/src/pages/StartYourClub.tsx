@@ -515,7 +515,6 @@ function LeadRow({
   const [interviewNotScheduledComment, setInterviewNotScheduledComment] = useState('');
   const [showAddCommentForm, setShowAddCommentForm] = useState(false);
   const [addCommentText, setAddCommentText] = useState('');
-  const [directOnboarding, setDirectOnboarding] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
   // Reviewer name (for pick flow) with autocomplete
@@ -577,7 +576,6 @@ function LeadRow({
       setInterviewNotScheduledComment('');
       setShowAddCommentForm(false);
       setAddCommentText('');
-      setDirectOnboarding(false);
       setReviewerName('');
       setSplitMisfits('70');
       setSplitLeader('30');
@@ -800,32 +798,6 @@ function LeadRow({
       onRefresh();
     } else {
       alert(data.error || 'Could not mark lead as onboarded');
-    }
-  };
-
-  const handleDirectOnboard = async () => {
-    const confirmed = window.confirm('Move this lead directly to Onboarded? This will skip interview completion and use the default 70/30 split.');
-    if (!confirmed) return;
-
-    try {
-      setDirectOnboarding(true);
-      resetRejectForm();
-      resetInterviewNotScheduledForm();
-      resetAddCommentForm();
-
-      const res = await fetch(`${API_BASE}/admin/${app.id}/direct-onboard`, { method: 'POST' });
-      const data = await res.json();
-      if (data.success) {
-        refetchDetail();
-        onRefresh();
-      } else {
-        alert(data.error || 'Could not move lead to onboarding');
-      }
-    } catch (err) {
-      console.error('Direct onboarding failed:', err);
-      alert('Could not move lead to onboarding');
-    } finally {
-      setDirectOnboarding(false);
     }
   };
 
@@ -1733,14 +1705,6 @@ function LeadRow({
                       {/* Interview actions */}
                       {detail.status === 'INTERVIEW_PENDING' && (
                         <div className="space-y-2">
-                          <button
-                            onClick={handleDirectOnboard}
-                            disabled={directOnboarding}
-                            className="w-full py-2 text-xs font-medium text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg hover:bg-emerald-100 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-1.5"
-                          >
-                            {directOnboarding ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <UserPlus className="h-3.5 w-3.5" />}
-                            Direct Onboarding
-                          </button>
                           {/* "Mark Interview Scheduled" was the foot-gun that produced 30+ zombie rows
                               (status SCHEDULED but no Calendly data) when the webhook was disabled
                               for 28 days. The Go backend now rejects that transition with 422
