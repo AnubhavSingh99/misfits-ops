@@ -799,6 +799,25 @@ function LeadRow({
     alert(friendlyError);
   };
 
+  // Admin-only force-status: free-form status change for admin_created leads.
+  // Backend hard-gates on admin_created=true and bypasses transition rules +
+  // Calendly zombie guard. Forward AND backward transitions allowed (recovery
+  // from mistakes is a real use case).
+  const handleForceStatus = async (toStatus: string) => {
+    const res = await fetch(`${API_BASE}/admin/${app.id}/force-status`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: toStatus }),
+    });
+    const data = await res.json();
+    if (data.success) {
+      refetchDetail();
+      onRefresh();
+      return;
+    }
+    alert(String(data.error || 'Failed to change status'));
+  };
+
   const handleInterviewHold = async () => {
     if (!confirm('Move this lead to On Hold? They will appear in the On Hold section.')) return;
     resetRejectForm();
@@ -936,14 +955,21 @@ function LeadRow({
           {app.repeat_rejection_count || 0}
         </td>
         <td className="px-4 py-3">
-          <span className={`inline-flex items-center px-2 py-0.5 text-[11px] font-medium rounded-full border ${cfg.badgeClass}`}>
-            {cfg.label}
-          </span>
-          {(app.status === 'ON_HOLD' || (app.status === 'REJECTED' && app.is_potential_lead_rejection)) && (
-            <span className="ml-1.5 inline-flex items-center px-2 py-0.5 text-[10px] font-medium rounded-full border bg-violet-50 text-violet-700 border-violet-200">
-              Potential lead
+          {/* Status badge + (optional) "Potential lead" pill. Wrapped in a
+              flex container with gap so they align cleanly whether they end
+              up side-by-side or wrap onto two lines in a narrow column —
+              avoids the awkward inline-with-ml-1.5 layout that left the
+              Potential lead pill hugging the wrong corner on wrap. */}
+          <div className="flex flex-wrap items-center gap-1">
+            <span className={`inline-flex items-center px-2 py-0.5 text-[11px] font-medium rounded-full border ${cfg.badgeClass}`}>
+              {cfg.label}
             </span>
-          )}
+            {(app.status === 'ON_HOLD' || (app.status === 'REJECTED' && app.is_potential_lead_rejection)) && (
+              <span className="inline-flex items-center px-2 py-0.5 text-[10px] font-medium rounded-full border bg-violet-50 text-violet-700 border-violet-200">
+                Potential lead
+              </span>
+            )}
+          </div>
           {app.reviewed_by && (
             <div className="text-[10px] text-slate-400 mt-0.5 flex items-center gap-0.5">
               <User className="h-2.5 w-2.5" /> {app.reviewed_by}
@@ -1045,6 +1071,26 @@ function LeadRow({
                       {detail.admin_created && (
                         <div className="text-[10px] text-amber-600 bg-amber-50 border border-amber-200 rounded-full px-2 py-0.5 inline-flex items-center gap-1 ml-1">
                           <UserPlus className="h-2.5 w-2.5" /> Admin created
+                        </div>
+                      )}
+                      {detail.admin_created && (
+                        <div className="mt-2 flex flex-col items-end gap-0.5">
+                          <label className="text-[9px] text-amber-700 uppercase tracking-wide">Force status (admin only)</label>
+                          <select
+                            value=""
+                            onChange={async (e) => {
+                              const newStatus = e.target.value;
+                              if (!newStatus) return;
+                              if (newStatus === detail.status) return;
+                              await handleForceStatus(newStatus);
+                            }}
+                            className="text-[11px] px-2 py-1 border border-amber-300 rounded bg-white text-slate-700 focus:outline-none focus:ring-1 focus:ring-amber-400 cursor-pointer"
+                          >
+                            <option value="">Change status…</option>
+                            {LEAD_TARGET_STATUSES.filter(s => s.value !== detail.status).map(s => (
+                              <option key={s.value} value={s.value}>{s.label}</option>
+                            ))}
+                          </select>
                         </div>
                       )}
                       {detail.interview_scheduled_at && detail.status === 'INTERVIEW_SCHEDULED' && (
@@ -2327,12 +2373,23 @@ function DroppedAnalysisModal({ onClose, analytics }: { onClose: () => void; ana
 }
 
 // ─── Add Lead Modal ─────────────────────────────────────────────
+// All 12 values from the club_app_status DB enum. Admin (manual) leads
+// can be placed at any status via the Go force-status endpoint — the
+// backend bypasses transition rules and the Calendly zombie guard for
+// admin_created=true leads.
 const LEAD_TARGET_STATUSES = [
   { value: 'SUBMITTED', label: 'Submitted' },
   { value: 'UNDER_REVIEW', label: 'Under Review' },
+  { value: 'ON_HOLD', label: 'On Hold' },
   { value: 'INTERVIEW_PENDING', label: 'Interview Pending' },
+  { value: 'INTERVIEW_SCHEDULED', label: 'Interview Scheduled' },
   { value: 'INTERVIEW_DONE', label: 'Interview Done' },
   { value: 'SELECTED', label: 'Selected' },
+  { value: 'CLUB_CREATED', label: 'Club Created' },
+  { value: 'REJECTED', label: 'Rejected' },
+  { value: 'ABANDONED', label: 'Abandoned' },
+  { value: 'NOT_INTERESTED', label: 'Not Interested' },
+  { value: 'ACTIVE', label: 'Active' },
 ];
 
 function AddLeadModal({
