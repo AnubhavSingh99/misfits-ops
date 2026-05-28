@@ -4,7 +4,7 @@ import path from 'path';
 import fs from 'fs';
 import { queryProduction, queryProductionWrite, queryLocal, withProductionWriteTransaction } from '../services/database';
 import { broadcast } from '../services/startYourClub/sseManager';
-import { misfitsApi } from '../services/startYourClub/misfitsApi';
+import { misfitsApi, misfitsSuperAdminApi } from '../services/startYourClub/misfitsApi';
 import { callGrpc } from '../services/grpcClient';
 import { logger } from '../utils/logger';
 
@@ -2957,6 +2957,69 @@ router.post('/admin/:id/recover-calendly', async (req: Request, res: Response) =
   } catch (error: any) {
     logger.error('Failed to recover calendly data:', error);
     res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.get('/admin/leader-contracts/templates', async (_req: Request, res: Response) => {
+  try {
+    const r = await misfitsSuperAdminApi('GET', '/api/superadmin/leader-contracts/templates');
+    if (!r.ok) return res.status(r.status).json({ success: false, error: r.error || 'failed' });
+    res.json({ success: true, data: r.data });
+  } catch (err: any) {
+    logger.error('leader-contracts templates: ' + err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.get('/admin/leader-contracts/clubs-for-leader/:userPk', async (req: Request, res: Response) => {
+  try {
+    const r = await misfitsSuperAdminApi('GET', `/api/superadmin/leader-contracts/clubs-for-leader/${encodeURIComponent(req.params.userPk)}`);
+    if (!r.ok) return res.status(r.status).json({ success: false, error: r.error || 'failed' });
+    res.json({ success: true, data: r.data });
+  } catch (err: any) {
+    logger.error('leader-contracts clubs-for-leader: ' + err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.get('/admin/leader-contracts/leader-splits', async (req: Request, res: Response) => {
+  try {
+    const sp = new URLSearchParams();
+    if (req.query.leader_pk) sp.set('leader_pk', String(req.query.leader_pk));
+    if (req.query.club_uuid) sp.set('club_uuid', String(req.query.club_uuid));
+    const r = await misfitsSuperAdminApi('GET', `/api/superadmin/leader-contracts/leader-splits?${sp.toString()}`);
+    if (!r.ok) return res.status(r.status).json({ success: false, error: r.error || 'failed' });
+    res.json({ success: true, data: r.data });
+  } catch (err: any) {
+    logger.error('leader-contracts leader-splits: ' + err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.get('/admin/leader-contracts/list', async (req: Request, res: Response) => {
+  try {
+    const sp = new URLSearchParams();
+    if (req.query.leader_pk) sp.set('leader_pk', String(req.query.leader_pk));
+    if (req.query.club_uuid) sp.set('club_uuid', String(req.query.club_uuid));
+    if (req.query.status) sp.set('status', String(req.query.status));
+    if (req.query.limit) sp.set('limit', String(req.query.limit));
+    const r = await misfitsSuperAdminApi('GET', `/api/superadmin/leader-contracts/list?${sp.toString()}`);
+    if (!r.ok) return res.status(r.status).json({ success: false, error: r.error || 'failed' });
+    res.json({ success: true, data: r.data });
+  } catch (err: any) {
+    logger.error('leader-contracts list: ' + err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.post('/admin/leader-contracts/send', async (req: Request, res: Response) => {
+  try {
+    const r = await misfitsSuperAdminApi('POST', '/api/superadmin/leader-contracts/send', req.body);
+    if (!r.ok) return res.status(r.status).json({ success: false, error: r.error || 'failed' });
+    res.json({ success: true, data: r.data });
+  } catch (err: any) {
+    logger.error('leader-contracts send: ' + err.message);
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 

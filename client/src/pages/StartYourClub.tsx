@@ -8,6 +8,7 @@ import {
   BarChart3, TrendingUp, Clock, XCircle, PauseCircle,
   Settings, Plus, Trash2, X, RotateCcw, Loader2, HelpCircle
 } from 'lucide-react';
+import SendLeaderContractDialog from '../components/SendLeaderContractDialog';
 
 const API_BASE = import.meta.env.VITE_API_URL
   ? `${import.meta.env.VITE_API_URL}/api/start-club`
@@ -535,6 +536,9 @@ function LeadRow({
   // Split percentage (configurable)
   const [splitMisfits, setSplitMisfits] = useState('70');
   const [splitLeader, setSplitLeader] = useState('30');
+
+  // Send-leader-contract dialog
+  const [sendContractOpen, setSendContractOpen] = useState(false);
 
   // Notes
   const [noteText, setNoteText] = useState('');
@@ -1245,21 +1249,13 @@ function LeadRow({
                         ) : (
                           <>
                             {!detail.contract_url ? (
-                              <label id={`contract-label-${app.id}`} className="flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] font-medium text-purple-600 bg-white border border-purple-200 rounded-md hover:bg-purple-50 cursor-pointer">
+                              <button
+                                type="button"
+                                onClick={() => setSendContractOpen(true)}
+                                className="flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] font-medium text-purple-600 bg-white border border-purple-200 rounded-md hover:bg-purple-50"
+                              >
                                 <Upload className="h-3 w-3" /> Upload Contract
-                                <input type="file" className="hidden" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png" onChange={async (e) => {
-                                  const file = e.target.files?.[0]; if (!file) return;
-                                  const label = document.getElementById(`contract-label-${app.id}`);
-                                  if (label) label.innerHTML = '<span class="animate-pulse">Uploading...</span>';
-                                  const fd = new FormData(); fd.append('contract', file);
-                                  const res = await fetch(`${API_BASE}/admin/${app.id}/upload-contract`, { method: 'POST', body: fd });
-                                  const data = await res.json();
-                                  if (data.success) {
-                                    if (label) { label.innerHTML = '<span style="color:#16a34a">Uploaded!</span>'; }
-                                    refetchDetail();
-                                  } else { alert(data.error); if (label) label.innerHTML = '<svg class="h-3 w-3" />&nbsp;Upload Contract'; }
-                                }} />
-                              </label>
+                              </button>
                             ) : (
                               <div className="flex items-center gap-1.5 flex-wrap">
                                 <FileText className="h-3 w-3 text-purple-500" />
@@ -2168,6 +2164,13 @@ function LeadRow({
           </td>
         </tr>
       )}
+      <SendLeaderContractDialog
+        open={sendContractOpen}
+        leaderUserPk={app.user_id}
+        leaderName={app.name}
+        onClose={() => setSendContractOpen(false)}
+        onSent={() => { setSendContractOpen(false); refetchDetail(); }}
+      />
     </>
   );
 }
