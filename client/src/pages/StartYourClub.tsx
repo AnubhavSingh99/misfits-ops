@@ -6,15 +6,17 @@ import {
   FileText, Archive, Upload,
   ClipboardList, AlertTriangle, Home, UserX, User, UserPlus, Video,
   BarChart3, TrendingUp, Clock, XCircle, PauseCircle,
-  Settings, Plus, Trash2, X, RotateCcw, Loader2, HelpCircle
+  Settings, Plus, Trash2, X, RotateCcw, Loader2, HelpCircle, Target
 } from 'lucide-react';
 import SendLeaderContractDialog from '../components/SendLeaderContractDialog';
+import { Analytics as StartYourClubAnalysisDashboard } from './Analytics';
 
 const API_BASE = import.meta.env.VITE_API_URL
   ? `${import.meta.env.VITE_API_URL}/api/start-club`
   : '/api/start-club';
 
 const CITY_SUB_AREA_SEPARATOR = ' | ';
+const DEFAULT_REVIEWERS = ['Anubhav', 'Soumya'];
 
 const CITY_SUB_AREA_DEFAULTS: Record<string, string[]> = {
   Delhi: ['North Delhi', 'South Delhi', 'East Delhi', 'West Delhi', 'Central Delhi', 'New Delhi'],
@@ -187,6 +189,8 @@ const REJECTION_REASONS = [
   { value: 'unclear_motivation', label: 'Unclear motivation or objective' },
   { value: 'city_not_available', label: 'City not available for expansion' },
   { value: 'incomplete_responses', label: 'Incomplete or unclear responses' },
+  { value: 'no_leader_requirement', label: 'No lead requirement' },
+  { value: 'not_looking_for_activity_now', label: 'Not looking for the activity right now' },
   { value: 'other', label: 'Other' },
 ];
 
@@ -347,6 +351,16 @@ interface DetailData extends Omit<Application, 'activity'> {
   timeline: any[];
   activity_log: any[];
   past_applications: any[];
+}
+
+interface LeaderRequirementMatch {
+  id: number;
+  name: string;
+  status: string;
+  activity_name: string | null;
+  city_name: string | null;
+  area_name: string | null;
+  leaders_required?: number | null;
 }
 
 function formatDate(dateStr: string | null): string {
@@ -553,20 +567,57 @@ function LeadRow({
   const [addCommentText, setAddCommentText] = useState('');
   const [deleting, setDeleting] = useState(false);
 
-  // Reviewer name (for pick flow) with autocomplete
+  // Reviewer name (for pick flow)
   const [reviewerName, setReviewerName] = useState('');
   const [reviewerSuggestions, setReviewerSuggestions] = useState<string[]>([]);
-  const [showReviewerDropdown, setShowReviewerDropdown] = useState(false);
+  const [showAddReviewer, setShowAddReviewer] = useState(false);
+  const [newReviewerName, setNewReviewerName] = useState('');
+  const [leaderRequirementMatches, setLeaderRequirementMatches] = useState<LeaderRequirementMatch[]>([]);
+  const [leaderRequirementChecked, setLeaderRequirementChecked] = useState(false);
 
   // Fetch past reviewer names for autocomplete
   useEffect(() => {
     if (isExpanded) {
       fetch(`${API_BASE}/admin/reviewers`)
         .then(r => r.json())
-        .then(data => { if (data.success) setReviewerSuggestions(data.reviewers || []); })
+        .then(data => {
+          if (data.success) {
+            setReviewerSuggestions([...DEFAULT_REVIEWERS, ...(data.reviewers || [])]
+              .filter((name, index, all) => name && all.indexOf(name) === index));
+          }
+        })
         .catch(() => {});
     }
   }, [isExpanded]);
+
+  useEffect(() => {
+    const activity = app.activity?.trim();
+    const city = app.city?.trim();
+    setLeaderRequirementChecked(false);
+    if (!activity || !city) {
+      setLeaderRequirementMatches([]);
+      setLeaderRequirementChecked(true);
+      return;
+    }
+
+    const controller = new AbortController();
+    const params = new URLSearchParams({ activity, city });
+    if (app.sub_area?.trim()) params.set('sub_area', app.sub_area.trim());
+
+    fetch(`${API_BASE}/admin/leader-requirements/match?${params.toString()}`, { signal: controller.signal })
+      .then(r => r.json())
+      .then(data => {
+        if (data.success) setLeaderRequirementMatches(data.requirements || []);
+      })
+      .catch(err => {
+        if (err?.name !== 'AbortError') setLeaderRequirementMatches([]);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLeaderRequirementChecked(true);
+      });
+
+    return () => controller.abort();
+  }, [app.activity, app.city, app.sub_area]);
 
   // Split percentage (configurable)
   const [splitMisfits, setSplitMisfits] = useState('70');
@@ -616,6 +667,8 @@ function LeadRow({
       setShowAddCommentForm(false);
       setAddCommentText('');
       setReviewerName('');
+      setShowAddReviewer(false);
+      setNewReviewerName('');
       setSplitMisfits('70');
       setSplitLeader('30');
       setActiveTab(sectionId === 'selected' && (app.status === 'SELECTED' || app.status === 'CLUB_CREATED') ? 'launch_details' : 'responses');
@@ -638,8 +691,9 @@ function LeadRow({
   };
 
   const requiresRejectionComment = rejectionReason === 'other';
+  const autoPotentialLead = rejectionReason === 'no_leader_requirement';
   const requiresPotentialLeadDecision = rejectionReason === 'other';
-  const isPotentialLead = requiresPotentialLeadDecision && potentialLeadDecision === 'yes';
+  const isPotentialLead = autoPotentialLead || (requiresPotentialLeadDecision && potentialLeadDecision === 'yes');
   const normalizedRejectionReason = rejectionReason;
   const normalizedRejectionNote = requiresRejectionComment
     ? rejectionComment.trim()
@@ -772,7 +826,7 @@ function LeadRow({
     if (action === 'reject') {
       body.rejection_reason = normalizedRejectionReason;
       if (normalizedRejectionNote) body.rejection_note = normalizedRejectionNote;
-      if (requiresPotentialLeadDecision) body.potential_lead = isPotentialLead;
+      if (autoPotentialLead || requiresPotentialLeadDecision) body.potential_lead = isPotentialLead;
     }
     const res = await fetch(`${API_BASE}/admin/${app.id}/review`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
@@ -901,7 +955,7 @@ function LeadRow({
     if (!body.rejection_note && detail?.status === 'INTERVIEW_PENDING' && interviewNotScheduledNote) {
       body.rejection_note = interviewNotScheduledNote;
     }
-    if (requiresPotentialLeadDecision) body.potential_lead = isPotentialLead;
+    if (autoPotentialLead || requiresPotentialLeadDecision) body.potential_lead = isPotentialLead;
     // Include ratings if we're in review states
     if (['UNDER_REVIEW', 'ON_HOLD'].includes(detail?.status || '')) {
       body.ratings = screeningRatings;
@@ -1012,7 +1066,20 @@ function LeadRow({
         </td>
         <td className="px-4 py-3 text-slate-500 text-xs">{app.user_phone || '-'}</td>
         <td className="px-4 py-3 text-slate-600">{formatLocation(app.city, app.sub_area)}</td>
-        <td className="px-4 py-3 text-slate-600">{app.activity || '-'}</td>
+        <td className="px-4 py-3 text-slate-600">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span>{app.activity || '-'}</span>
+            {leaderRequirementChecked && leaderRequirementMatches.length > 0 && (
+              <span
+                title={`${leaderRequirementMatches.length} matching leader requirement${leaderRequirementMatches.length === 1 ? '' : 's'}`}
+                className="inline-flex items-center gap-1 rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-[10px] font-medium text-indigo-700"
+              >
+                <Target className="h-2.5 w-2.5" />
+                Req {leaderRequirementMatches.length}
+              </span>
+            )}
+          </div>
+        </td>
         <td className="px-4 py-3">
           <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-medium text-slate-600">
             {formatLeadSource(app.source)}
@@ -1179,6 +1246,25 @@ function LeadRow({
                       )}
                     </div>
                   </div>
+
+                  {leaderRequirementMatches.length > 0 && (
+                    <div className="mb-4 rounded-lg border border-indigo-200 bg-indigo-50/60 px-3 py-2">
+                      <div className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-indigo-700">
+                        <Target className="h-3.5 w-3.5" />
+                        Matching Leader Requirement{leaderRequirementMatches.length === 1 ? '' : 's'}
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        {leaderRequirementMatches.map(req => (
+                          <span key={req.id} className="inline-flex items-center gap-1 rounded-full border border-indigo-200 bg-white px-2.5 py-1 text-[11px] text-slate-700">
+                            <span className="font-medium text-slate-800">{req.name}</span>
+                            <span className="text-slate-400">·</span>
+                            <span>{req.status.replace(/_/g, ' ')}</span>
+                            {req.leaders_required ? <span className="text-indigo-600">({req.leaders_required})</span> : null}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
 
                   {/* Tabs */}
                   <div className="flex gap-1 border-b border-slate-200 mb-4">
@@ -1626,36 +1712,59 @@ function LeadRow({
                       {detail.status === 'SUBMITTED' && (
                         <div className="p-4 bg-emerald-50 rounded-xl border border-emerald-200">
                           <h4 className="text-sm font-bold text-emerald-700 mb-2">Pick for Review</h4>
-                          <p className="text-xs text-emerald-600 mb-3">Enter your name and start reviewing this lead.</p>
-                          <div className="relative mb-2">
-                            <input
-                              type="text"
-                              value={reviewerName}
-                              onChange={e => { setReviewerName(e.target.value); setShowReviewerDropdown(true); }}
-                              onFocus={() => setShowReviewerDropdown(true)}
-                              onBlur={() => setTimeout(() => setShowReviewerDropdown(false), 150)}
-                              onKeyDown={e => e.key === 'Enter' && handlePick()}
-                              placeholder="Your name..."
+                          <p className="text-xs text-emerald-600 mb-3">Choose who is reviewing this lead.</p>
+                          <div className="mb-2 space-y-2">
+                            <select
+                              value={showAddReviewer ? '__add__' : reviewerName}
+                              onChange={e => {
+                                if (e.target.value === '__add__') {
+                                  setShowAddReviewer(true);
+                                  setReviewerName('');
+                                  return;
+                                }
+                                setShowAddReviewer(false);
+                                setNewReviewerName('');
+                                setReviewerName(e.target.value);
+                              }}
                               className="w-full px-3 py-2 text-sm border border-emerald-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-400/30 bg-white"
-                            />
-                            {showReviewerDropdown && reviewerSuggestions.filter(s => s.toLowerCase().includes(reviewerName.toLowerCase())).length > 0 && reviewerName.length > 0 && (
-                              <div className="absolute z-10 w-full mt-1 bg-white border border-emerald-200 rounded-lg shadow-lg max-h-32 overflow-y-auto">
-                                {reviewerSuggestions
-                                  .filter(s => s.toLowerCase().includes(reviewerName.toLowerCase()))
-                                  .map(s => (
-                                    <button key={s} onMouseDown={() => { setReviewerName(s); setShowReviewerDropdown(false); }}
-                                      className="w-full text-left px-3 py-2 text-sm hover:bg-emerald-50 transition-colors"
-                                    >{s}</button>
-                                  ))}
-                              </div>
-                            )}
-                            {showReviewerDropdown && reviewerName.length === 0 && reviewerSuggestions.length > 0 && (
-                              <div className="absolute z-10 w-full mt-1 bg-white border border-emerald-200 rounded-lg shadow-lg max-h-32 overflow-y-auto">
-                                {reviewerSuggestions.map(s => (
-                                  <button key={s} onMouseDown={() => { setReviewerName(s); setShowReviewerDropdown(false); }}
-                                    className="w-full text-left px-3 py-2 text-sm hover:bg-emerald-50 transition-colors"
-                                  >{s}</button>
-                                ))}
+                            >
+                              <option value="">Select reviewer...</option>
+                              {reviewerSuggestions.map(s => <option key={s} value={s}>{s}</option>)}
+                              <option value="__add__">Add reviewer...</option>
+                            </select>
+                            {showAddReviewer && (
+                              <div className="flex gap-2">
+                                <input
+                                  type="text"
+                                  value={newReviewerName}
+                                  onChange={e => setNewReviewerName(e.target.value)}
+                                  onKeyDown={e => {
+                                    if (e.key === 'Enter' && newReviewerName.trim()) {
+                                      const name = newReviewerName.trim();
+                                      setReviewerSuggestions(prev => prev.includes(name) ? prev : [name, ...prev]);
+                                      setReviewerName(name);
+                                      setNewReviewerName('');
+                                      setShowAddReviewer(false);
+                                    }
+                                  }}
+                                  placeholder="Reviewer name"
+                                  className="min-w-0 flex-1 px-3 py-2 text-sm border border-emerald-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-400/30 bg-white"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const name = newReviewerName.trim();
+                                    if (!name) return;
+                                    setReviewerSuggestions(prev => prev.includes(name) ? prev : [name, ...prev]);
+                                    setReviewerName(name);
+                                    setNewReviewerName('');
+                                    setShowAddReviewer(false);
+                                  }}
+                                  disabled={!newReviewerName.trim()}
+                                  className="px-3 py-2 text-xs font-medium text-emerald-700 bg-white border border-emerald-200 rounded-lg hover:bg-emerald-50 disabled:opacity-50"
+                                >
+                                  Add
+                                </button>
                               </div>
                             )}
                           </div>
@@ -2962,6 +3071,7 @@ export default function StartYourClub() {
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [showAnalysis, setShowAnalysis] = useState(false);
+  const [analysisTab, setAnalysisTab] = useState<'pipeline' | 'dashboard'>('pipeline');
   const [analysisModal, setAnalysisModal] = useState<'funnel' | 'tat' | 'dropped' | null>(null);
 
   // Collapsed subsections — all collapsed by default
@@ -3858,51 +3968,74 @@ export default function StartYourClub() {
               {showAnalysis ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
             </button>
             {showAnalysis && (
-              <div className="grid grid-cols-3 gap-4">
-                {/* Conversion Funnel Card */}
-                <div
-                  className="bg-white border border-slate-200 rounded-xl p-5 cursor-pointer hover:border-indigo-400 hover:shadow-md transition-all group"
-                  onClick={() => setAnalysisModal('funnel')}
-                >
-                  <div className="flex items-center gap-3 mb-3">
-                    <div className="w-9 h-9 rounded-lg bg-indigo-50 flex items-center justify-center">
-                      <TrendingUp className="h-4.5 w-4.5 text-indigo-500" />
-                    </div>
-                    <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Conversion Funnel</span>
-                  </div>
-                  <div className="text-2xl font-bold text-indigo-600">{c.overall}%</div>
-                  <div className="text-[11px] text-slate-400 mt-1">Overall conversion rate</div>
+              <div className="space-y-4">
+                <div className="inline-flex rounded-lg border border-slate-200 bg-white p-1">
+                  {[
+                    { id: 'pipeline', label: 'Pipeline Analysis' },
+                    { id: 'dashboard', label: 'Analysis Dashboard' },
+                  ].map(tab => (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      onClick={() => setAnalysisTab(tab.id as 'pipeline' | 'dashboard')}
+                      className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors ${
+                        analysisTab === tab.id
+                          ? 'bg-indigo-50 text-indigo-700'
+                          : 'text-slate-600 hover:bg-slate-50'
+                      }`}
+                    >
+                      {tab.label}
+                    </button>
+                  ))}
                 </div>
 
-                {/* TAT Card */}
-                <div
-                  className="bg-white border border-slate-200 rounded-xl p-5 cursor-pointer hover:border-amber-400 hover:shadow-md transition-all group"
-                  onClick={() => setAnalysisModal('tat')}
-                >
-                  <div className="flex items-center gap-3 mb-3">
-                    <div className="w-9 h-9 rounded-lg bg-amber-50 flex items-center justify-center">
-                      <Clock className="h-4.5 w-4.5 text-amber-500" />
+                {analysisTab === 'pipeline' ? (
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div
+                      className="bg-white border border-slate-200 rounded-xl p-5 cursor-pointer hover:border-indigo-400 hover:shadow-md transition-all group"
+                      onClick={() => setAnalysisModal('funnel')}
+                    >
+                      <div className="flex items-center gap-3 mb-3">
+                        <div className="w-9 h-9 rounded-lg bg-indigo-50 flex items-center justify-center">
+                          <TrendingUp className="h-4.5 w-4.5 text-indigo-500" />
+                        </div>
+                        <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Conversion Funnel</span>
+                      </div>
+                      <div className="text-2xl font-bold text-indigo-600">{c.overall}%</div>
+                      <div className="text-[11px] text-slate-400 mt-1">Overall conversion rate</div>
                     </div>
-                    <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">TAT</span>
-                  </div>
-                  <div className="text-2xl font-bold text-amber-600">{formatTAT(t.total_pipeline_hrs)}</div>
-                  <div className="text-[11px] text-slate-400 mt-1">Avg pipeline time</div>
-                </div>
 
-                {/* Dropped Analysis Card */}
-                <div
-                  className="bg-white border border-slate-200 rounded-xl p-5 cursor-pointer hover:border-red-400 hover:shadow-md transition-all group"
-                  onClick={() => setAnalysisModal('dropped')}
-                >
-                  <div className="flex items-center gap-3 mb-3">
-                    <div className="w-9 h-9 rounded-lg bg-red-50 flex items-center justify-center">
-                      <UserX className="h-4.5 w-4.5 text-red-500" />
+                    <div
+                      className="bg-white border border-slate-200 rounded-xl p-5 cursor-pointer hover:border-amber-400 hover:shadow-md transition-all group"
+                      onClick={() => setAnalysisModal('tat')}
+                    >
+                      <div className="flex items-center gap-3 mb-3">
+                        <div className="w-9 h-9 rounded-lg bg-amber-50 flex items-center justify-center">
+                          <Clock className="h-4.5 w-4.5 text-amber-500" />
+                        </div>
+                        <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">TAT</span>
+                      </div>
+                      <div className="text-2xl font-bold text-amber-600">{formatTAT(t.total_pipeline_hrs)}</div>
+                      <div className="text-[11px] text-slate-400 mt-1">Avg pipeline time</div>
                     </div>
-                    <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Dropped</span>
+
+                    <div
+                      className="bg-white border border-slate-200 rounded-xl p-5 cursor-pointer hover:border-red-400 hover:shadow-md transition-all group"
+                      onClick={() => setAnalysisModal('dropped')}
+                    >
+                      <div className="flex items-center gap-3 mb-3">
+                        <div className="w-9 h-9 rounded-lg bg-red-50 flex items-center justify-center">
+                          <UserX className="h-4.5 w-4.5 text-red-500" />
+                        </div>
+                        <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Dropped</span>
+                      </div>
+                      <div className="text-2xl font-bold text-red-600">{totalDropped}</div>
+                      <div className="text-[11px] text-slate-400 mt-1">Total dropped / rejected</div>
+                    </div>
                   </div>
-                  <div className="text-2xl font-bold text-red-600">{totalDropped}</div>
-                  <div className="text-[11px] text-slate-400 mt-1">Total dropped / rejected</div>
-                </div>
+                ) : (
+                  <StartYourClubAnalysisDashboard embedded />
+                )}
               </div>
             )}
           </div>
