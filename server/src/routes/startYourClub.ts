@@ -278,6 +278,14 @@ function splitCityAndSubArea(rawCity?: string | null): { city: string | null; su
     };
   }
 
+  const parentheticalSubArea = value.match(/^Bangalore\s*\(([^)]+)\)$/i);
+  if (parentheticalSubArea?.[1]) {
+    return {
+      city: 'Bangalore',
+      sub_area: parentheticalSubArea[1].trim() || null,
+    };
+  }
+
   const alias = CITY_ALIAS_TO_PARENT[value.toLowerCase()];
   if (alias) {
     return {
@@ -302,6 +310,7 @@ function normalizedCitySql(column: string): string {
     WHEN ${column} IS NULL OR NULLIF(BTRIM(${column}), '') IS NULL THEN NULL
   WHEN LOWER(BTRIM(${column})) IN ('north delhi', 'south delhi', 'east delhi', 'west delhi', 'new delhi', 'central delhi') THEN 'Delhi'
     WHEN LOWER(BTRIM(${column})) = 'south city' THEN 'Bangalore'
+    WHEN BTRIM(${column}) ~* '^bangalore\\s*\\([^)]+\\)$' THEN 'Bangalore'
     WHEN POSITION('${CITY_SUB_AREA_SEPARATOR}' IN ${column}) > 0 THEN NULLIF(BTRIM(split_part(${column}, '${CITY_SUB_AREA_SEPARATOR}', 1)), '')
     ELSE BTRIM(${column})
   END`;
@@ -317,6 +326,8 @@ function normalizedSubAreaSql(column: string): string {
   WHEN LOWER(BTRIM(${column})) = 'new delhi' THEN 'New Delhi'
   WHEN LOWER(BTRIM(${column})) = 'central delhi' THEN 'Central Delhi'
     WHEN LOWER(BTRIM(${column})) = 'south city' THEN 'South City'
+    WHEN BTRIM(${column}) ~* '^bangalore\\s*\\([^)]+\\)$'
+      THEN NULLIF(BTRIM(regexp_replace(BTRIM(${column}), '^bangalore\\s*\\(([^)]+)\\)$', '\\1', 'i')), '')
     WHEN POSITION('${CITY_SUB_AREA_SEPARATOR}' IN ${column}) > 0 THEN NULLIF(BTRIM(split_part(${column}, '${CITY_SUB_AREA_SEPARATOR}', 2)), '')
     ELSE NULL
   END`;
@@ -341,6 +352,13 @@ function normalizeCityList(rows: any[], key: string): string[] {
     if (!seen.has(lower)) seen.set(lower, stripped);
   }
   return [...seen.values()].sort((a, b) => a.localeCompare(b));
+}
+
+function buildAdminCityOptions(rows: any[], key: string): string[] {
+  const cities = normalizeCityList(rows, key).filter((city) => city.toLowerCase() !== 'bangalore');
+  const bangaloreSubAreaOptions = getDefaultSubAreasForCity('Bangalore').map((subArea) => formatCityWithSubArea('Bangalore', subArea));
+  return [...new Set([...cities, ...bangaloreSubAreaOptions])]
+    .sort((a, b) => a.localeCompare(b));
 }
 
 // Map production column names to frontend-expected names
@@ -1324,16 +1342,36 @@ router.get('/admin/funnel', async (req: Request, res: Response) => {
     );
 
     const bySource = await queryProduction(
-      `SELECT CASE
-                WHEN lower(trim(source)) IN ('app', 'instagram', 'ads', 'whatsapp', 'admin', 'website')
-                  THEN lower(trim(source))
-                ELSE 'website'
-              END as source,
-              COUNT(*)::int as count
-       FROM club_application
-       WHERE archived = false
-       GROUP BY 1
-       ORDER BY count DESC, source ASC`
+      `WITH source_tracking AS (
+         SELECT MIN(created_at) AS started_at
+         FROM club_application
+         WHERE archived = false
+           AND (
+             admin_created = true
+             OR lower(trim(COALESCE(source, ''))) IN ('app', 'instagram', 'ads', 'whatsapp', 'admin')
+           )
+       ),
+       normalized_sources AS (
+         SELECT
+           CASE
+             WHEN admin_created = true THEN 'admin'
+             WHEN lower(trim(COALESCE(source, ''))) IN ('app', 'instagram', 'ads', 'whatsapp', 'admin', 'website')
+               THEN lower(trim(source))
+             ELSE NULL
+           END AS source,
+           created_at
+         FROM club_application
+         WHERE archived = false
+       )
+       SELECT ns.source,
+              COUNT(*)::int AS count
+       FROM normalized_sources ns
+       CROSS JOIN source_tracking st
+       WHERE ns.source IS NOT NULL
+         AND st.started_at IS NOT NULL
+         AND ns.created_at >= st.started_at
+       GROUP BY ns.source
+       ORDER BY count DESC, ns.source ASC`
     );
 
     res.json({
@@ -1777,13 +1815,13 @@ router.get('/admin/cities', async (req: Request, res: Response) => {
     const result = await queryProduction(
       `SELECT DISTINCT city_name as city FROM club_application WHERE city_name IS NOT NULL AND archived = false ORDER BY city_name`
     );
-    res.json({ success: true, data: normalizeCityList(result.rows, 'city') });
+    res.json({ success: true, data: buildAdminCityOptions(result.rows, 'city') });
   } catch (error: any) {
     try {
       const local = await queryLocal(
         `SELECT DISTINCT city FROM club_application WHERE city IS NOT NULL AND archived = false ORDER BY city`
       );
-      return res.json({ success: true, data: normalizeCityList(local.rows, 'city'), source: 'local_fallback' });
+      return res.json({ success: true, data: buildAdminCityOptions(local.rows, 'city'), source: 'local_fallback' });
     } catch {
       return res.json({ success: true, data: [], source: 'empty_fallback' });
     }
