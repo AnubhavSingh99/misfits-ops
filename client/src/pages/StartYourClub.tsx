@@ -14,12 +14,47 @@ const API_BASE = import.meta.env.VITE_API_URL
   ? `${import.meta.env.VITE_API_URL}/api/start-club`
   : '/api/start-club';
 
+const CITY_SUB_AREA_SEPARATOR = ' | ';
+
 const CITY_SUB_AREA_DEFAULTS: Record<string, string[]> = {
   Delhi: ['North Delhi', 'South Delhi', 'East Delhi', 'West Delhi', 'Central Delhi', 'New Delhi'],
   Noida: ['Sector 18', 'Sector 62', 'Sector 75', 'Sector 104', 'Sector 137', 'Greater Noida'],
   Gurgaon: ['Golf Course Road', 'DLF Phase 1', 'DLF Phase 2', 'Sohna Road', 'Sector 46', 'Sector 56', 'Cyber City'],
   Bangalore: ['South City', 'Indiranagar', 'Koramangala', 'HSR Layout', 'Whitefield', 'JP Nagar', 'Bellandur'],
 };
+
+const BANGALORE_CITY_OPTIONS = CITY_SUB_AREA_DEFAULTS.Bangalore.map(
+  (subArea) => `Bangalore${CITY_SUB_AREA_SEPARATOR}${subArea}`
+);
+
+function splitCityOption(value: string): { city: string; subArea: string } {
+  if (!value.includes(CITY_SUB_AREA_SEPARATOR)) {
+    return { city: value, subArea: '' };
+  }
+  const [city, subArea] = value.split(CITY_SUB_AREA_SEPARATOR, 2).map((part) => part.trim());
+  return { city, subArea };
+}
+
+function formatCityOptionLabel(value: string): string {
+  const { city, subArea } = splitCityOption(value);
+  return subArea ? `${city} (${subArea})` : city;
+}
+
+function getCityOptionValue(city: string, subArea?: string): string {
+  if (city === 'Bangalore' && subArea) {
+    return `Bangalore${CITY_SUB_AREA_SEPARATOR}${subArea}`;
+  }
+  return city;
+}
+
+function buildCityOptions(cities: string[]): string[] {
+  const merged = new Set<string>([
+    ...Object.keys(CITY_SUB_AREA_DEFAULTS).filter((city) => city !== 'Bangalore'),
+    ...cities.filter((city) => city !== 'Bangalore'),
+    ...BANGALORE_CITY_OPTIONS,
+  ]);
+  return [...merged].sort((a, b) => formatCityOptionLabel(a).localeCompare(formatCityOptionLabel(b)));
+}
 
 // Status configuration (3-layer: Journey / Evaluation / Outcome)
 const STATUS_CONFIG: Record<string, { label: string; shortLabel: string; badgeClass: string }> = {
@@ -2454,9 +2489,9 @@ function AddLeadModal({
   const [targetStatus, setTargetStatus] = useState('SUBMITTED');
   const [creating, setCreating] = useState(false);
   const cityOptions = useMemo(() => {
-    const merged = new Set<string>([...Object.keys(CITY_SUB_AREA_DEFAULTS), ...cities]);
-    return [...merged].sort((a, b) => a.localeCompare(b));
+    return buildCityOptions(cities);
   }, [cities]);
+  const selectedCityOption = getCityOptionValue(city, subArea);
   const needsSubArea = !!city && subAreas.length > 0;
 
   useEffect(() => {
@@ -2618,12 +2653,16 @@ function AddLeadModal({
           <div>
             <label className="text-xs font-medium text-slate-600 mb-1 block">City</label>
             <select
-              value={city}
-              onChange={e => { setCity(e.target.value); setSubArea(''); }}
+              value={selectedCityOption}
+              onChange={e => {
+                const selected = splitCityOption(e.target.value);
+                setCity(selected.city);
+                setSubArea(selected.subArea);
+              }}
               className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
             >
               <option value="">Select city</option>
-              {cityOptions.map(c => <option key={c} value={c}>{c}</option>)}
+              {cityOptions.map(c => <option key={c} value={c}>{formatCityOptionLabel(c)}</option>)}
             </select>
           </div>
 
@@ -2983,6 +3022,8 @@ export default function StartYourClub() {
   const [cities, setCities] = useState<string[]>([]);
   const [subAreas, setSubAreas] = useState<string[]>([]);
   const [activities, setActivities] = useState<string[]>([]);
+  const cityFilterOptions = useMemo(() => buildCityOptions(cities), [cities]);
+  const selectedCityFilterOption = getCityOptionValue(cityFilter, subAreaFilter);
 
   // Get statuses for current section
   const currentSection = SECTIONS.find(s => s.id === activeSection)!;
@@ -3894,9 +3935,18 @@ export default function StartYourClub() {
               <option key={sub.id} value={sub.id}>{sub.label}</option>
             ))}
           </select>
-          <select value={cityFilter} onChange={e => { setCityFilter(e.target.value); setSubAreaFilter(''); setPage(1); }} className="px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20">
+          <select
+            value={selectedCityFilterOption}
+            onChange={e => {
+              const selected = splitCityOption(e.target.value);
+              setCityFilter(selected.city);
+              setSubAreaFilter(selected.subArea);
+              setPage(1);
+            }}
+            className="px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+          >
             <option value="">All Cities</option>
-            {cities.map(c => <option key={c} value={c}>{c}</option>)}
+            {cityFilterOptions.map(c => <option key={c} value={c}>{formatCityOptionLabel(c)}</option>)}
           </select>
           <select
             value={subAreaFilter}
