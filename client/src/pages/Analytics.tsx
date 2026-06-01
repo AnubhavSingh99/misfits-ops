@@ -232,7 +232,7 @@ interface AnalysisData {
   };
 }
 
-export function Analytics() {
+export function Analytics({ embedded = false }: { embedded?: boolean } = {}) {
   const [data, setData] = useState<AnalysisData | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -362,7 +362,7 @@ export function Analytics() {
 
   if (loading && !data) {
     return (
-      <div className="p-6">
+      <div className={embedded ? "" : "p-6"}>
         <div className="bg-white border border-slate-200 rounded-xl p-10 text-center text-slate-500">
           Loading analysis dashboard...
         </div>
@@ -372,7 +372,7 @@ export function Analytics() {
 
   if (!data) {
     return (
-      <div className="p-6">
+      <div className={embedded ? "" : "p-6"}>
         <div className="bg-red-50 border border-red-200 rounded-xl p-6 text-red-700 flex items-center gap-2">
           <AlertTriangle className="h-4 w-4" /> {error || 'Analysis data unavailable'}
         </div>
@@ -388,8 +388,8 @@ export function Analytics() {
   const completionPct = totalRequired > 0 ? Math.round((totalCompleted / totalRequired) * 100) : 0;
 
   return (
-    <div className="p-6 space-y-5">
-      <div className="rounded-2xl border border-indigo-100 bg-gradient-to-r from-indigo-50 via-sky-50 to-emerald-50 p-5">
+    <div className={embedded ? "space-y-5" : "p-6 space-y-5"}>
+      {!embedded && <div className="rounded-2xl border border-indigo-100 bg-gradient-to-r from-indigo-50 via-sky-50 to-emerald-50 p-5">
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
           <div>
             <h1 className="text-2xl font-bold text-slate-900">Start Your Club Analysis</h1>
@@ -406,7 +406,7 @@ export function Analytics() {
             Refresh
           </button>
         </div>
-      </div>
+      </div>}
 
       {error && (
         <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-700">
