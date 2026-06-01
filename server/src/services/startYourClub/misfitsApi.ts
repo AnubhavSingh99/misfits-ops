@@ -88,3 +88,42 @@ export async function misfitsApi(
     return { ok: false, status: 500, data: null, error: err.message };
   }
 }
+
+export async function misfitsSuperAdminApi(
+  method: string,
+  path: string,
+  body?: Record<string, any>
+): Promise<ApiResponse> {
+  const apiUrl = process.env.MISFITS_API_URL || 'https://prod.misfits.net.in/api/v1';
+  const host = apiUrl.replace(/\/api(\/v\d+)?\/?$/, '');
+  const apiToken = process.env.MISFITS_API_TOKEN || '';
+  if (!apiToken.trim()) {
+    const message = 'MISFITS_API_TOKEN is not configured.';
+    logger.error(`Misfits super-admin API config error: ${message}`);
+    return { ok: false, status: 500, data: null, error: message };
+  }
+  const url = `${host}${path}`;
+  const opts: RequestInit = {
+    method,
+    headers: {
+      'Authorization': `Bearer ${apiToken}`,
+      'Content-Type': 'application/json',
+    },
+  };
+  if (body && method !== 'GET') {
+    opts.body = JSON.stringify(body);
+  }
+  try {
+    const res = await fetch(url, opts);
+    const data: any = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const errMsg = extractBestErrorMessage(data, res.status);
+      logger.error(`Misfits super-admin API error: ${method} ${path} → ${res.status}: ${errMsg}`);
+      return { ok: false, status: res.status, data, error: errMsg };
+    }
+    return { ok: true, status: res.status, data };
+  } catch (err: any) {
+    logger.error(`Misfits super-admin API fetch failed: ${method} ${path} → ${err.message}`);
+    return { ok: false, status: 500, data: null, error: err.message };
+  }
+}
