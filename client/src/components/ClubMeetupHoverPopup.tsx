@@ -1,6 +1,7 @@
 import React from 'react';
 import { createPortal } from 'react-dom';
 import { Calendar, Clock, DollarSign, Loader2, MapPin, Star, Users, X } from 'lucide-react';
+import { WeekSelector, type WeekOption } from './scaling';
 
 export interface ClubMeetupDetail {
   event_id: string;
@@ -87,6 +88,10 @@ interface ClubMeetupHoverPopupProps {
   error: string | null;
   data: ClubMeetupPopupData | null;
   weekLabel?: string;
+  selectedWeek?: WeekOption;
+  weekBounds?: { start: Date; end: Date };
+  onWeekChange?: (week: WeekOption) => void;
+  onCustomWeekChange?: (start: Date, end: Date) => void;
   onMouseEnter: () => void;
   onMouseLeave: () => void;
 }
@@ -154,6 +159,10 @@ export function ClubMeetupHoverPopup({
   error,
   data,
   weekLabel = 'Previous week',
+  selectedWeek,
+  weekBounds,
+  onWeekChange,
+  onCustomWeekChange,
   onMouseEnter,
   onMouseLeave,
 }: ClubMeetupHoverPopupProps) {
@@ -185,10 +194,19 @@ export function ClubMeetupHoverPopup({
           </div>
 
           <div className="flex items-center gap-2">
-            <span className="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2.5 py-1 text-[11px] font-medium text-gray-700">
-              <Calendar className="h-3.5 w-3.5" />
-              {weekLabel}
-            </span>
+            {selectedWeek && weekBounds && onWeekChange ? (
+              <WeekSelector
+                selectedWeek={selectedWeek}
+                onWeekChange={onWeekChange}
+                weekBounds={weekBounds}
+                onCustomWeekChange={onCustomWeekChange}
+              />
+            ) : (
+              <span className="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2.5 py-1 text-[11px] font-medium text-gray-700">
+                <Calendar className="h-3.5 w-3.5" />
+                {weekLabel}
+              </span>
+            )}
             <button
               type="button"
               onClick={onMouseLeave}
@@ -248,7 +266,7 @@ export function ClubMeetupHoverPopup({
                 <div className="flex items-center justify-between border-b border-gray-100 px-4 py-2.5">
                   <div>
                     <div className="text-sm font-semibold text-gray-900">Meetups hosted</div>
-                    <div className="text-[11px] text-gray-500">Previous completed week</div>
+                    <div className="text-[11px] text-gray-500">{weekLabel}</div>
                   </div>
                   <div className="text-[11px] text-gray-500">
                     {meetups.length} {meetups.length === 1 ? 'meetup' : 'meetups'}
@@ -256,7 +274,7 @@ export function ClubMeetupHoverPopup({
                 </div>
 
                 {meetups.length === 0 ? (
-                  <div className="px-4 py-6 text-center text-sm text-gray-500">No meetups hosted last week.</div>
+                  <div className="px-4 py-6 text-center text-sm text-gray-500">No meetups hosted for this week.</div>
                 ) : (
                   <div className="overflow-x-auto">
                     <table className="min-w-full text-left text-xs">
