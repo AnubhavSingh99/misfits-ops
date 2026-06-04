@@ -2511,7 +2511,7 @@ router.patch('/admin/:id/status', async (req: Request, res: Response) => {
     if (appResult.rows.length === 0) {
       return res.status(404).json({ success: false, error: 'Application not found' });
     }
-    const currentApp = appResult.rows[0];
+    let currentApp = appResult.rows[0];
 
     // No-op guard: upstream state machine rejects same-status transitions
     // (e.g. ON_HOLD -> ON_HOLD). Treat as success to keep UI resilient.
@@ -2525,6 +2525,38 @@ router.patch('/admin/:id/status', async (req: Request, res: Response) => {
       );
       const sameApp = existing.rows[0] ? mapAppRow(existing.rows[0]) : mapAppRow(currentApp);
       return res.json({ success: true, data: sameApp, noop: true });
+    }
+
+    // The dashboard promotes INTERVIEW_PENDING leads with Calendly details to
+    // "Interview Scheduled" so ops can see bookings even when the webhook only
+    // partially synced. Heal the persisted status before completing the call;
+    // the upstream state machine correctly rejects PENDING -> DONE.
+    if (
+      to_status === 'INTERVIEW_DONE'
+      && currentApp.status === 'INTERVIEW_PENDING'
+      && (
+        currentApp.interview_scheduled_at
+        || currentApp.calendly_event_uri
+        || currentApp.calendly_invitee_uri
+        || currentApp.calendly_meet_link
+      )
+    ) {
+      const recovery = await misfitsApi('POST', `/start-your-club/admin/${id}/recover-calendly`, {});
+      if (!recovery.ok) {
+        return res.status(recovery.status || 409).json({
+          success: false,
+          error: recovery.error || recovery.data?.message || 'Could not sync the interview booking before marking it done',
+        });
+      }
+
+      const recoveredResult = await queryProduction('SELECT * FROM club_application WHERE pk = $1', [id]);
+      currentApp = recoveredResult.rows[0];
+      if (currentApp?.status !== 'INTERVIEW_SCHEDULED') {
+        return res.status(409).json({
+          success: false,
+          error: `Interview booking was found, but the lead is still ${currentApp?.status || 'in an unknown status'}. Please retry booking recovery.`,
+        });
+      }
     }
 
     // Map target status to the appropriate gRPC call
