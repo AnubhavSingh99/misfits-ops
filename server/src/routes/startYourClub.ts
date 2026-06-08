@@ -44,6 +44,31 @@ const MANUAL_LEAD_TARGET_STATUSES = new Set([
 ]);
 const DEFAULT_MANUAL_LEAD_REVIEWER = 'Manual Lead';
 const DEFAULT_SYC_REVIEWERS = ['Anubhav', 'Soumya'];
+const BASE_RATING_DIMENSIONS = [
+  { key: 'intention', label: 'Intention', description: 'Why do they want to do this?' },
+  { key: 'passion', label: 'Passion', description: 'How passionate about the activity?' },
+  { key: 'time_availability', label: 'Time Availability', description: 'Can commit to regular meetups?' },
+  { key: 'competency', label: 'Competency', description: 'Skills/experience with activity?' },
+  { key: 'objective', label: 'Objective', description: 'Goal for running community?' },
+];
+
+function buildDefaultRatingDimensions(step: 'screening' | 'interview') {
+  return BASE_RATING_DIMENSIONS.map((dim, index) => ({
+    id: `default-${step}-${dim.key}`,
+    ...dim,
+    step,
+    sort_order: index + 1,
+  }));
+}
+
+function withDefaultRatingDimensions(rows: any[]) {
+  const screening = rows.filter((r: any) => r.step === 'screening');
+  const interview = rows.filter((r: any) => r.step === 'interview');
+  return {
+    screening: screening.length > 0 ? screening : buildDefaultRatingDimensions('screening'),
+    interview: interview.length > 0 ? interview : buildDefaultRatingDimensions('interview'),
+  };
+}
 
 function getStartClubWriteError(action: string, error: any): { status: number; message: string } {
   const message = String(error?.message || '').trim();
@@ -1797,12 +1822,14 @@ router.get('/admin/rating-dimensions', async (req: Request, res: Response) => {
        WHERE active = true
        ORDER BY step, sort_order`
     );
-    const screening = result.rows.filter((r: any) => r.step === 'screening');
-    const interview = result.rows.filter((r: any) => r.step === 'interview');
-    res.json({ success: true, data: { screening, interview } });
+    res.json({ success: true, data: withDefaultRatingDimensions(result.rows) });
   } catch (error: any) {
     logger.error('Failed to fetch rating dimensions:', error);
-    res.status(500).json({ success: false, error: error.message });
+    res.json({
+      success: true,
+      data: withDefaultRatingDimensions([]),
+      warning: error.message,
+    });
   }
 });
 

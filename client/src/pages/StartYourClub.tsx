@@ -213,6 +213,28 @@ interface RatingDimension {
   sort_order: number;
 }
 
+const BASE_RATING_DIMENSIONS = [
+  { key: 'intention', label: 'Intention', description: 'Why do they want to do this?' },
+  { key: 'passion', label: 'Passion', description: 'How passionate about the activity?' },
+  { key: 'time_availability', label: 'Time Availability', description: 'Can commit to regular meetups?' },
+  { key: 'competency', label: 'Competency', description: 'Skills/experience with activity?' },
+  { key: 'objective', label: 'Objective', description: 'Goal for running community?' },
+];
+
+const DEFAULT_SCREENING_DIMS: RatingDimension[] = BASE_RATING_DIMENSIONS.map((dim, index) => ({
+  ...dim,
+  id: `default-screening-${dim.key}`,
+  step: 'screening',
+  sort_order: index + 1,
+}));
+
+const DEFAULT_INTERVIEW_DIMS: RatingDimension[] = BASE_RATING_DIMENSIONS.map((dim, index) => ({
+  ...dim,
+  id: `default-interview-${dim.key}`,
+  step: 'interview',
+  sort_order: index + 1,
+}));
+
 interface Application {
   id: string;
   application_ref?: string | null;
@@ -458,6 +480,11 @@ function RatingForm({
   return (
     <div className="space-y-2.5">
       <h4 className="text-sm font-bold text-slate-700">{label}</h4>
+      {dims.length === 0 && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+          Rating dimensions are still loading.
+        </div>
+      )}
       {dims.map(dim => (
         <div key={dim.key}>
           <div className="text-[11px] font-medium text-slate-500 mb-1">{dim.label}</div>
@@ -1009,10 +1036,10 @@ function LeadRow({
   };
 
   const allScreeningRated = ratingDimsLoaded && (
-    screeningDims.length === 0 || screeningDims.every(d => screeningRatings[d.key] >= 1 && screeningRatings[d.key] <= 5)
+    screeningDims.length > 0 && screeningDims.every(d => screeningRatings[d.key] >= 1 && screeningRatings[d.key] <= 5)
   );
   const allInterviewRated = ratingDimsLoaded && (
-    interviewDims.length === 0 || interviewDims.every(d => interviewRatings[d.key] >= 1 && interviewRatings[d.key] <= 5)
+    interviewDims.length > 0 && interviewDims.every(d => interviewRatings[d.key] >= 1 && interviewRatings[d.key] <= 5)
   );
   const interviewDoneRejectNeedsRatings = detail?.status === 'INTERVIEW_DONE' && !allInterviewRated;
   const repeatActivityHistory = (app.applied_activities_history || []).filter((activity) => Boolean(activity));
@@ -3349,16 +3376,22 @@ export default function StartYourClub() {
       clearTimeout(timeoutId);
       const data = await res.json();
       if (data.success) {
-        setScreeningDims(data.data.screening);
-        setInterviewDims(data.data.interview);
+        const screening = Array.isArray(data.data?.screening) && data.data.screening.length > 0
+          ? data.data.screening
+          : DEFAULT_SCREENING_DIMS;
+        const interview = Array.isArray(data.data?.interview) && data.data.interview.length > 0
+          ? data.data.interview
+          : DEFAULT_INTERVIEW_DIMS;
+        setScreeningDims(screening);
+        setInterviewDims(interview);
       } else {
-        setScreeningDims([]);
-        setInterviewDims([]);
+        setScreeningDims(DEFAULT_SCREENING_DIMS);
+        setInterviewDims(DEFAULT_INTERVIEW_DIMS);
       }
     } catch (err) {
       console.error('Failed to fetch rating dimensions:', err);
-      setScreeningDims([]);
-      setInterviewDims([]);
+      setScreeningDims(DEFAULT_SCREENING_DIMS);
+      setInterviewDims(DEFAULT_INTERVIEW_DIMS);
     } finally {
       setRatingDimsLoaded(true);
     }
