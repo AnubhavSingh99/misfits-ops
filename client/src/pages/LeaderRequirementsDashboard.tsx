@@ -25,6 +25,7 @@ import {
   Layers,
   Edit3,
   Trash2,
+  ClipboardList,
   MessageSquare,
   Send
 } from 'lucide-react';
@@ -64,9 +65,13 @@ function calculateTAT(createdAt: string | undefined | null, completedAt: string 
 type HierarchyLevel = 'activity' | 'city' | 'area';
 
 // Filter options type
-interface FilterOption {
-  id: number;
+interface LinkOption {
+  id: number | string;
   name: string;
+  is_launch?: boolean;
+  launch_id?: number;
+  club_id?: number;
+  club_name?: string;
 }
 
 // Hierarchy filters
@@ -154,6 +159,7 @@ interface HierarchyNode {
 // Summary data
 interface Summary {
   total: number;
+  leaders_required_total?: number;
   not_picked: number;
   deprioritised: number;
   in_progress: number;
@@ -170,7 +176,19 @@ interface CreateContext {
   area_name?: string;
 }
 
-export default function LeaderRequirementsDashboard() {
+interface LeaderRequirementsDashboardProps {
+  embedded?: boolean;
+  compact?: boolean;
+  autoOpenCreate?: boolean;
+  onAutoOpenHandled?: () => void;
+}
+
+export default function LeaderRequirementsDashboard({
+  embedded = false,
+  compact = false,
+  autoOpenCreate = false,
+  onAutoOpenHandled,
+}: LeaderRequirementsDashboardProps = {}) {
   const [hierarchy, setHierarchy] = useState<HierarchyNode[]>([]);
   const [summary, setSummary] = useState<Summary | null>(null);
   const [loading, setLoading] = useState(true);
@@ -220,6 +238,14 @@ export default function LeaderRequirementsDashboard() {
 
   // "Who closed it" modal state (shown when marking as done)
   const [closedByModal, setClosedByModal] = useState<{ id: number; name: string } | null>(null);
+
+  const isCompact = embedded || compact;
+
+  useEffect(() => {
+    if (!autoOpenCreate) return;
+    setShowCreateModal(true);
+    onAutoOpenHandled?.();
+  }, [autoOpenCreate, onAutoOpenHandled]);
 
   // Fetch filter options
   useEffect(() => {
@@ -1111,33 +1137,33 @@ export default function LeaderRequirementsDashboard() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-indigo-50/30">
-      <div className="max-w-7xl mx-auto px-6 py-8">
+    <div className={isCompact ? "" : "min-h-screen bg-gradient-to-br from-slate-50 via-white to-indigo-50/30"}>
+      <div className={isCompact ? "max-w-7xl mx-auto" : "max-w-7xl mx-auto px-6 py-8"}>
         {/* Header */}
-        <div className="mb-8">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <div className="p-3 bg-gradient-to-br from-indigo-500 to-violet-600 rounded-xl shadow-lg shadow-indigo-500/25">
-                <Users className="h-6 w-6 text-white" />
+        <div className={isCompact ? "mb-5" : "mb-8"}>
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className={isCompact ? "p-2.5 bg-gradient-to-br from-indigo-500 to-violet-600 rounded-xl shadow-md shadow-indigo-500/20" : "p-3 bg-gradient-to-br from-indigo-500 to-violet-600 rounded-xl shadow-lg shadow-indigo-500/25"}>
+                <Users className={isCompact ? "h-5 w-5 text-white" : "h-6 w-6 text-white"} />
               </div>
               <div>
-                <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Leader Requirements</h1>
-                <p className="text-sm text-gray-500 mt-0.5">Track leader sourcing across activities and locations</p>
+                <h1 className={isCompact ? "text-lg font-semibold text-slate-900 tracking-tight" : "text-2xl font-bold text-gray-900 tracking-tight"}>Leader Requirements</h1>
+                <p className={isCompact ? "text-xs text-slate-500 mt-0.5" : "text-sm text-gray-500 mt-0.5"}>Track leader demand inside the SYC workflow</p>
               </div>
             </div>
 
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 shrink-0">
               <button
                 onClick={() => fetchData(true)}
                 disabled={refreshing}
-                className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+                className={isCompact ? "flex items-center gap-2 px-3 py-2 text-xs font-medium text-slate-600 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors" : "flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"}
               >
                 <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
                 Refresh
               </button>
               <button
                 onClick={() => openCreateModal()}
-                className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors shadow-sm"
+                className={isCompact ? "flex items-center gap-2 px-4 py-2 text-xs font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors shadow-sm" : "flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors shadow-sm"}
               >
                 <Plus className="h-4 w-4" />
                 Add Requirement
@@ -1148,38 +1174,62 @@ export default function LeaderRequirementsDashboard() {
 
         {/* Summary Tiles */}
         {summary && (
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
-            <SummaryTile
-              label="Total"
-              count={summary.total}
-              icon={Users}
-              color="indigo"
-            />
-            <SummaryTile
-              label="Not Picked"
-              count={summary.not_picked}
-              icon={Clock}
-              color="slate"
-            />
-            <SummaryTile
-              label="In Progress"
-              count={summary.in_progress}
-              icon={TrendingUp}
-              color="blue"
-            />
-            <SummaryTile
-              label="Done"
-              count={summary.done}
-              icon={Check}
-              color="emerald"
-            />
-            <SummaryTile
-              label="Deprioritised"
-              count={summary.deprioritised}
-              icon={Pause}
-              color="amber"
-            />
-          </div>
+          isCompact ? (
+            <div className="flex flex-wrap items-center gap-2 mb-5">
+              {[
+                { label: 'Requirements', count: summary.total, tone: 'bg-slate-100 text-slate-700' },
+                { label: 'Leaders', count: summary.leaders_required_total ?? summary.total, tone: 'bg-indigo-50 text-indigo-700' },
+                { label: 'Not Picked', count: summary.not_picked, tone: 'bg-slate-100 text-slate-700' },
+                { label: 'In Progress', count: summary.in_progress, tone: 'bg-blue-50 text-blue-700' },
+                { label: 'Done', count: summary.done, tone: 'bg-emerald-50 text-emerald-700' },
+                { label: 'Paused', count: summary.deprioritised, tone: 'bg-amber-50 text-amber-700' },
+              ].map(stat => (
+                <span key={stat.label} className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium ${stat.tone}`}>
+                  <span className="uppercase tracking-wide opacity-70">{stat.label}</span>
+                  <span className="font-mono text-sm">{stat.count}</span>
+                </span>
+              ))}
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-4 mb-6">
+              <SummaryTile
+                label="Requirements"
+                count={summary.total}
+                icon={ClipboardList}
+                color="slate"
+              />
+              <SummaryTile
+                label="Leaders Needed"
+                count={summary.leaders_required_total ?? summary.total}
+                icon={Users}
+                color="indigo"
+              />
+              <SummaryTile
+                label="Not Picked"
+                count={summary.not_picked}
+                icon={Clock}
+                color="slate"
+              />
+              <SummaryTile
+                label="In Progress"
+                count={summary.in_progress}
+                icon={TrendingUp}
+                color="blue"
+              />
+              <SummaryTile
+                label="Done"
+                count={summary.done}
+                icon={Check}
+                color="emerald"
+              />
+              <SummaryTile
+                label="Deprioritised"
+                count={summary.deprioritised}
+                icon={Pause}
+                color="amber"
+              />
+            </div>
+          )
         )}
 
         {/* Filters and Hierarchy Controls */}
@@ -1859,7 +1909,9 @@ function CreateRequirementModal({
   const [activities, setActivities] = useState<FilterOption[]>([]);
   const [cities, setCities] = useState<FilterOption[]>([]);
   const [areas, setAreas] = useState<FilterOption[]>([]);
-  const [clubs, setClubs] = useState<FilterOption[]>([]);
+  const [clubs, setClubs] = useState<LinkOption[]>([]);
+  const [selectedLaunchId, setSelectedLaunchId] = useState<number | undefined>(undefined);
+  const [isLaunchSelected, setIsLaunchSelected] = useState(false);
 
   // Calculate team from selection
   const team = selectedActivityName && selectedCityName
@@ -1932,16 +1984,35 @@ function CreateRequirementModal({
     }
   }, [selectedCityId]);
 
-  // Fetch clubs when area changes
+  // Fetch clubs and launches when area changes
   useEffect(() => {
     if (selectedActivityId && selectedCityId && selectedAreaId) {
       const fetchClubs = async () => {
         try {
-          const res = await fetch(`${API_BASE}/scaling-tasks/filters/clubs?activity_ids=${selectedActivityId}&city_ids=${selectedCityId}&area_ids=${selectedAreaId}`);
+          const params = new URLSearchParams({
+            activity_id: String(selectedActivityId),
+            city_id: String(selectedCityId),
+            area_id: String(selectedAreaId)
+          });
+          const res = await fetch(`${API_BASE}/requirements/clubs-and-launches?${params}`);
           const data = await res.json();
-          if (data.success) setClubs(data.options || []);
+          if (data.success) {
+            const clubOptions = (data.clubs || []).map((club: any) => ({
+              ...club,
+              id: `club_${club.id}`,
+              name: club.name
+            }));
+            const launchOptions = (data.launches || []).map((launch: any) => ({
+              ...launch,
+              id: `launch_${launch.id}`,
+              launch_id: launch.id,
+              is_launch: true,
+              name: `${launch.name} (Launch)`
+            }));
+            setClubs([...clubOptions, ...launchOptions]);
+          }
         } catch (err) {
-          console.error('Failed to fetch clubs:', err);
+          console.error('Failed to fetch clubs and launches:', err);
         }
       };
       fetchClubs();
@@ -1970,6 +2041,8 @@ function CreateRequirementModal({
     setSelectedAreaName(undefined);
     setSelectedClubId(undefined);
     setSelectedClubName(undefined);
+    setSelectedLaunchId(undefined);
+    setIsLaunchSelected(false);
   };
 
   const handleCityChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
@@ -1982,6 +2055,8 @@ function CreateRequirementModal({
     setSelectedAreaName(undefined);
     setSelectedClubId(undefined);
     setSelectedClubName(undefined);
+    setSelectedLaunchId(undefined);
+    setIsLaunchSelected(false);
   };
 
   const handleAreaChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
@@ -1992,13 +2067,30 @@ function CreateRequirementModal({
     // Reset club selection
     setSelectedClubId(undefined);
     setSelectedClubName(undefined);
+    setSelectedLaunchId(undefined);
+    setIsLaunchSelected(false);
   };
 
   const handleClubChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const id = e.target.value ? parseInt(e.target.value) : undefined;
-    const club = clubs.find(c => String(c.id) === e.target.value);
-    setSelectedClubId(id);
-    setSelectedClubName(club?.name);
+    const value = e.target.value;
+    const club = clubs.find(c => String(c.id) === value);
+
+    if (club?.is_launch) {
+      setSelectedClubId(undefined);
+      setSelectedClubName(club.name.replace(' (Launch)', ''));
+      setSelectedLaunchId(club.launch_id);
+      setIsLaunchSelected(true);
+    } else if (value) {
+      setSelectedClubId(parseInt(value.replace('club_', ''), 10));
+      setSelectedClubName(club?.name);
+      setSelectedLaunchId(undefined);
+      setIsLaunchSelected(false);
+    } else {
+      setSelectedClubId(undefined);
+      setSelectedClubName(undefined);
+      setSelectedLaunchId(undefined);
+      setIsLaunchSelected(false);
+    }
   };
 
   const isValid = name.trim() && selectedActivityId && selectedCityId && selectedAreaId;
@@ -2018,8 +2110,9 @@ function CreateRequirementModal({
       city_name: selectedCityName,
       area_id: selectedAreaId,
       area_name: selectedAreaName,
-      club_id: selectedClubId,
+      club_id: isLaunchSelected ? undefined : selectedClubId,
       club_name: selectedClubName,
+      launch_id: isLaunchSelected ? selectedLaunchId : undefined,
       growth_team_effort: growthEffort,
       platform_team_effort: platformEffort,
       existing_leader_effort: existingLeaderEffort,
@@ -2105,23 +2198,17 @@ function CreateRequirementModal({
                 </select>
               </div>
               <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">Club / Launch *</label>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Club / Launch</label>
                 <select
-                  value={selectedClubId || ''}
+                  value={isLaunchSelected ? `launch_${selectedLaunchId}` : (selectedClubId ? `club_${selectedClubId}` : '')}
                   onChange={handleClubChange}
-                  disabled={!selectedAreaId || (selectedAreaId && clubs.length === 0)}
-                  className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-sm bg-white disabled:bg-gray-100 disabled:cursor-not-allowed ${selectedAreaId && clubs.length === 0 ? 'border-amber-300 text-amber-600' : 'border-gray-300'}`}
+                  disabled={!selectedAreaId}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-sm bg-white disabled:bg-gray-100 disabled:cursor-not-allowed"
                 >
-                  {selectedAreaId && clubs.length === 0 ? (
-                    <option value="">No clubs, add a launch first</option>
-                  ) : (
-                    <>
-                      <option value="">Select Club</option>
-                      {clubs.map(c => (
-                        <option key={c.id} value={c.id}>{c.name}</option>
-                      ))}
-                    </>
-                  )}
+                  <option value="">New club at area level</option>
+                  {clubs.map(c => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
                 </select>
               </div>
             </div>
@@ -2210,7 +2297,7 @@ function CreateRequirementModal({
             </div>
 
             {/* Actions */}
-            <div className="flex gap-3 pt-2">
+            <div className="sticky bottom-0 -mx-6 flex gap-3 border-t border-gray-100 bg-white px-6 pt-3 pb-1">
               <button
                 type="button"
                 onClick={onClose}

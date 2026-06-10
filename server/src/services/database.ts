@@ -491,6 +491,32 @@ async function runMigrations() {
     `);
 
     await queryLocal(`
+      CREATE TABLE IF NOT EXISTS health_weekly_club_notes (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        club_pk INTEGER NOT NULL,
+        club_id VARCHAR(100),
+        club_name VARCHAR(255) NOT NULL,
+        week_start DATE NOT NULL,
+        week_end DATE NOT NULL,
+        analyst_comment TEXT,
+        operational_notes TEXT,
+        hypothesis TEXT,
+        action_item TEXT,
+        owner VARCHAR(255),
+        follow_up_status VARCHAR(50),
+        problem_tag VARCHAR(100),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE (club_pk, week_start)
+      );
+    `);
+
+    await queryLocal(`
+      ALTER TABLE health_weekly_club_notes
+      ADD COLUMN IF NOT EXISTS problem_tag VARCHAR(100);
+    `);
+
+    await queryLocal(`
       CREATE TABLE IF NOT EXISTS system_patterns (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         pattern_type VARCHAR(100) NOT NULL,
@@ -600,6 +626,9 @@ async function runMigrations() {
     await queryLocal('CREATE INDEX IF NOT EXISTS idx_notifications_recipient ON smart_notifications(recipient);');
     await queryLocal('CREATE INDEX IF NOT EXISTS idx_health_club_priorities_created_at ON health_club_priorities(created_at DESC);');
     await queryLocal('CREATE INDEX IF NOT EXISTS idx_health_club_comments_club_pk_created_at ON health_club_comments(club_pk, created_at DESC);');
+    await queryLocal('CREATE INDEX IF NOT EXISTS idx_health_weekly_notes_week_start ON health_weekly_club_notes(week_start DESC);');
+    await queryLocal('CREATE INDEX IF NOT EXISTS idx_health_weekly_notes_club_pk ON health_weekly_club_notes(club_pk);');
+    await queryLocal('CREATE INDEX IF NOT EXISTS idx_health_weekly_notes_owner ON health_weekly_club_notes(owner);');
 
     // Create POC structure table
     await queryLocal(`

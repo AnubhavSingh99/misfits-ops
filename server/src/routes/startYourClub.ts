@@ -43,6 +43,32 @@ const MANUAL_LEAD_TARGET_STATUSES = new Set([
   'REJECTED',
 ]);
 const DEFAULT_MANUAL_LEAD_REVIEWER = 'Manual Lead';
+const DEFAULT_SYC_REVIEWERS = ['Anubhav', 'Soumya'];
+const BASE_RATING_DIMENSIONS = [
+  { key: 'intention', label: 'Intention', description: 'Why do they want to do this?' },
+  { key: 'passion', label: 'Passion', description: 'How passionate about the activity?' },
+  { key: 'time_availability', label: 'Time Availability', description: 'Can commit to regular meetups?' },
+  { key: 'competency', label: 'Competency', description: 'Skills/experience with activity?' },
+  { key: 'objective', label: 'Objective', description: 'Goal for running community?' },
+];
+
+function buildDefaultRatingDimensions(step: 'screening' | 'interview') {
+  return BASE_RATING_DIMENSIONS.map((dim, index) => ({
+    id: `default-${step}-${dim.key}`,
+    ...dim,
+    step,
+    sort_order: index + 1,
+  }));
+}
+
+function withDefaultRatingDimensions(rows: any[]) {
+  const screening = rows.filter((r: any) => r.step === 'screening');
+  const interview = rows.filter((r: any) => r.step === 'interview');
+  return {
+    screening: screening.length > 0 ? screening : buildDefaultRatingDimensions('screening'),
+    interview: interview.length > 0 ? interview : buildDefaultRatingDimensions('interview'),
+  };
+}
 
 function getStartClubWriteError(action: string, error: any): { status: number; message: string } {
   const message = String(error?.message || '').trim();
@@ -295,6 +321,24 @@ function splitCityAndSubArea(rawCity?: string | null): { city: string | null; su
   }
 
   return { city: value, sub_area: null };
+}
+
+function buildRequirementLocationCandidates(city: string, subArea?: string): Set<string> {
+  const candidates = new Set<string>();
+  const add = (value?: string | null) => {
+    const normalized = String(value || '').trim().toLowerCase();
+    if (normalized) candidates.add(normalized);
+  };
+
+  add(city);
+  add(subArea);
+  if (!subArea) {
+    for (const defaultSubArea of getDefaultSubAreasForCity(city)) {
+      add(defaultSubArea);
+    }
+  }
+
+  return candidates;
 }
 
 function formatCityWithSubArea(city?: string | null, subArea?: string | null): string {
@@ -596,6 +640,38 @@ async function fetchSupplyRowsFromRequirementsApi(baseUrl: string): Promise<Lead
   }
 
   return [...grouped.values()];
+}
+
+async function fetchLeaderRequirementMatchesFromRequirementsApi(
+  baseUrl: string,
+  activity: string,
+  locationCandidates: Set<string>
+): Promise<any[]> {
+  const root = String(baseUrl || '').trim().replace(/\/+$/, '');
+  if (!root) return [];
+
+  const response = await fetch(`${root}/api/requirements/leaders`);
+  if (!response.ok) {
+    throw new Error(`Fallback requirements API failed with ${response.status}`);
+  }
+
+  const payload: any = await response.json();
+  const requirements = Array.isArray(payload?.requirements) ? payload.requirements : [];
+  const normalizedActivity = activity.trim().toLowerCase();
+  const activeStatuses = new Set(['not_picked', 'in_progress', 'deprioritised']);
+
+  return requirements
+    .filter((req: any) => {
+      const reqActivity = String(req?.activity_name || req?.activity || '').trim().toLowerCase();
+      const reqStatus = String(req?.status || '').trim().toLowerCase();
+      const reqCity = String(req?.city_name || req?.city || '').trim().toLowerCase();
+      const reqArea = String(req?.area_name || req?.sub_area || '').trim().toLowerCase();
+
+      return reqActivity === normalizedActivity
+        && activeStatuses.has(reqStatus)
+        && (locationCandidates.has(reqCity) || locationCandidates.has(reqArea));
+    })
+    .slice(0, 5);
 }
 
 function computeAnalysisDashboard(rows: any[], supplyRows: LeaderSupplyRow[] = []) {
@@ -989,8 +1065,15 @@ const ALLOWED_REJECTION_REASONS = new Set([
   'unclear_motivation',
   'city_not_available',
   'incomplete_responses',
+  'no_leader_requirement',
+  'not_looking_for_activity_now',
   'other',
 ]);
+
+const REJECTION_REASON_NOTE_FALLBACKS: Record<string, string> = {
+  no_leader_requirement: 'No lead requirement',
+  not_looking_for_activity_now: 'Not looking for the activity right now',
+};
 
 function normalizeRejectionInput(rawReason: any, rawNote?: any): { reason: string; note: string } {
   const reasonInput = String(rawReason || '').trim();
@@ -1017,6 +1100,13 @@ function normalizeRejectionInput(rawReason: any, rawNote?: any): { reason: strin
     return { reason: '', note: noteInput };
   }
 
+  if (REJECTION_REASON_NOTE_FALLBACKS[reasonInput]) {
+    return {
+      reason: 'other',
+      note: noteInput || REJECTION_REASON_NOTE_FALLBACKS[reasonInput],
+    };
+  }
+
   if (ALLOWED_REJECTION_REASONS.has(reasonInput)) {
     return { reason: reasonInput, note: noteInput };
   }
@@ -1030,7 +1120,7 @@ function normalizeRejectionInput(rawReason: any, rawNote?: any): { reason: strin
 
 function isPotentialLeadDecision(rawPotentialLead: any, rawReason: any): boolean {
   const reasonInput = String(rawReason || '').trim();
-  if (reasonInput === 'potential_lead') return true;
+  if (reasonInput === 'potential_lead' || reasonInput === 'no_leader_requirement') return true;
 
   if (typeof rawPotentialLead === 'boolean') return rawPotentialLead;
 
@@ -1732,12 +1822,14 @@ router.get('/admin/rating-dimensions', async (req: Request, res: Response) => {
        WHERE active = true
        ORDER BY step, sort_order`
     );
-    const screening = result.rows.filter((r: any) => r.step === 'screening');
-    const interview = result.rows.filter((r: any) => r.step === 'interview');
-    res.json({ success: true, data: { screening, interview } });
+    res.json({ success: true, data: withDefaultRatingDimensions(result.rows) });
   } catch (error: any) {
     logger.error('Failed to fetch rating dimensions:', error);
-    res.status(500).json({ success: false, error: error.message });
+    res.json({
+      success: true,
+      data: withDefaultRatingDimensions([]),
+      warning: error.message,
+    });
   }
 });
 
@@ -2041,10 +2133,106 @@ router.post('/admin/create-lead', async (req: Request, res: Response) => {
 router.get('/admin/reviewers', async (req: Request, res: Response) => {
   try {
     const result = await queryLocal('SELECT name FROM syc_reviewers ORDER BY last_used_at DESC');
-    res.json({ success: true, reviewers: result.rows.map((r: any) => r.name) });
+    const reviewers = [
+      ...DEFAULT_SYC_REVIEWERS,
+      ...result.rows.map((r: any) => r.name),
+    ].filter((name, index, all) => name && all.indexOf(name) === index);
+    res.json({ success: true, reviewers });
   } catch (error: any) {
     logger.error('Failed to fetch reviewers:', error);
-    res.json({ success: true, reviewers: [] });
+    res.json({ success: true, reviewers: DEFAULT_SYC_REVIEWERS });
+  }
+});
+
+// GET /admin/leader-requirements/match — lightweight check for matching leader demand on a lead.
+// Registered before /admin/:id so "leader-requirements" is not treated as an application id.
+router.get('/admin/leader-requirements/match', async (req: Request, res: Response) => {
+  try {
+    const activity = String(req.query.activity || '').trim();
+    const parsedCity = splitCityAndSubArea(String(req.query.city || ''));
+    const city = parsedCity.city || String(req.query.city || '').trim();
+    const subArea = String(req.query.sub_area || parsedCity.sub_area || '').trim();
+
+    if (!activity || !city) {
+      return res.json({ success: true, requirements: [], total: 0 });
+    }
+
+    const locationCandidates = buildRequirementLocationCandidates(city, subArea);
+    const params: any[] = [activity.toLowerCase()];
+    const locationClauses: string[] = [];
+    const addLocationParam = (value: string) => {
+      params.push(value.toLowerCase());
+      return `$${params.length}`;
+    };
+
+    for (const candidate of locationCandidates) {
+      const candidateParam = addLocationParam(candidate);
+      locationClauses.push(`LOWER(city_name) = ${candidateParam}`);
+      locationClauses.push(`LOWER(area_name) = ${candidateParam}`);
+    }
+
+    const matchQuery = `
+      SELECT id, name, status, activity_name, city_name, area_name, leaders_required
+      FROM leader_requirements
+      WHERE LOWER(activity_name) = $1
+        AND (${locationClauses.join(' OR ')})
+        AND status IN ('not_picked', 'in_progress', 'deprioritised')
+      ORDER BY
+        CASE status
+          WHEN 'not_picked' THEN 1
+          WHEN 'in_progress' THEN 2
+          ELSE 3
+        END,
+        created_at DESC
+      LIMIT 5
+    `;
+
+    let rows: any[] = [];
+    try {
+      const localResult = await queryLocal(matchQuery, params);
+      rows = localResult.rows || [];
+    } catch (localError: any) {
+      logger.warn('Local leader requirement match failed:', localError?.message || localError);
+      try {
+        const productionResult = await queryProduction(matchQuery, params);
+        rows = productionResult.rows || [];
+      } catch (productionError: any) {
+        logger.warn('Production leader requirement match failed:', productionError?.message || productionError);
+      }
+    }
+
+    if (rows.length === 0) {
+      const broadQuery = `
+        SELECT id, name, status, activity_name, city_name, area_name, leaders_required
+        FROM leader_requirements
+        WHERE LOWER(activity_name) = $1
+          AND status IN ('not_picked', 'in_progress', 'deprioritised')
+        ORDER BY created_at DESC
+      `;
+      try {
+        const broadResult = await queryLocal(broadQuery, [activity.toLowerCase()]);
+        rows = (broadResult.rows || []).filter((row: any) => (
+          locationCandidates.has(String(row.city_name || '').trim().toLowerCase()) ||
+          locationCandidates.has(String(row.area_name || '').trim().toLowerCase())
+        )).slice(0, 5);
+      } catch (broadError: any) {
+        logger.warn('Broad leader requirement match failed:', broadError?.message || broadError);
+      }
+    }
+
+    if (rows.length === 0) {
+      try {
+        const fallbackBase = process.env.LEADER_REQUIREMENTS_FALLBACK_URL || 'https://operations.misfits.net.in';
+        rows = await fetchLeaderRequirementMatchesFromRequirementsApi(fallbackBase, activity, locationCandidates);
+      } catch (fallbackError: any) {
+        logger.warn('Fallback leader requirement match failed:', fallbackError?.message || fallbackError);
+      }
+    }
+
+    res.json({ success: true, requirements: rows, total: rows.length });
+  } catch (error: any) {
+    logger.error('Failed to match leader requirements:', error);
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 
@@ -2350,7 +2538,7 @@ router.patch('/admin/:id/status', async (req: Request, res: Response) => {
     if (appResult.rows.length === 0) {
       return res.status(404).json({ success: false, error: 'Application not found' });
     }
-    const currentApp = appResult.rows[0];
+    let currentApp = appResult.rows[0];
 
     // No-op guard: upstream state machine rejects same-status transitions
     // (e.g. ON_HOLD -> ON_HOLD). Treat as success to keep UI resilient.
@@ -2364,6 +2552,38 @@ router.patch('/admin/:id/status', async (req: Request, res: Response) => {
       );
       const sameApp = existing.rows[0] ? mapAppRow(existing.rows[0]) : mapAppRow(currentApp);
       return res.json({ success: true, data: sameApp, noop: true });
+    }
+
+    // The dashboard promotes INTERVIEW_PENDING leads with Calendly details to
+    // "Interview Scheduled" so ops can see bookings even when the webhook only
+    // partially synced. Heal the persisted status before completing the call;
+    // the upstream state machine correctly rejects PENDING -> DONE.
+    if (
+      to_status === 'INTERVIEW_DONE'
+      && currentApp.status === 'INTERVIEW_PENDING'
+      && (
+        currentApp.interview_scheduled_at
+        || currentApp.calendly_event_uri
+        || currentApp.calendly_invitee_uri
+        || currentApp.calendly_meet_link
+      )
+    ) {
+      const recovery = await misfitsApi('POST', `/start-your-club/admin/${id}/recover-calendly`, {});
+      if (!recovery.ok) {
+        return res.status(recovery.status || 409).json({
+          success: false,
+          error: recovery.error || recovery.data?.message || 'Could not sync the interview booking before marking it done',
+        });
+      }
+
+      const recoveredResult = await queryProduction('SELECT * FROM club_application WHERE pk = $1', [id]);
+      currentApp = recoveredResult.rows[0];
+      if (currentApp?.status !== 'INTERVIEW_SCHEDULED') {
+        return res.status(409).json({
+          success: false,
+          error: `Interview booking was found, but the lead is still ${currentApp?.status || 'in an unknown status'}. Please retry booking recovery.`,
+        });
+      }
     }
 
     // Map target status to the appropriate gRPC call

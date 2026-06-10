@@ -5,6 +5,29 @@ import { callGrpc } from '../services/grpcClient';
 
 const router = Router();
 
+function shouldUseVenueRepositoryApiFallback(): boolean {
+  if (process.env.ENABLE_VENUE_REPOSITORY_API_FALLBACK === 'true') return true;
+  return process.env.NODE_ENV !== 'production';
+}
+
+async function fetchVenueRepositoryFallback(req: Request): Promise<any | null> {
+  if (!shouldUseVenueRepositoryApiFallback()) return null;
+  const base = (
+    process.env.VENUE_REPOSITORY_FALLBACK_URL ||
+    process.env.REQUIREMENTS_FALLBACK_URL ||
+    'https://operations.misfits.net.in'
+  ).trim().replace(/\/+$/, '');
+  if (!base) return null;
+
+  try {
+    const response = await fetch(`${base}${req.originalUrl}`);
+    if (!response.ok) return null;
+    return await response.json();
+  } catch {
+    return null;
+  }
+}
+
 // URL validation helper - must be Google Maps, not share.google
 function validateMapsUrl(url: string): { valid: boolean; error?: string } {
   if (!url) return { valid: true }; // URL is optional
@@ -421,6 +444,11 @@ async function buildFilterClauses(query: Record<string, any>, startIndex: number
  */
 router.get('/', async (req: Request, res: Response) => {
   try {
+    const fallback = await fetchVenueRepositoryFallback(req);
+    if (fallback?.success && Array.isArray(fallback.venues)) {
+      return res.json(fallback);
+    }
+
     const { limit = 50, offset = 0 } = req.query;
 
     // Build filter clauses (shared between main and count queries)
@@ -482,6 +510,10 @@ router.get('/', async (req: Request, res: Response) => {
     });
   } catch (error) {
     logger.error('Error fetching venue repository:', error);
+    const fallback = await fetchVenueRepositoryFallback(req);
+    if (fallback?.success) {
+      return res.json(fallback);
+    }
     res.status(500).json({ error: 'Failed to fetch venues' });
   }
 });
@@ -1285,6 +1317,11 @@ router.get('/suggestions/:requirementId', async (req: Request, res: Response) =>
  */
 router.get('/stats/summary', async (req: Request, res: Response) => {
   try {
+    const fallback = await fetchVenueRepositoryFallback(req);
+    if (fallback?.success && fallback.stats) {
+      return res.json(fallback);
+    }
+
     const query = `
       SELECT
         status,
@@ -1313,6 +1350,10 @@ router.get('/stats/summary', async (req: Request, res: Response) => {
     res.json({ success: true, stats });
   } catch (error) {
     logger.error('Error fetching venue repository stats:', error);
+    const fallback = await fetchVenueRepositoryFallback(req);
+    if (fallback?.success) {
+      return res.json(fallback);
+    }
     res.status(500).json({ error: 'Failed to fetch stats' });
   }
 });

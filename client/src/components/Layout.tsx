@@ -3,14 +3,12 @@ import { Link, useLocation, useNavigate } from 'react-router-dom'
 import {
   LayoutDashboard,
   CheckSquare,
-  TrendingUp,
   Menu,
   X,
   Users,
   Activity,
   Target,
   Layers,
-  Rocket,
   MapPin,
   ChevronRight,
   Headphones,
@@ -24,11 +22,8 @@ interface LayoutProps {
 
 // All available navigation items with their config IDs
 const allNavigation = [
-  { id: 'scaling-planner-v2', name: 'Scaling Planner V2', href: '/scaling-planner-v2', icon: Rocket },
   { id: 'health-dashboard', name: 'Health Dashboard', href: '/health-dashboard', icon: Activity },
   { id: 'venue-requirements', name: 'Venue Requirements', href: '/venue-requirements', icon: MapPin },
-  { id: 'leader-requirements', name: 'Leader Requirements', href: '/leader-requirements', icon: Users },
-  { id: 'analytics', name: 'Analysis', href: '/analytics', icon: TrendingUp },
   { id: 'customer-service', name: 'Customer Service (New)', href: '/customer-service', icon: Headphones },
   { id: 'customer-service-old', name: 'Customer Service (Old)', href: '/customer-service-old', icon: Headphones },
   { id: 'shark-tank', name: 'Shark Tank CRM', href: '/shark-tank', icon: Zap },
@@ -81,7 +76,7 @@ export function Layout({ children }: LayoutProps) {
     const currentPath = location.pathname
     const currentItem = allNavigation.find(item => item.href === currentPath)
     if (currentItem && dashboardConfig[currentItem.id] === false) {
-      navigate('/scaling-planner-v2', { replace: true })
+      navigate('/start-your-club', { replace: true })
     }
   }, [configLoaded, dashboardConfig, location.pathname, navigate])
 

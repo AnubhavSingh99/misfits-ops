@@ -296,6 +296,32 @@ export function ExpandClubModal({ isOpen, onClose, onSave, context, existingTarg
     }
   }, [isOpen, context, existingTarget])
 
+  useEffect(() => {
+    if (!isOpen || selectedCityId || !context?.city_name || cities.length === 0) return
+    const matchedCity = cities.find(c => c.name.toLowerCase() === context.city_name!.toLowerCase())
+    if (matchedCity) {
+      setSelectedCityId(matchedCity.id)
+    }
+  }, [isOpen, selectedCityId, context?.city_name, cities])
+
+  useEffect(() => {
+    if (!isOpen || selectedAreaId || !context?.area_name || areas.length === 0) return
+    const normalizedArea = context.area_name.toLowerCase()
+    const matchedArea = areas.find(a => a.name.toLowerCase() === normalizedArea)
+      || areas.find(a => a.name.toLowerCase().includes(normalizedArea) || normalizedArea.includes(a.name.toLowerCase()))
+    if (matchedArea) {
+      setSelectedAreaId(matchedArea.id)
+    }
+  }, [isOpen, selectedAreaId, context?.area_name, areas])
+
+  useEffect(() => {
+    if (!isOpen || selectedActivityId || !context?.activity_name || activities.length === 0) return
+    const matchedActivity = activities.find(a => a.name.toLowerCase() === context.activity_name!.toLowerCase())
+    if (matchedActivity) {
+      setSelectedActivityId(matchedActivity.id)
+    }
+  }, [isOpen, selectedActivityId, context?.activity_name, activities])
+
   // Handlers for cascading changes
   const handleActivityChange = (id: number | undefined) => {
     setSelectedActivityId(id)
