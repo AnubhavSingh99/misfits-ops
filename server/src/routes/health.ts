@@ -149,6 +149,13 @@ router.get('/clubs', async (req, res) => {
     // Expected speedup: 10-50x depending on data size
     const healthQuery = `
       WITH
+      week_bounds AS (
+        SELECT
+          DATE_TRUNC('week', CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata') AT TIME ZONE 'Asia/Kolkata' - INTERVAL '14 days' as two_weeks_ago_start,
+          DATE_TRUNC('week', CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata') AT TIME ZONE 'Asia/Kolkata' - INTERVAL '7 days' as last_week_start,
+          DATE_TRUNC('week', CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata') AT TIME ZONE 'Asia/Kolkata' as current_week_start,
+          CURRENT_TIMESTAMP - INTERVAL '2 months' as recent_cutoff
+      ),
       -- Pre-compute club locations using window function (replaces N subqueries with 1 scan)
       club_event_locations AS (
         SELECT
@@ -160,6 +167,7 @@ router.get('/clubs', async (req, res) => {
         JOIN location l ON e.location_id = l.id
         JOIN area ar ON l.area_id = ar.id
         JOIN city ci ON ar.city_id = ci.id
+        WHERE e.state = 'CREATED'
         GROUP BY e.club_id, ci.name, ar.name
       ),
       club_locations AS (
@@ -174,8 +182,10 @@ router.get('/clubs', async (req, res) => {
           e.club_id,
           e.max_people
         FROM event e
-        WHERE e.created_at >= DATE_TRUNC('week', CURRENT_DATE - INTERVAL '1 week') + INTERVAL '1 day'
-          AND e.created_at < DATE_TRUNC('week', CURRENT_DATE) + INTERVAL '1 day'
+        CROSS JOIN week_bounds wb
+        WHERE e.state = 'CREATED'
+          AND e.start_time >= wb.last_week_start
+          AND e.start_time < wb.current_week_start
       ),
       -- Last week event count per club (pre-computed)
       last_week_event_counts AS (
@@ -187,13 +197,16 @@ router.get('/clubs', async (req, res) => {
       last_week_bookings AS (
         SELECT
           lwe.club_id,
-          COUNT(CASE WHEN b.booking_status IN ('REGISTERED', 'WAITLISTED', 'OPEN_FOR_REPLACEMENT', 'ATTENDED', 'NOT_ATTENDED')
+          COUNT(CASE WHEN b.booking_status NOT IN ('DEREGISTERED', 'INITIATED', 'WAITLISTED')
                      THEN b.id END) as capacity_bookings_count,
-          COUNT(DISTINCT CASE WHEN b.booking_status IN ('REGISTERED', 'WAITLISTED', 'OPEN_FOR_REPLACEMENT', 'ATTENDED', 'NOT_ATTENDED')
+          COUNT(DISTINCT CASE WHEN b.booking_status NOT IN ('DEREGISTERED', 'INITIATED', 'WAITLISTED')
                               THEN b.user_id END) as unique_users,
-          AVG(CASE WHEN (b.feedback_details->>'rating')::numeric IS NOT NULL
+          AVG(CASE WHEN b.booking_status NOT IN ('DEREGISTERED', 'INITIATED', 'WAITLISTED')
+                     AND (b.feedback_details->>'rating')::numeric IS NOT NULL
                    THEN (b.feedback_details->>'rating')::numeric END) as avg_rating,
-          SUM(CASE WHEN b.booking_payment_status = 'COMPLETED' THEN b.amount ELSE 0 END) as revenue
+          SUM(CASE WHEN b.booking_status NOT IN ('DEREGISTERED', 'INITIATED', 'WAITLISTED')
+                     AND b.booking_payment_status = 'COMPLETED'
+                   THEN b.amount ELSE 0 END) as revenue
         FROM last_week_events lwe
         LEFT JOIN booking b ON lwe.event_pk = b.event_id
         GROUP BY lwe.club_id
@@ -209,14 +222,16 @@ router.get('/clubs', async (req, res) => {
         SELECT DISTINCT lwe.club_id, b.user_id
         FROM last_week_events lwe
         JOIN booking b ON lwe.event_pk = b.event_id
-        WHERE b.booking_status IN ('REGISTERED', 'WAITLISTED', 'OPEN_FOR_REPLACEMENT', 'ATTENDED', 'NOT_ATTENDED')
+        WHERE b.booking_status NOT IN ('DEREGISTERED', 'INITIATED', 'WAITLISTED')
       ),
       historical_users AS (
         SELECT DISTINCT e.club_id, b.user_id
         FROM event e
         JOIN booking b ON e.pk = b.event_id
-        WHERE e.created_at < DATE_TRUNC('week', CURRENT_DATE - INTERVAL '1 week')
-          AND b.booking_status IN ('REGISTERED', 'WAITLISTED', 'OPEN_FOR_REPLACEMENT', 'ATTENDED', 'NOT_ATTENDED')
+        CROSS JOIN week_bounds wb
+        WHERE e.state = 'CREATED'
+          AND e.start_time < wb.last_week_start
+          AND b.booking_status NOT IN ('DEREGISTERED', 'INITIATED', 'WAITLISTED')
       ),
       repeat_rate_calc AS (
         SELECT
@@ -228,28 +243,35 @@ router.get('/clubs', async (req, res) => {
       ),
       -- Recent events check for dormant detection (single scan)
       recent_events AS (
-        SELECT club_id, MAX(created_at) as last_event_date,
-               BOOL_OR(created_at >= CURRENT_DATE - INTERVAL '2 months') as has_recent
+        SELECT club_id, MAX(start_time) as last_event_date,
+               BOOL_OR(start_time >= wb.recent_cutoff) as has_recent
         FROM event
+        CROSS JOIN week_bounds wb
+        WHERE state = 'CREATED'
         GROUP BY club_id
       ),
       -- Two weeks ago events
       two_weeks_ago_events AS (
         SELECT e.pk as event_pk, e.club_id, e.max_people
         FROM event e
-        WHERE e.created_at >= DATE_TRUNC('week', CURRENT_DATE - INTERVAL '2 weeks') + INTERVAL '1 day'
-          AND e.created_at < DATE_TRUNC('week', CURRENT_DATE - INTERVAL '1 week') + INTERVAL '1 day'
+        CROSS JOIN week_bounds wb
+        WHERE e.state = 'CREATED'
+          AND e.start_time >= wb.two_weeks_ago_start
+          AND e.start_time < wb.last_week_start
       ),
       two_weeks_ago_bookings AS (
         SELECT
           twa.club_id,
-          COUNT(CASE WHEN b.booking_status IN ('REGISTERED', 'WAITLISTED', 'OPEN_FOR_REPLACEMENT', 'ATTENDED', 'NOT_ATTENDED')
+          COUNT(CASE WHEN b.booking_status NOT IN ('DEREGISTERED', 'INITIATED', 'WAITLISTED')
                      THEN b.id END) as capacity_bookings_count,
-          COUNT(DISTINCT CASE WHEN b.booking_status IN ('REGISTERED', 'WAITLISTED', 'OPEN_FOR_REPLACEMENT', 'ATTENDED', 'NOT_ATTENDED')
+          COUNT(DISTINCT CASE WHEN b.booking_status NOT IN ('DEREGISTERED', 'INITIATED', 'WAITLISTED')
                               THEN b.user_id END) as unique_users,
-          AVG(CASE WHEN (b.feedback_details->>'rating')::numeric IS NOT NULL
+          AVG(CASE WHEN b.booking_status NOT IN ('DEREGISTERED', 'INITIATED', 'WAITLISTED')
+                     AND (b.feedback_details->>'rating')::numeric IS NOT NULL
                    THEN (b.feedback_details->>'rating')::numeric END) as avg_rating,
-          SUM(CASE WHEN b.booking_payment_status = 'COMPLETED' THEN b.amount ELSE 0 END) as revenue
+          SUM(CASE WHEN b.booking_status NOT IN ('DEREGISTERED', 'INITIATED', 'WAITLISTED')
+                     AND b.booking_payment_status = 'COMPLETED'
+                   THEN b.amount ELSE 0 END) as revenue
         FROM two_weeks_ago_events twa
         LEFT JOIN booking b ON twa.event_pk = b.event_id
         GROUP BY twa.club_id
@@ -264,14 +286,16 @@ router.get('/clubs', async (req, res) => {
         SELECT DISTINCT twa.club_id, b.user_id
         FROM two_weeks_ago_events twa
         JOIN booking b ON twa.event_pk = b.event_id
-        WHERE b.booking_status IN ('REGISTERED', 'WAITLISTED', 'OPEN_FOR_REPLACEMENT', 'ATTENDED', 'NOT_ATTENDED')
+        WHERE b.booking_status NOT IN ('DEREGISTERED', 'INITIATED', 'WAITLISTED')
       ),
       historical_users_2w AS (
         SELECT DISTINCT e.club_id, b.user_id
         FROM event e
         JOIN booking b ON e.pk = b.event_id
-        WHERE e.created_at < DATE_TRUNC('week', CURRENT_DATE - INTERVAL '2 weeks')
-          AND b.booking_status IN ('REGISTERED', 'WAITLISTED', 'OPEN_FOR_REPLACEMENT', 'ATTENDED', 'NOT_ATTENDED')
+        CROSS JOIN week_bounds wb
+        WHERE e.state = 'CREATED'
+          AND e.start_time < wb.two_weeks_ago_start
+          AND b.booking_status NOT IN ('DEREGISTERED', 'INITIATED', 'WAITLISTED')
       ),
       repeat_rate_calc_2w AS (
         SELECT
@@ -365,10 +389,8 @@ router.get('/clubs', async (req, res) => {
           last_week_avg_rating: row.last_to_last_week_avg_rating || 0,
           last_week_revenue: row.last_to_last_week_revenue || 0,
           has_recent_historical_events: row.has_recent_historical_events || false,
-          // Dormancy logic: 1 week no events = dormant, 2+ weeks no events = critical
-          is_dormant: Number(row.last_week_capacity_percentage || 0) === 0 &&
-                     Number(row.last_to_last_week_capacity_percentage || 0) > 0 &&
-                     (row.has_recent_historical_events === true)
+          // Dormant means no created meetups happened in the selected week.
+          is_dormant: Number(row.last_week_events || 0) === 0
         };
 
 
@@ -419,12 +441,21 @@ router.get('/clubs', async (req, res) => {
       // Calculate total events with completed payments (last week)
       // OPTIMIZED: Simple aggregation query with proper parameterization
       const totalEventsQuery = `
+        WITH week_bounds AS (
+          SELECT
+            DATE_TRUNC('week', CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata') AT TIME ZONE 'Asia/Kolkata' - INTERVAL '7 days' as last_week_start,
+            DATE_TRUNC('week', CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata') AT TIME ZONE 'Asia/Kolkata' as current_week_start
+        )
         SELECT COUNT(DISTINCT e.pk) as total_events_with_payments
         FROM event e
         JOIN booking b ON e.pk = b.event_id
         JOIN club c ON e.club_id = c.pk
+        CROSS JOIN week_bounds wb
         WHERE b.booking_payment_status = 'COMPLETED'
-        AND e.created_at >= CURRENT_DATE - INTERVAL '7 days'
+        AND b.booking_status NOT IN ('DEREGISTERED', 'INITIATED', 'WAITLISTED')
+        AND e.state = 'CREATED'
+        AND e.start_time >= wb.last_week_start
+        AND e.start_time < wb.current_week_start
         AND ${statusFilter}
         AND c.is_private = false
       `;
@@ -671,7 +702,7 @@ router.get('/interventions', async (req, res) => {
         a.name as activity,
         'intervention_needed' as action_type,
         CASE
-          WHEN COUNT(e.pk) = 0 THEN 'No events created - immediate outreach needed'
+          WHEN COUNT(e.pk) = 0 THEN 'No scheduled meetups - immediate outreach needed'
           WHEN COUNT(DISTINCT b.user_id) < 5 THEN 'Low attendance - marketing support needed'
           ELSE 'General support needed'
         END as recommended_action,
@@ -679,8 +710,11 @@ router.get('/interventions', async (req, res) => {
         0 as avg_rating
       FROM club c
       LEFT JOIN activity a ON c.activity_id = a.id
-      LEFT JOIN event e ON c.pk = e.club_id AND e.created_at >= CURRENT_DATE - INTERVAL '30 days'
-      LEFT JOIN booking b ON e.pk = b.event_id AND b.booking_status = 'REGISTERED'
+      LEFT JOIN event e ON c.pk = e.club_id
+        AND e.state = 'CREATED'
+        AND e.start_time >= CURRENT_DATE - INTERVAL '30 days'
+      LEFT JOIN booking b ON e.pk = b.event_id
+        AND b.booking_status NOT IN ('DEREGISTERED', 'INITIATED', 'WAITLISTED')
       WHERE c.status = 'ACTIVE'
       AND a.id NOT IN ('7', '30')
       AND LOWER(a.name) != 'test'

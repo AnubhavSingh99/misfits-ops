@@ -111,6 +111,18 @@ export function HealthInfoModal({ isOpen, onClose }: HealthInfoModalProps) {
             </div>
           </section>
 
+          {/* Data Window */}
+          <section>
+            <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wider mb-3">
+              Data Window
+            </h3>
+            <div className="bg-gray-50 rounded-xl p-4 space-y-2 text-xs text-gray-600">
+              <p>Uses scheduled meetup time, not record creation time.</p>
+              <p>Window is Monday 00:00 IST to next Monday 00:00 IST.</p>
+              <p>Only CREATED meetups are included.</p>
+            </div>
+          </section>
+
           {/* Status Mapping */}
           <section>
             <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wider mb-3">
@@ -135,7 +147,7 @@ export function HealthInfoModal({ isOpen, onClose }: HealthInfoModalProps) {
               <div className="flex items-center gap-2 bg-gray-100 rounded-lg px-3 py-2">
                 <span className="w-2.5 h-2.5 rounded-full bg-gray-400" />
                 <span className="text-xs font-medium text-gray-700">Dormant</span>
-                <span className="text-xs text-gray-600 ml-auto">No events</span>
+                <span className="text-xs text-gray-600 ml-auto">No meetups</span>
               </div>
             </div>
           </section>
@@ -156,7 +168,7 @@ export function HealthInfoModal({ isOpen, onClose }: HealthInfoModalProps) {
               <p>
                 <span className="font-medium text-gray-700">New club launches</span> are excluded from health calculations
               </p>
-              <p>Same thresholds apply for determining status color</p>
+              <p>Status color follows the weighted health score.</p>
             </div>
           </section>
 
@@ -171,7 +183,7 @@ export function HealthInfoModal({ isOpen, onClose }: HealthInfoModalProps) {
               <span className="px-2 py-1 bg-gray-100 text-gray-600 text-xs rounded-md">WAITLISTED</span>
             </div>
             <p className="text-xs text-gray-500 mt-2">
-              These booking states are excluded from capacity and repeat rate calculations.
+              These booking states are excluded from capacity and repeat rate calculations. Repeat means a valid booker had a prior valid booking at the same club.
             </p>
           </section>
         </div>

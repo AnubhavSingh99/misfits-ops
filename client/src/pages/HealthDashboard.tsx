@@ -1142,7 +1142,7 @@ export function HealthDashboard() {
               Club Health Overview ({filteredClubs.length} clubs)
             </h2>
             <div className="text-sm text-gray-500">
-              Based on last week data (Mon-Sun) • Revenue not included in health scoring
+              Based on last completed Monday-to-Monday IST week • Revenue not included in health scoring
             </div>
           </div>
         </div>
@@ -1164,7 +1164,7 @@ export function HealthDashboard() {
                   Repeat Rate % (≥65% Green)
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Rating (≥4.0 Green)
+                  Rating (≥4.7 Green)
                 </th>
                 {showTrends && (
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -1230,10 +1230,10 @@ export function HealthDashboard() {
                         {club.capacity_health || 'Red'}
                       </span>
                       {club.week_over_week_change && getTrendIcon(club.week_over_week_change.capacity)}
-                    </div>
-                    <div className="text-xs text-gray-500">
-                      Registrations/Slots Opened
-                    </div>
+	                    </div>
+	                    <div className="text-xs text-gray-500">
+	                      Valid bookings/slots opened
+	                    </div>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
                     <div className="flex items-center space-x-2">
@@ -1241,10 +1241,10 @@ export function HealthDashboard() {
                         {club.is_new_club ? 'N/A' : `${club.repeat_rate}%`}
                       </div>
                       {!club.is_new_club && club.week_over_week_change && getTrendIcon(club.week_over_week_change.repeat)}
-                    </div>
-                    <div className="text-xs text-gray-500">
-                      {club.is_new_club ? 'New Club (≤2mo)' : 'Returning Attendees'}
-                    </div>
+	                    </div>
+	                    <div className="text-xs text-gray-500">
+	                      {club.is_new_club ? 'New Club (≤2mo)' : 'Prior club bookers'}
+	                    </div>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
                     <div className="flex items-center space-x-2">
@@ -1481,17 +1481,22 @@ export function HealthDashboard() {
                   <div className="flex items-center space-x-3">
                     <div className="w-4 h-4 bg-green-500 rounded"></div>
                     <span className="font-medium text-green-700">Healthy:</span>
-                    <span className="text-gray-600">Score 115+ with no critical issues</span>
+	                    <span className="text-gray-600">Score 70+ from weighted health metrics</span>
                   </div>
                   <div className="flex items-center space-x-3">
                     <div className="w-4 h-4 bg-yellow-500 rounded"></div>
                     <span className="font-medium text-yellow-700">At Risk:</span>
-                    <span className="text-gray-600">Score 100-114 or one metric below threshold</span>
+	                    <span className="text-gray-600">Score 50-69 from weighted health metrics</span>
                   </div>
                   <div className="flex items-center space-x-3">
                     <div className="w-4 h-4 bg-red-500 rounded"></div>
                     <span className="font-medium text-red-700">Critical:</span>
-                    <span className="text-gray-600">Score below 100 or multiple critical issues</span>
+	                    <span className="text-gray-600">Score below 50 from weighted health metrics</span>
+                  </div>
+                  <div className="flex items-center space-x-3">
+                    <div className="w-4 h-4 bg-gray-400 rounded"></div>
+                    <span className="font-medium text-gray-700">Dormant:</span>
+                    <span className="text-gray-600">No CREATED meetups in the selected week</span>
                   </div>
                 </div>
               </div>
@@ -1501,11 +1506,11 @@ export function HealthDashboard() {
                 <div className="space-y-3 text-sm">
                   <div>
                     <span className="font-medium">Capacity Utilization:</span>
-                    <span className="text-gray-600 ml-2">Percentage of event slots filled by registered attendees</span>
+	                    <span className="text-gray-600 ml-2">Valid bookings divided by slots for CREATED meetups in the selected Monday-to-Monday IST week</span>
                   </div>
                   <div>
                     <span className="font-medium">Repeat Rate:</span>
-                    <span className="text-gray-600 ml-2">Percentage of last week's attendees who had previously attended the club's events before</span>
+	                    <span className="text-gray-600 ml-2">Percentage of valid weekly bookers with any prior valid booking at the same club</span>
                   </div>
                   <div>
                     <span className="font-medium">Average Rating:</span>

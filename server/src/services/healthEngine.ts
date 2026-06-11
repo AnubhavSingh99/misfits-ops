@@ -102,33 +102,16 @@ function calculateOverallHealthScore(metrics: {
   totalScore += (metrics.avg_rating / 5) * weights.avg_rating * 100; // Rating out of 5
   // Revenue not included in overall score as per requirements
 
-  return Math.round(totalScore);
+  return Math.round(Math.max(0, Math.min(100, totalScore)));
 }
 
 /**
- * Calculate Overall Health Status (excluding revenue from traffic light system)
+ * Map the weighted score to the visible traffic-light status.
  */
-function calculateOverallHealth(
-  capacity: HealthStatus,
-  repeat: HealthStatus,
-  rating: HealthStatus,
-  isNewClub: boolean = false
-): HealthStatus {
-  const statusValues = { red: 0, yellow: 1, green: 2 };
-
-  // For new clubs, only consider capacity and rating
-  const scores = isNewClub
-    ? [capacity, rating].map(s => statusValues[s])
-    : [capacity, repeat, rating].map(s => statusValues[s]);
-
-  const avgScore = scores.reduce((a, b) => a + b, 0) / scores.length;
-
-  // If any metric is red, overall cannot be green
-  const hasRed = scores.includes(0);
-
-  if (hasRed && avgScore < 1.5) return 'red';
-  if (avgScore >= 1.5) return hasRed ? 'yellow' : 'green';
-  return 'yellow';
+function calculateScoreHealth(score: number): HealthStatus {
+  if (score >= 70) return 'green';
+  if (score >= 50) return 'yellow';
+  return 'red';
 }
 
 /**
@@ -208,15 +191,8 @@ export function calculateClubHealth(clubData: {
     is_new_club: isNewClub
   };
 
-  // Calculate overall health (excluding revenue from traffic light system)
-  const overallHealth = calculateOverallHealth(
-    capacityHealth,
-    repeatHealth as HealthStatus,
-    ratingHealth,
-    isNewClub
-  );
-
   const healthScore = calculateOverallHealthScore(metricsObj);
+  const overallHealth = calculateScoreHealth(healthScore);
 
   // Detect issues (modified for new clubs)
   const autoDetectedIssues = detectIssues({
@@ -225,22 +201,18 @@ export function calculateClubHealth(clubData: {
     revenue_achievement: 100 // Revenue should never be a factor for health (for any club)
   });
 
-  // Determine health status for UI - dormant takes priority over capacity health
+  // Determine health status for UI - inactive/dormant take priority over score.
   let healthStatusForUI = 'healthy';
   const isDormant = Boolean((clubData as any).is_dormant);
   if (clubData.club_status === 'INACTIVE') {
     healthStatusForUI = 'inactive';
   } else if (isDormant) {
-    // Dormant = 1 week no events (but had events 2 weeks ago)
     healthStatusForUI = 'dormant';
-  } else if (capacityHealth === 'red') {
-    // Critical = Red capacity health OR 2+ weeks without events
+  } else if (overallHealth === 'red') {
     healthStatusForUI = 'critical';
-  } else if (capacityHealth === 'yellow') {
-    // At Risk = Yellow capacity health
+  } else if (overallHealth === 'yellow') {
     healthStatusForUI = 'at_risk';
-  } else if (capacityHealth === 'green') {
-    // Healthy = Green capacity health
+  } else {
     healthStatusForUI = 'healthy';
   }
 
