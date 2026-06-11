@@ -643,19 +643,15 @@ function HealthScoreTooltip() {
               </div>
               <div className="flex justify-between">
                 <span>Repeat Rate</span>
-                <span className="font-mono text-emerald-300">30%</span>
+                <span className="font-mono text-emerald-300">40%</span>
               </div>
               <div className="flex justify-between">
                 <span>Average Rating</span>
-                <span className="font-mono text-emerald-300">25%</span>
-              </div>
-              <div className="flex justify-between">
-                <span>Revenue Achievement</span>
-                <span className="font-mono text-emerald-300">15%</span>
+                <span className="font-mono text-emerald-300">30%</span>
               </div>
             </div>
             <div className="mt-2 pt-2 border-t border-gray-700 text-[9px] text-gray-400">
-              Score = weighted average of metrics
+              New clubs use Capacity 60% + Rating 40%. Revenue is excluded.
             </div>
           </div>
         </div>,
@@ -699,7 +695,7 @@ function HealthSection({ health }: { health: HealthData }) {
           value={health.capacity.current}
           change={health.capacity.change}
           status={health.capacity.status}
-          formula="(bookings / capacity) × 100"
+          formula="(valid bookings / capacity) × 100"
           formulaDesc="Capacity Utilisation"
         />
         <HealthMetricCard
@@ -709,7 +705,7 @@ function HealthSection({ health }: { health: HealthData }) {
           status={health.repeat_rate.status}
           isNewClub={health.is_new_club}
           isRepeatRate
-          formula="(returning users / total users) × 100"
+          formula="(users with prior club booking / valid users) × 100"
           formulaDesc="Repeat Rate"
         />
         <HealthMetricCard

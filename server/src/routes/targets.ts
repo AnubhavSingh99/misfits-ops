@@ -312,8 +312,9 @@ async function getCurrentMetrics() {
       END) as active_clubs_count,
       COALESCE(SUM(
         CASE
-          WHEN p.state = 'COMPLETED'
-          AND e.start_time >= DATE_TRUNC('month', CURRENT_DATE)
+	          WHEN p.state = 'COMPLETED'
+	          AND b.booking_status NOT IN ('DEREGISTERED', 'INITIATED', 'WAITLISTED')
+	          AND e.start_time >= DATE_TRUNC('month', CURRENT_DATE)
           AND e.start_time < CURRENT_TIMESTAMP
           AND e.state = 'CREATED'
           THEN p.amount / 100.0
@@ -1597,9 +1598,10 @@ router.get('/activities/:activityName/clubs', async (req, res) => {
         FROM event e
         JOIN booking b ON b.event_id = e.pk
         JOIN transaction t ON t.entity_id = b.id AND t.entity_type = 'BOOKING'
-        JOIN payment p ON p.pk = t.payment_id
-        WHERE p.state = 'COMPLETED'
-          AND e.start_time >= DATE_TRUNC('month', CURRENT_DATE)
+	        JOIN payment p ON p.pk = t.payment_id
+	        WHERE p.state = 'COMPLETED'
+	          AND b.booking_status NOT IN ('DEREGISTERED', 'INITIATED', 'WAITLISTED')
+	          AND e.start_time >= DATE_TRUNC('month', CURRENT_DATE)
           AND e.start_time < CURRENT_TIMESTAMP
           AND e.state = 'CREATED'
         GROUP BY e.club_id
@@ -2407,11 +2409,11 @@ router.get('/v2/hierarchy', async (req, res) => {
     // 0-BOOKING FILTER: Only count events with at least 1 valid booking
     const clubsQuery = `
       WITH
-      -- Pre-filter events that have at least one valid booking (not deregistered/initiated)
+      -- Pre-filter events that have at least one valid booking (not deregistered/initiated/waitlisted)
       events_with_bookings AS (
         SELECT DISTINCT b.event_id
         FROM booking b
-        WHERE b.booking_status NOT IN ('DEREGISTERED', 'INITIATED')
+        WHERE b.booking_status NOT IN ('DEREGISTERED', 'INITIATED', 'WAITLISTED')
       ),
       -- One row per (club, area) - clubs appear under EVERY area where they have events
       -- Only consider CREATED events (not cancelled)
@@ -2447,8 +2449,9 @@ router.get('/v2/hierarchy', async (req, res) => {
           END) as current_meetups,
           COALESCE(SUM(
             CASE
-              WHEN p.state = 'COMPLETED'
-              AND e.start_time >= ${weekStartSQL}
+	              WHEN p.state = 'COMPLETED'
+	              AND b.booking_status NOT IN ('DEREGISTERED', 'INITIATED', 'WAITLISTED')
+	              AND e.start_time >= ${weekStartSQL}
               AND e.start_time < ${weekEndSQL}
               AND e.state = 'CREATED'
               THEN p.amount / 100.0
@@ -2496,7 +2499,12 @@ router.get('/v2/hierarchy', async (req, res) => {
       SELECT
         c.pk as club_id,
         COALESCE(SUM(
-          CASE WHEN p.state = 'COMPLETED' THEN p.amount / 100.0 ELSE 0 END
+	          CASE
+	            WHEN p.state = 'COMPLETED'
+	              AND b.booking_status NOT IN ('DEREGISTERED', 'INITIATED', 'WAITLISTED')
+	            THEN p.amount / 100.0
+	            ELSE 0
+	          END
         ), 0) as total_revenue,
         COUNT(DISTINCT e.pk) as total_meetups,
         COUNT(DISTINCT DATE_TRUNC('week', e.start_time AT TIME ZONE 'Asia/Kolkata')) as weeks_with_data
@@ -2554,7 +2562,7 @@ router.get('/v2/hierarchy', async (req, res) => {
         FROM week_events
         GROUP BY club_id
       ),
-      -- Repeat rate: users who booked this week and also booked in last 4 weeks
+      -- Repeat rate: users who booked this week and also booked this club before the selected week
       current_week_users AS (
         SELECT DISTINCT
           e.club_id,
@@ -2572,8 +2580,7 @@ router.get('/v2/hierarchy', async (req, res) => {
           b.user_id
         FROM event e
         JOIN booking b ON b.event_id = e.pk
-        WHERE e.start_time >= ${weekStartSQL} - INTERVAL '4 weeks'
-          AND e.start_time < ${weekStartSQL}
+        WHERE e.start_time < ${weekStartSQL}
           AND e.state = 'CREATED'
           AND b.booking_status NOT IN ('DEREGISTERED', 'INITIATED', 'WAITLISTED')
       ),
@@ -2657,7 +2664,12 @@ router.get('/v2/hierarchy', async (req, res) => {
         EXTRACT(MONTH FROM ms.month_date) as month_num,
         EXTRACT(YEAR FROM ms.month_date) as year,
         COALESCE(SUM(
-          CASE WHEN p.state = 'COMPLETED' THEN p.amount / 100.0 ELSE 0 END
+	          CASE
+	            WHEN p.state = 'COMPLETED'
+	              AND b.booking_status NOT IN ('DEREGISTERED', 'INITIATED', 'WAITLISTED')
+	            THEN p.amount / 100.0
+	            ELSE 0
+	          END
         ), 0) as total_revenue
       FROM month_series ms
       LEFT JOIN event e ON
@@ -5071,9 +5083,14 @@ router.get('/v2/trends', async (req, res) => {
       SELECT
         DATE_TRUNC('week', e.start_time) as week_start,
         COUNT(DISTINCT e.pk) as meetups,
-        COALESCE(SUM(
-          CASE WHEN p.state = 'COMPLETED' THEN p.amount / 100.0 ELSE 0 END
-        ), 0) as revenue
+	        COALESCE(SUM(
+	          CASE
+	            WHEN p.state = 'COMPLETED'
+	              AND b.booking_status NOT IN ('DEREGISTERED', 'INITIATED', 'WAITLISTED')
+	            THEN p.amount / 100.0
+	            ELSE 0
+	          END
+	        ), 0) as revenue
       FROM event e
       LEFT JOIN club c ON e.club_id = c.pk
       LEFT JOIN booking b ON b.event_id = e.pk
@@ -6325,11 +6342,16 @@ router.get('/clubs/:clubId/meetup-details', async (req, res) => {
         e.pricing_type,
         ar.name as area_name,
         l.name as venue_name,
-        COUNT(DISTINCT CASE WHEN b.booking_status NOT IN ('DEREGISTERED', 'INITIATED') THEN b.id END) as total_bookings,
+        COUNT(DISTINCT CASE WHEN b.booking_status NOT IN ('DEREGISTERED', 'INITIATED', 'WAITLISTED') THEN b.id END) as total_bookings,
         COUNT(DISTINCT CASE WHEN b.booking_status = 'WAITLISTED' THEN b.id END) as waitlist_count,
         COUNT(DISTINCT CASE WHEN b.booking_status = 'OPEN_FOR_REPLACEMENT' THEN b.id END) as open_for_replacement_count,
         COUNT(DISTINCT CASE WHEN b.booking_status = 'NOT_ATTENDED' THEN b.id END) as no_show_count,
-        COALESCE(SUM(CASE WHEN p.state = 'COMPLETED' THEN p.amount / 100.0 ELSE 0 END), 0) as revenue,
+        COALESCE(SUM(CASE
+          WHEN p.state = 'COMPLETED'
+            AND b.booking_status NOT IN ('DEREGISTERED', 'INITIATED', 'WAITLISTED')
+          THEN p.amount / 100.0
+          ELSE 0
+        END), 0) as revenue,
         COALESCE(SUM(CASE WHEN p.state = 'PENDING' OR p.state IS NULL THEN
           CASE WHEN b.booking_status IN ('REGISTERED', 'ATTENDED') THEN e.ticket_price / 100.0 ELSE 0 END
         ELSE 0 END), 0) as pending_payment
@@ -6381,11 +6403,11 @@ router.get('/clubs/:clubId/meetup-details', async (req, res) => {
 
     // Fetch health metrics for current week and previous week (for WoW comparison)
     const prevWeekStartSQL = weekStartDate
-      ? `'${new Date(weekStartDate.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]}'::date`
-      : `DATE_TRUNC('week', CURRENT_DATE)::date - 14`;
+      ? `'${new Date(weekStartDate.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]} 00:00:00+05:30'::timestamptz`
+      : `DATE_TRUNC('week', CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata') AT TIME ZONE 'Asia/Kolkata' - INTERVAL '14 days'`;
     const prevWeekEndSQL = weekStartDate
-      ? `'${weekStartDate.toISOString().split('T')[0]}'::date`
-      : `DATE_TRUNC('week', CURRENT_DATE)::date - 7`;
+      ? `'${weekStartDate.toISOString().split('T')[0]} 00:00:00+05:30'::timestamptz`
+      : `DATE_TRUNC('week', CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata') AT TIME ZONE 'Asia/Kolkata' - INTERVAL '7 days'`;
 
     const healthMetricsQuery = `
       WITH current_week_events AS (
@@ -6426,7 +6448,7 @@ router.get('/clubs/:clubId/meetup-details', async (req, res) => {
           COUNT(*) as meetup_count
         FROM prev_week_events
       ),
-      -- Repeat rate for current week
+      -- Repeat rate for current week: any prior valid booking at this club
       current_users AS (
         SELECT DISTINCT b.user_id
         FROM event e
@@ -6437,12 +6459,11 @@ router.get('/clubs/:clubId/meetup-details', async (req, res) => {
           AND e.state = 'CREATED'
           AND b.booking_status NOT IN ('DEREGISTERED', 'INITIATED', 'WAITLISTED')
       ),
-      prior_4w_users AS (
+      prior_users AS (
         SELECT DISTINCT b.user_id
         FROM event e
         JOIN booking b ON b.event_id = e.pk
         WHERE e.club_id = $1
-          AND e.start_time >= ${weekStartSQL} - INTERVAL '4 weeks'
           AND e.start_time < ${weekStartSQL}
           AND e.state = 'CREATED'
           AND b.booking_status NOT IN ('DEREGISTERED', 'INITIATED', 'WAITLISTED')
@@ -6452,7 +6473,7 @@ router.get('/clubs/:clubId/meetup-details', async (req, res) => {
           COUNT(DISTINCT cu.user_id) as total_users,
           COUNT(DISTINCT CASE WHEN pu.user_id IS NOT NULL THEN cu.user_id END) as repeat_users
         FROM current_users cu
-        LEFT JOIN prior_4w_users pu ON cu.user_id = pu.user_id
+        LEFT JOIN prior_users pu ON cu.user_id = pu.user_id
       ),
       -- Repeat rate for previous week
       prev_week_users AS (
@@ -6465,12 +6486,11 @@ router.get('/clubs/:clubId/meetup-details', async (req, res) => {
           AND e.state = 'CREATED'
           AND b.booking_status NOT IN ('DEREGISTERED', 'INITIATED', 'WAITLISTED')
       ),
-      prior_4w_for_prev AS (
+      prior_users_for_prev AS (
         SELECT DISTINCT b.user_id
         FROM event e
         JOIN booking b ON b.event_id = e.pk
         WHERE e.club_id = $1
-          AND e.start_time >= ${prevWeekStartSQL} - INTERVAL '4 weeks'
           AND e.start_time < ${prevWeekStartSQL}
           AND e.state = 'CREATED'
           AND b.booking_status NOT IN ('DEREGISTERED', 'INITIATED', 'WAITLISTED')
@@ -6478,9 +6498,9 @@ router.get('/clubs/:clubId/meetup-details', async (req, res) => {
       prev_repeat AS (
         SELECT
           COUNT(DISTINCT pwu.user_id) as total_users,
-          COUNT(DISTINCT CASE WHEN p4p.user_id IS NOT NULL THEN pwu.user_id END) as repeat_users
+          COUNT(DISTINCT CASE WHEN pfp.user_id IS NOT NULL THEN pwu.user_id END) as repeat_users
         FROM prev_week_users pwu
-        LEFT JOIN prior_4w_for_prev p4p ON pwu.user_id = p4p.user_id
+        LEFT JOIN prior_users_for_prev pfp ON pwu.user_id = pfp.user_id
       ),
       -- Rating from last 30 days
       current_rating AS (
@@ -6560,10 +6580,15 @@ router.get('/clubs/:clubId/meetup-details', async (req, res) => {
     const prevWeekTotalsQuery = `
       SELECT
         COUNT(DISTINCT e.pk) as meetup_count,
-        COUNT(DISTINCT CASE WHEN b.booking_status NOT IN ('DEREGISTERED', 'INITIATED') THEN b.id END) as booking_count,
+        COUNT(DISTINCT CASE WHEN b.booking_status NOT IN ('DEREGISTERED', 'INITIATED', 'WAITLISTED') THEN b.id END) as booking_count,
         COUNT(DISTINCT CASE WHEN b.booking_status = 'WAITLISTED' THEN b.id END) as waitlist_count,
         COUNT(DISTINCT CASE WHEN b.booking_status = 'NOT_ATTENDED' THEN b.id END) as no_show_count,
-        COALESCE(SUM(CASE WHEN p.state = 'COMPLETED' THEN p.amount / 100.0 ELSE 0 END), 0) as revenue,
+        COALESCE(SUM(CASE
+          WHEN p.state = 'COMPLETED'
+            AND b.booking_status NOT IN ('DEREGISTERED', 'INITIATED', 'WAITLISTED')
+          THEN p.amount / 100.0
+          ELSE 0
+        END), 0) as revenue,
         COALESCE(SUM(CASE WHEN p.state = 'PENDING' OR p.state IS NULL THEN
           CASE WHEN b.booking_status IN ('REGISTERED', 'ATTENDED') THEN e.ticket_price / 100.0 ELSE 0 END
         ELSE 0 END), 0) as pending_payment
