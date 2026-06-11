@@ -4123,46 +4123,24 @@ export default function StartYourClub() {
             </button>
             {showAnalysis && (
               <div className="space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div className="inline-flex rounded-lg border border-slate-200 bg-white p-1">
                   {[
-                    {
-                      id: 'pipeline' as const,
-                      title: 'Pipeline analysis',
-                      subtitle: `${c.overall}% conversion`,
-                      active: analysisTab === 'pipeline',
-                      accent: 'border-indigo-200 bg-indigo-50 text-indigo-700',
-                      icon: TrendingUp,
-                    },
-                    {
-                      id: 'dashboard' as const,
-                      title: 'Detailed dashboard',
-                      subtitle: 'TAT, funnel, and drop reasons',
-                      active: analysisTab === 'dashboard',
-                      accent: 'border-slate-200 bg-white text-slate-700',
-                      icon: BarChart3,
-                    },
-                  ].map(card => {
-                    const Icon = card.icon;
-                    return (
-                      <button
-                        key={card.id}
-                        type="button"
-                        onClick={() => setAnalysisTab(card.id)}
-                        className={`flex items-center justify-between gap-3 rounded-2xl border px-4 py-3 text-left transition-all hover:shadow-sm ${card.active ? 'ring-2 ring-slate-900/10' : ''} ${card.accent}`}
-                      >
-                        <div>
-                          <div className="flex items-center gap-2 text-sm font-semibold">
-                            <Icon className="h-4 w-4" />
-                            {card.title}
-                          </div>
-                          <div className="mt-1 text-xs opacity-75">{card.subtitle}</div>
-                        </div>
-                        <span className="rounded-full bg-white/70 px-2 py-1 text-[10px] font-medium text-slate-500">
-                          Open
-                        </span>
-                      </button>
-                    );
-                  })}
+                    { id: 'pipeline', label: 'Pipeline Analysis' },
+                    { id: 'dashboard', label: 'Analysis Dashboard' },
+                  ].map(tab => (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      onClick={() => setAnalysisTab(tab.id as 'pipeline' | 'dashboard')}
+                      className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors ${
+                        analysisTab === tab.id
+                          ? 'bg-indigo-50 text-indigo-700'
+                          : 'text-slate-600 hover:bg-slate-50'
+                      }`}
+                    >
+                      {tab.label}
+                    </button>
+                  ))}
                 </div>
 
                 {analysisTab === 'pipeline' ? (
