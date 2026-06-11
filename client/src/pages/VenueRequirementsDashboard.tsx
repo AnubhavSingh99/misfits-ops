@@ -2,7 +2,6 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { createPortal } from 'react-dom';
 import {
   ChevronDown,
-  ChevronUp,
   ChevronRight,
   Plus,
   MapPin,
@@ -14,10 +13,7 @@ import {
   Activity,
   Building2,
   TrendingUp,
-  Home,
   X,
-  GripVertical,
-  Layers,
   Users,
   Edit3,
   Trash2,
@@ -32,26 +28,14 @@ import {
 } from 'lucide-react';
 import type { VenueRequirement, VenueRequirementStatus, CreateRequirementRequest, RequirementComment, TimeOfDay, CapacityBucket } from '../../../shared/types';
 import { TIME_OF_DAY_OPTIONS, CAPACITY_BUCKET_OPTIONS } from '../../../shared/types';
-import { getTeamForClub, TEAMS, TEAM_KEYS, type TeamKey } from '../../../shared/teamConfig';
+import { getTeamForClub, type TeamKey } from '../../../shared/teamConfig';
 import { MultiSelectDropdown } from '../components/ui/MultiSelectDropdown';
 import { VenueRepository } from '../components/VenueRepository';
-import { VenueLeads } from '../components/VenueLeads';
+import VenueLeads from '../components/VenueLeads';
 
 const API_BASE = import.meta.env.VITE_API_URL
   ? `${import.meta.env.VITE_API_URL}/api`
   : '/api';
-
-// Helper function to format date as "Jan 19" or "Jan 19, 2025" if different year
-function formatDate(dateString: string | undefined | null): string {
-  if (!dateString) return '-';
-  const date = new Date(dateString);
-  const now = new Date();
-  const options: Intl.DateTimeFormatOptions = { month: 'short', day: 'numeric' };
-  if (date.getFullYear() !== now.getFullYear()) {
-    options.year = 'numeric';
-  }
-  return date.toLocaleDateString('en-US', options);
-}
 
 const VENUE_CATEGORY_OPTIONS = [
   { value: 'CAFE', label: 'Cafe' },
@@ -79,15 +63,6 @@ function calculateTAT(createdAt: string | undefined | null, completedAt: string 
 
 // Hierarchy level types (now includes priority)
 type HierarchyLevel = 'activity' | 'city' | 'area' | 'priority';
-
-// Priority configuration - Red (Critical), Yellow (High), Green (Normal)
-const PRIORITY_CONFIG = {
-  critical: { label: 'Critical', color: 'text-red-600', dotColor: 'bg-red-500', bgColor: 'bg-red-50', borderColor: 'border-red-200' },
-  high: { label: 'High', color: 'text-yellow-600', dotColor: 'bg-yellow-400', bgColor: 'bg-yellow-50', borderColor: 'border-yellow-200' },
-  normal: { label: 'Normal', color: 'text-green-600', dotColor: 'bg-green-500', bgColor: 'bg-green-50', borderColor: 'border-green-200' },
-  done: { label: 'Done', color: 'text-emerald-600', dotColor: 'bg-emerald-500', bgColor: 'bg-emerald-50', borderColor: 'border-emerald-200' },
-  deprioritised: { label: 'Deprioritised', color: 'text-gray-500', dotColor: 'bg-gray-400', bgColor: 'bg-gray-50', borderColor: 'border-gray-200' }
-} as const;
 
 // Filter options type
 interface FilterOption {
@@ -181,8 +156,6 @@ const TEAM_COLORS = {
   yellow: { bg: 'bg-amber-500', light: 'bg-amber-50', text: 'text-amber-700', border: 'border-amber-200' }
 };
 
-type TeamKey = 'blue' | 'green' | 'yellow';
-
 // Hierarchy node from API
 interface HierarchyNode {
   type: 'activity' | 'city' | 'area' | 'priority';
@@ -272,15 +245,8 @@ export default function VenueRequirementsDashboard() {
   });
 
   // Hierarchy level ordering (drag-and-drop) - now includes priority
-  const [hierarchyLevels, setHierarchyLevels] = useState<HierarchyLevel[]>(['priority', 'city', 'activity', 'area']);
-  const [enabledLevels, setEnabledLevels] = useState<Set<HierarchyLevel>>(new Set(['priority', 'city', 'activity', 'area']));
-  const [draggingLevel, setDraggingLevel] = useState<HierarchyLevel | null>(null);
-
-  // Expanded state
-  const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
-
-  // Ref for the scrollable table container
-  const tableContainerRef = useRef<HTMLDivElement>(null);
+  const [hierarchyLevels] = useState<HierarchyLevel[]>(['priority', 'city', 'activity', 'area']);
+  const [enabledLevels] = useState<Set<HierarchyLevel>>(new Set(['priority', 'city', 'activity', 'area']));
 
   // Create modal state
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -306,6 +272,13 @@ export default function VenueRequirementsDashboard() {
 
   // TAT modal state
   const [showTatModal, setShowTatModal] = useState(false);
+  const [expandedRequirementGroups, setExpandedRequirementGroups] = useState<Record<string, boolean>>({
+    critical: false,
+    new: false,
+    progress: false,
+    closed: false
+  });
+  const [expandedRequirementLocations, setExpandedRequirementLocations] = useState<Record<string, boolean>>({});
 
   // Supply-demand state
   const [showSupplyDemandModal, setShowSupplyDemandModal] = useState(false);
@@ -391,54 +364,6 @@ export default function VenueRequirementsDashboard() {
   useEffect(() => {
     fetchData();
   }, [fetchData]);
-
-  // Toggle node expansion
-  const toggleExpand = (nodeId: string) => {
-    setExpandedNodes(prev => {
-      const next = new Set(prev);
-      if (next.has(nodeId)) {
-        next.delete(nodeId);
-      } else {
-        next.add(nodeId);
-      }
-      return next;
-    });
-  };
-
-  // Expand all - preserve scroll position
-  const expandAll = () => {
-    const containerScrollTop = tableContainerRef.current?.scrollTop || 0;
-    const windowScrollY = window.scrollY;
-    const allIds = new Set<string>();
-    const collect = (nodes: HierarchyNode[]) => {
-      nodes.forEach(n => {
-        allIds.add(n.id);
-        if (n.children) collect(n.children);
-      });
-    };
-    collect(hierarchy);
-    setExpandedNodes(allIds);
-    // Restore scroll position after render
-    requestAnimationFrame(() => {
-      if (tableContainerRef.current) {
-        tableContainerRef.current.scrollTop = containerScrollTop;
-      }
-      window.scrollTo(0, windowScrollY);
-    });
-  };
-
-  // Collapse all - preserve scroll position
-  const collapseAll = () => {
-    const containerScrollTop = tableContainerRef.current?.scrollTop || 0;
-    const windowScrollY = window.scrollY;
-    setExpandedNodes(new Set());
-    requestAnimationFrame(() => {
-      if (tableContainerRef.current) {
-        tableContainerRef.current.scrollTop = containerScrollTop;
-      }
-      window.scrollTo(0, windowScrollY);
-    });
-  };
 
   // Update requirement status
   const updateRequirementStatus = async (id: number, status: VenueRequirementStatus, venueInfo?: { venue_name: string; venue_city: string; venue_area: string }) => {
@@ -592,21 +517,6 @@ export default function VenueRequirementsDashboard() {
     }
   };
 
-  // Build context for a node based on its type and parent context
-  const buildNodeContext = (node: HierarchyNode, parentContext: CreateContext = {}): CreateContext => {
-    let context = { ...parentContext };
-    if (node.type === 'activity') {
-      context = { activity_id: node.activity_id, activity_name: node.name };
-    } else if (node.type === 'city') {
-      context = { ...context, city_id: node.city_id, city_name: node.name };
-    } else if (node.type === 'area') {
-      context = { ...context, area_id: node.area_id, area_name: node.name };
-    }
-    return context;
-  };
-
-  const [requirementsSectionExpanded, setRequirementsSectionExpanded] = useState(false); // Default collapsed
-
   // Helper function to filter hierarchy by status
   const filterHierarchyByStatus = useCallback((
     nodes: HierarchyNode[],
@@ -648,188 +558,56 @@ export default function VenueRequirementsDashboard() {
     return filterHierarchyByStatus(hierarchy, visibleStatuses);
   }, [hierarchy, activeStatusFilters, showDone, showDeprioritised, filterHierarchyByStatus]);
 
-  const doneCount = useMemo(() => summary?.done || 0, [summary]);
-  const deprioritisedCount = useMemo(() => summary?.deprioritised || 0, [summary]);
-
-  // Status badge component
-  const StatusBadge = ({ status, count }: { status: VenueRequirementStatus; count: number }) => {
-    if (count === 0) return null;
-    const config = STATUS_CONFIG[status];
-    if (!config) return null;
-    return (
-      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-semibold border ${config.color.badge}`}>
-        <span className="opacity-70">{config.shortLabel}</span>
-        <span className="font-mono">{count}</span>
-      </span>
-    );
-  };
-
-  // Hierarchy row component
-  const HierarchyRow = ({ node, depth = 0, parentContext = {}, sectionPrefix = '' }: { node: HierarchyNode; depth?: number; parentContext?: CreateContext; sectionPrefix?: string }) => {
-    const nodeKey = sectionPrefix ? `${sectionPrefix}-${node.id}` : node.id;
-    const isExpanded = expandedNodes.has(nodeKey);
-    const hasChildren = (node.children && node.children.length > 0) || (node.requirements && node.requirements.length > 0);
-
-    const TypeIcon = node.type === 'activity' ? Activity :
-                     node.type === 'city' ? Building2 :
-                     node.type === 'priority' ? TrendingUp : MapPin;
-
-    const typeColors: Record<string, string> = {
-      activity: 'text-violet-500 bg-violet-50',
-      city: 'text-blue-500 bg-blue-50',
-      area: 'text-emerald-500 bg-emerald-50',
-      priority: node.priority_level === 'critical' ? 'text-red-500 bg-red-50' :
-                node.priority_level === 'high' ? 'text-orange-500 bg-orange-50' :
-                node.priority_level === 'done' ? 'text-emerald-500 bg-emerald-50' :
-                node.priority_level === 'deprioritised' ? 'text-amber-500 bg-amber-50' :
-                'text-green-500 bg-green-50'
+  const displayedRequirements = useMemo(() => {
+    const byId = new Map<number, VenueRequirement>();
+    const collect = (nodes: HierarchyNode[]) => {
+      nodes.forEach(node => {
+        node.requirements?.forEach(req => byId.set(req.id, req));
+        if (node.children) collect(node.children);
+      });
     };
+    collect(displayedHierarchy);
+    return Array.from(byId.values());
+  }, [displayedHierarchy]);
 
-    // Get priority icon for non-priority nodes (shows max priority of children)
-    const priorityIcon = node.type !== 'priority' && node.priority_icon ? node.priority_icon : '';
+  const requirementGroups = useMemo(() => {
+    const critical: VenueRequirement[] = [];
+    const newRequirements: VenueRequirement[] = [];
+    const inProgress: VenueRequirement[] = [];
+    const closed: VenueRequirement[] = [];
 
-    // Build context for this node
-    const nodeContext = buildNodeContext(node, parentContext);
+    displayedRequirements.forEach(req => {
+      if (req.status === 'done' || req.status === 'deprioritised') {
+        closed.push(req);
+      } else if (req.priority_level === 'critical') {
+        critical.push(req);
+      } else if (req.status === 'not_picked') {
+        newRequirements.push(req);
+      } else {
+        inProgress.push(req);
+      }
+    });
 
-    return (
-      <>
-        <tr
-          className={`group border-b border-gray-100 hover:bg-gray-50/80 transition-colors cursor-pointer
-            ${depth === 0 ? 'bg-white' : depth === 1 ? 'bg-gray-50/30' : 'bg-gray-50/50'}`}
-          onClick={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            if (hasChildren) toggleExpand(nodeKey);
-          }}
-        >
-          {/* Expand/Name */}
-          <td className="py-3 pr-4" style={{ paddingLeft: `${12 + depth * 24}px` }}>
-            <div className="flex items-center gap-2">
-              {hasChildren ? (
-                <button
-                  type="button"
-                  tabIndex={-1}
-                  className="p-0.5 hover:bg-gray-200 rounded transition-colors"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    toggleExpand(nodeKey);
-                  }}
-                >
-                  {isExpanded ? (
-                    <ChevronDown className="h-4 w-4 text-gray-400" />
-                  ) : (
-                    <ChevronRight className="h-4 w-4 text-gray-400" />
-                  )}
-                </button>
-              ) : (
-                <span className="w-5" />
-              )}
-              <div className={`p-1.5 rounded-md ${typeColors[node.type] || typeColors.area}`}>
-                <TypeIcon className="h-3.5 w-3.5" />
-              </div>
-              <span className="font-medium text-gray-900">
-                {node.type === 'priority' && node.priority_icon && (
-                  <span className="mr-1">{node.priority_icon}</span>
-                )}
-                {node.name}
-              </span>
-              <span className="text-xs text-gray-400 font-mono">({node.count})</span>
-              {/* Show priority indicator for non-priority nodes */}
-              {priorityIcon && node.type !== 'priority' && (
-                <span className="ml-1 text-sm" title={`Highest priority: ${node.max_priority_level}`}>
-                  {priorityIcon}
-                </span>
-              )}
-            </div>
-          </td>
+    const oldestFirst = (a: VenueRequirement, b: VenueRequirement) => (b.age_days || 0) - (a.age_days || 0);
+    return [
+      { key: 'critical', label: 'Critical', description: 'Needs attention first', color: 'red', requirements: critical.sort(oldestFirst) },
+      { key: 'new', label: 'New Requirements', description: 'Not picked yet', color: 'teal', requirements: newRequirements.sort(oldestFirst) },
+      { key: 'progress', label: 'In Progress', description: 'Already being worked on', color: 'blue', requirements: inProgress.sort(oldestFirst) },
+      { key: 'closed', label: 'Done / Deprioritised', description: 'Shown by filter', color: 'slate', requirements: closed.sort(oldestFirst) }
+    ].filter(group => group.requirements.length > 0);
+  }, [displayedRequirements]);
 
-          {/* Status breakdown */}
-          <td className="py-3 px-4">
-            <div className="flex flex-wrap gap-1">
-              <StatusBadge status="not_picked" count={node.status_counts.not_picked} />
-              <StatusBadge status="picked" count={node.status_counts.picked} />
-              <StatusBadge status="venue_aligned" count={node.status_counts.venue_aligned} />
-              <StatusBadge status="leader_approval" count={node.status_counts.leader_approval} />
-              <StatusBadge status="done" count={node.status_counts.done} />
-              <StatusBadge status="deprioritised" count={node.status_counts.deprioritised} />
-            </div>
-          </td>
+  const effectiveSummary = summary;
+  const requirementsPanelCount = displayedRequirements.length || supplyDemandData?.summary?.total_demand || 0;
 
-          {/* Venue Type (empty for hierarchy rows) */}
-          <td className="py-2.5 px-4"></td>
-
-          {/* Day Type (empty for hierarchy rows) */}
-          <td className="py-3 px-4 text-center">
-          </td>
-
-          {/* Capacity (empty for hierarchy rows) */}
-          <td className="py-3 px-4 text-center">
-          </td>
-
-          {/* Time of Day (empty for hierarchy rows) */}
-          <td className="py-3 px-4 text-center">
-          </td>
-
-          {/* Amenities (empty for hierarchy rows) */}
-          <td className="py-3 px-4 text-center">
-          </td>
-
-          {/* Age (empty for hierarchy rows) */}
-          <td className="py-3 px-4 text-center">
-          </td>
-
-          {/* Completed (empty for hierarchy rows) */}
-          <td className="py-3 px-4 text-center">
-          </td>
-
-          {/* TAT (empty for hierarchy rows) */}
-          <td className="py-3 px-4 text-center">
-          </td>
-
-          {/* Actions */}
-          <td className="py-3 px-4 text-center">
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                openCreateModal(node, parentContext);
-              }}
-              className="opacity-0 group-hover:opacity-100 p-1.5 rounded-md bg-teal-50 text-teal-600 hover:bg-teal-100 transition-all"
-            >
-              <Plus className="h-4 w-4" />
-            </button>
-          </td>
-        </tr>
-
-        {/* Children */}
-        {isExpanded && node.children && node.children.map(child => (
-          <HierarchyRow key={`${sectionPrefix}-${child.id}`} node={child} depth={depth + 1} parentContext={nodeContext} sectionPrefix={sectionPrefix} />
-        ))}
-
-        {/* Requirements (leaf nodes) */}
-        {isExpanded && node.requirements && node.requirements.map(req => (
-          <RequirementRow
-            key={req.id}
-            requirement={req}
-            depth={depth + 1}
-            onStatusChange={handleStatusChange}
-            onEdit={setEditingRequirement}
-            onDelete={setDeleteRequirement}
-          />
-        ))}
-      </>
-    );
-  };
-
-  // Requirement row component with inline comments
+  // Requirement card component with inline comments
   const RequirementRow = ({
     requirement: req,
-    depth,
     onStatusChange,
     onEdit,
     onDelete
   }: {
     requirement: VenueRequirement;
-    depth: number;
     onStatusChange: (req: VenueRequirement, status: VenueRequirementStatus) => void;
     onEdit: (req: VenueRequirement) => void;
     onDelete: (req: VenueRequirement) => void;
@@ -855,7 +633,7 @@ export default function VenueRequirementsDashboard() {
     // Comments tooltip position
     const commentsButtonRef = useRef<HTMLButtonElement>(null);
     const [tooltipPosition, setTooltipPosition] = useState({ top: 0, left: 0 });
-    const hoverTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+    const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     // Handle hover to show tooltip
     const handleMouseEnter = () => {
@@ -1059,225 +837,87 @@ export default function VenueRequirementsDashboard() {
 
     return (
       <>
-        <tr className="group border-b border-gray-100 hover:bg-teal-50/30 transition-colors">
-          {/* Name with Priority Dot */}
-          <td className="py-2.5 pr-4 max-w-[280px]" style={{ paddingLeft: `${12 + depth * 24 + 20}px` }}>
-            <div className="flex items-center gap-2">
-              {/* Priority dot */}
+        <div className="group rounded-md border border-gray-200 bg-white p-3 shadow-sm transition-colors hover:border-teal-200">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex min-w-0 items-start gap-2">
               {req.status !== 'done' && req.status !== 'deprioritised' && (
-                <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${
+                <span className={`mt-1.5 h-2 w-2 flex-shrink-0 rounded-full ${
                   req.priority_level === 'critical' ? 'bg-red-500' :
                   req.priority_level === 'high' ? 'bg-yellow-400' : 'bg-green-500'
-                }`} title={`Priority: ${req.priority_level || 'normal'}`}></span>
+                }`} title={`Priority: ${req.priority_level || 'normal'}`} />
               )}
-              <div className={`p-1 rounded-full flex-shrink-0 ${statusConfig.color.bg}`}>
-                <Home className={`h-3 w-3 ${statusConfig.color.text}`} />
-              </div>
-              <div className="relative flex flex-col min-w-0 group/tooltip">
-                <span className="text-sm font-medium text-gray-800 truncate cursor-help">
-                  {displayName}
-                </span>
-                {/* Description shown below name */}
+              <div className="min-w-0">
+                <h3 className="truncate text-sm font-semibold text-gray-900" title={displayName}>{displayName}</h3>
                 {hasDescription && (
-                  <span className="text-xs text-gray-500 mt-0.5 truncate">
-                    {req.description}
-                  </span>
+                  <p className="mt-0.5 line-clamp-1 text-xs text-gray-500" title={req.description}>{req.description}</p>
                 )}
-                {/* Venue info shown for done requirements */}
                 {req.status === 'done' && (req as any).venue_name && (
-                  <span className="text-xs text-emerald-600 mt-0.5 truncate flex items-center gap-1">
+                  <p className="mt-0.5 flex items-center gap-1 truncate text-xs text-emerald-600">
                     <Building2 className="h-3 w-3 flex-shrink-0" />
                     {(req as any).venue_name}
-                    {((req as any).venue_area || (req as any).venue_city) && (
-                      <span className="text-gray-400">
-                        ({[(req as any).venue_area, (req as any).venue_city].filter(Boolean).join(', ')})
-                      </span>
-                    )}
-                  </span>
+                  </p>
                 )}
-                {/* Custom tooltip on hover */}
-                <div className="absolute left-0 top-full mt-1 z-50 hidden group-hover/tooltip:block">
-                  <div className="bg-gray-900 text-white text-xs rounded-lg px-3 py-2 shadow-lg max-w-[300px] whitespace-normal">
-                    <div className="font-medium">{displayName}</div>
-                    {hasDescription && (
-                      <div className="mt-1 text-gray-300 text-[11px]">{req.description}</div>
-                    )}
-                    {req.status === 'done' && (req as any).venue_name && (
-                      <div className="mt-1 text-emerald-300 text-[11px]">
-                        Venue: {(req as any).venue_name}
-                        {((req as any).venue_area || (req as any).venue_city) &&
-                          ` (${[(req as any).venue_area, (req as any).venue_city].filter(Boolean).join(', ')})`
-                        }
-                      </div>
-                    )}
-                  </div>
-                </div>
               </div>
             </div>
-          </td>
 
-          {/* Status dropdown */}
-          <td className="py-2.5 px-4">
             <select
               value={req.status}
               onChange={(e) => onStatusChange(req, e.target.value as VenueRequirementStatus)}
               onClick={(e) => e.stopPropagation()}
-              className={`px-2.5 py-1 text-xs font-medium rounded-md border cursor-pointer
-                ${statusConfig.color.badge} focus:ring-2 focus:ring-teal-500 focus:border-teal-500`}
+              className={`max-w-[140px] flex-shrink-0 rounded-md border px-2 py-1 text-xs font-medium ${statusConfig.color.badge} focus:border-teal-500 focus:ring-2 focus:ring-teal-500`}
             >
               {Object.entries(STATUS_CONFIG).map(([key, config]) => (
                 <option key={key} value={key}>{config.label}</option>
               ))}
             </select>
-            {/* BAU/Supply badge */}
-            <span className={`ml-1 inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wide ${
+          </div>
+
+          <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[10px]">
+            {req.activity_name && <span className="rounded bg-violet-50 px-1.5 py-0.5 text-violet-700">{req.activity_name}</span>}
+            {req.area_name && <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-emerald-700">{req.area_name}</span>}
+            {req.venue_categories?.slice(0, 1).map((cat: string) => (
+              <span key={cat} className="rounded bg-gray-100 px-1.5 py-0.5 text-gray-600">
+                {cat === 'PUB_AND_BAR' ? 'Pub' : cat === 'CAFE' ? 'Cafe' : 'Studio'}
+              </span>
+            ))}
+            {req.day_type_name && <span className="rounded bg-indigo-50 px-1.5 py-0.5 capitalize text-indigo-600">{req.day_type_name}</span>}
+            {req.capacity && <span className="rounded bg-sky-50 px-1.5 py-0.5 text-sky-600">{req.capacity}</span>}
+            {req.time_of_day?.slice(0, 1).map((slot: TimeOfDay) => {
+              const option = TIME_OF_DAY_OPTIONS.find(o => o.value === slot);
+              return <span key={slot} className="rounded bg-amber-50 px-1.5 py-0.5 text-amber-700">{option?.icon} {option?.time?.split('-')[0]}</span>;
+            })}
+            {req.amenities_list && req.amenities_list.length > 0 && (
+              <span className="rounded bg-gray-50 px-1.5 py-0.5 text-gray-500" title={req.amenities_list.join(', ')}>
+                {req.amenities_list.length} amenities
+              </span>
+            )}
+            {req.status !== 'done' && req.status !== 'deprioritised' && (
+              <span className={`rounded px-1.5 py-0.5 font-semibold ${
+                req.priority_level === 'critical'
+                  ? 'bg-red-100 text-red-700'
+                  : req.priority_level === 'high'
+                    ? 'bg-yellow-100 text-yellow-700'
+                    : 'bg-green-50 text-green-700'
+              }`}>
+                Day {req.age_days ?? 0}
+              </span>
+            )}
+            {req.completed_at && (
+              <span className="rounded bg-emerald-50 px-1.5 py-0.5 font-semibold text-emerald-700">
+                TAT {calculateTAT(req.created_at, req.completed_at)}
+              </span>
+            )}
+            <span className={`rounded px-1.5 py-0.5 font-semibold uppercase ${
               (req as any).venue_platform_team === 'supply'
-                ? 'bg-orange-100 text-orange-700 border border-orange-200'
-                : 'bg-gray-100 text-gray-500 border border-gray-200'
+                ? 'bg-orange-50 text-orange-600'
+                : 'bg-gray-50 text-gray-500'
             }`}>
               {(req as any).venue_platform_team === 'supply' ? 'Supply' : 'BAU'}
             </span>
-          </td>
+          </div>
 
-          {/* Venue Category */}
-          <td className="py-2.5 px-4 text-center">
-            {req.venue_categories && req.venue_categories.length > 0 ? (
-              <div className="flex flex-wrap justify-center gap-0.5">
-                {req.venue_categories.map((cat: string) => (
-                  <span key={cat} className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-violet-50 text-violet-600 border border-violet-200">
-                    {cat === 'PUB_AND_BAR' ? 'Pub' : cat === 'CAFE' ? 'Cafe' : 'Studio'}
-                  </span>
-                ))}
-              </div>
-            ) : (
-              <span className="text-xs text-gray-400">-</span>
-            )}
-          </td>
-
-          {/* Day Type */}
-          <td className="py-2.5 px-4 text-center">
-            {req.day_type_name ? (
-              <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-indigo-50 text-indigo-600 border border-indigo-200 capitalize">
-                {req.day_type_name}
-              </span>
-            ) : (
-              <span className="text-xs text-gray-400">-</span>
-            )}
-          </td>
-
-          {/* Capacity */}
-          <td className="py-2.5 px-4 text-center">
-            {req.capacity ? (
-              <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-sky-50 text-sky-600 border border-sky-200">
-                {req.capacity}
-              </span>
-            ) : (
-              <span className="text-xs text-gray-400">-</span>
-            )}
-          </td>
-
-          {/* Time of Day */}
-          <td className="py-2.5 px-4 text-center">
-            {req.time_of_day && req.time_of_day.length > 0 ? (
-              <div className="relative group/time cursor-help">
-                <div className="flex flex-wrap justify-center gap-0.5">
-                  {req.time_of_day.slice(0, 2).map((slot: TimeOfDay) => {
-                    const option = TIME_OF_DAY_OPTIONS.find(o => o.value === slot);
-                    return (
-                      <span
-                        key={slot}
-                        className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-50 text-amber-700 border border-amber-200"
-                      >
-                        {option?.icon} {option?.time?.split('-')[0]}
-                      </span>
-                    );
-                  })}
-                  {req.time_of_day.length > 2 && (
-                    <span className="text-[10px] text-amber-600 font-medium">
-                      +{req.time_of_day.length - 2}
-                    </span>
-                  )}
-                </div>
-                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-2 bg-gray-900 text-white text-xs rounded-lg whitespace-nowrap opacity-0 invisible group-hover/time:opacity-100 group-hover/time:visible z-50 shadow-lg">
-                  {req.time_of_day.map((s: TimeOfDay) => {
-                    const opt = TIME_OF_DAY_OPTIONS.find(o => o.value === s);
-                    return opt ? `${opt.icon} ${opt.label} (${opt.time})` : s;
-                  }).join(' • ')}
-                  <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-gray-900"></div>
-                </div>
-              </div>
-            ) : (
-              <span className="text-xs text-gray-400">-</span>
-            )}
-          </td>
-
-          {/* Amenities */}
-          <td className="py-2.5 px-4 text-center max-w-[120px]">
-            {(req.amenities_list && req.amenities_list.length > 0) ? (
-              <div className="relative group/amenity cursor-help">
-                <span className="text-xs text-gray-600 truncate block max-w-[100px]">
-                  {req.amenities_list.length} amenities
-                </span>
-                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-2 bg-gray-900 text-white text-xs rounded-lg max-w-[200px] opacity-0 invisible group-hover/amenity:opacity-100 group-hover/amenity:visible z-50 shadow-lg">
-                  {req.amenities_list.join(', ')}
-                  <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-gray-900"></div>
-                </div>
-              </div>
-            ) : req.amenities_required ? (
-              <div className="relative group/amenity cursor-help">
-                <span className="text-xs text-gray-600 truncate block max-w-[100px]">
-                  {req.amenities_required.length > 15 ? req.amenities_required.slice(0, 15) + '...' : req.amenities_required}
-                </span>
-                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-2 bg-gray-900 text-white text-xs rounded-lg max-w-[200px] opacity-0 invisible group-hover/amenity:opacity-100 group-hover/amenity:visible z-50 shadow-lg">
-                  {req.amenities_required}
-                  <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-gray-900"></div>
-                </div>
-              </div>
-            ) : (
-              <span className="text-xs text-gray-400">-</span>
-            )}
-          </td>
-
-          {/* Age */}
-          <td className="py-2.5 px-4 text-center">
-            {req.status === 'done' || req.status === 'deprioritised' ? (
-              <span className="text-xs text-gray-400">-</span>
-            ) : (
-              <div className="flex flex-col items-center">
-                <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ${
-                  req.priority_level === 'critical'
-                    ? 'bg-red-100 text-red-700 border border-red-200'
-                    : req.priority_level === 'high'
-                      ? 'bg-yellow-100 text-yellow-700 border border-yellow-300'
-                      : 'bg-green-50 text-green-700 border border-green-200'
-                }`}>
-                  Day {req.age_days ?? 0}
-                </span>
-              </div>
-            )}
-          </td>
-
-          {/* Completed */}
-          <td className="py-2.5 px-4 text-center">
-            <span className={`text-xs ${req.completed_at ? 'text-emerald-600 font-medium' : 'text-gray-400'}`}>
-              {formatDate(req.completed_at)}
-            </span>
-          </td>
-
-          {/* TAT */}
-          <td className="py-2.5 px-4 text-center">
-            {req.completed_at ? (
-              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                {calculateTAT(req.created_at, req.completed_at)}
-              </span>
-            ) : (
-              <span className="text-xs text-gray-400">-</span>
-            )}
-          </td>
-
-          {/* Actions */}
-          <td className="py-2.5 px-4 text-center">
-            <div className="flex items-center justify-center gap-1">
+          <div className="mt-2 flex items-center justify-end gap-1 border-t border-gray-100 pt-2">
+            <div className="flex items-center justify-end gap-1">
               {/* Venues button - shows count after first load */}
               <button
                 onClick={(e) => {
@@ -1373,8 +1013,8 @@ export default function VenueRequirementsDashboard() {
                 </button>
               </div>
             </div>
-          </td>
-        </tr>
+          </div>
+        </div>
 
         {/* Venue Suggestions Modal */}
         {suggestionsExpanded && createPortal(
@@ -1391,7 +1031,7 @@ export default function VenueRequirementsDashboard() {
                     )}
                   </h3>
                   <p className="text-sm text-gray-500 mt-0.5">
-                    {req.city}{req.area ? ` / ${req.area}` : ''}{req.activity ? ` / ${req.activity}` : ''}
+                    {req.city_name}{req.area_name ? ` / ${req.area_name}` : ''}{req.activity_name ? ` / ${req.activity_name}` : ''}
                   </p>
                 </div>
                 <button
@@ -1710,47 +1350,47 @@ export default function VenueRequirementsDashboard() {
         </div>
 
         {/* Summary Tiles */}
-        {summary && (
-          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3 mb-6">
+        {effectiveSummary && (
+          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-4 mb-8">
             <SummaryTile
               label="Total"
-              count={summary.total}
+              count={effectiveSummary.total}
               icon={MapPin}
               color="teal"
             />
             <SummaryTile
               label="Not Picked"
-              count={summary.not_picked}
+              count={effectiveSummary.not_picked}
               icon={Clock}
               color="slate"
             />
             <SummaryTile
               label="Picked"
-              count={summary.picked}
+              count={effectiveSummary.picked}
               icon={CheckCircle}
               color="blue"
             />
             <SummaryTile
               label="Venue Aligned"
-              count={summary.venue_aligned}
+              count={effectiveSummary.venue_aligned}
               icon={MapPin}
               color="cyan"
             />
             <SummaryTile
               label="Leader Approval Pending"
-              count={summary.leader_approval}
+              count={effectiveSummary.leader_approval}
               icon={UserCheck}
               color="purple"
             />
             <SummaryTile
               label="Done"
-              count={summary.done}
+              count={effectiveSummary.done}
               icon={Check}
               color="emerald"
             />
             <SummaryTile
               label="Deprioritised"
-              count={summary.deprioritised}
+              count={effectiveSummary.deprioritised}
               icon={Pause}
               color="amber"
             />
@@ -1765,7 +1405,7 @@ export default function VenueRequirementsDashboard() {
               </div>
               <div className="flex items-baseline gap-1">
                 <span className="text-2xl font-bold text-green-600">
-                  {summary.tat_stats?.average_tat || 0}
+                  {effectiveSummary.tat_stats?.average_tat || 0}
                 </span>
                 <span className="text-sm text-green-600">days</span>
               </div>
@@ -1795,412 +1435,282 @@ export default function VenueRequirementsDashboard() {
           </div>
         )}
 
-        {/* Requirements Section - Collapsible (includes filters) */}
-        <div className="bg-white rounded-xl border border-gray-200 shadow-sm">
-          <button
-            onClick={() => setRequirementsSectionExpanded(!requirementsSectionExpanded)}
-            className="w-full px-4 py-3 flex items-center justify-between bg-teal-50/50 hover:bg-teal-100/50 transition-colors rounded-t-xl"
-          >
-            <div className="flex items-center gap-2">
-              <MapPin className="h-5 w-5 text-teal-600" />
-              <span className="font-medium text-gray-700">
-                Requirements ({displayedHierarchy.reduce((sum, n) => sum + n.count, 0)})
-              </span>
-            </div>
-            {requirementsSectionExpanded ? <ChevronUp size={20} className="text-gray-400" /> : <ChevronDown size={20} className="text-gray-400" />}
-          </button>
+        {/* Requirements Section */}
+        <div className="mb-8">
+          <div className="rounded-lg border border-gray-200 bg-white shadow-sm overflow-hidden">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-200 px-4 py-3">
+              <div className="flex items-center gap-2">
+                <MapPin size={17} className="text-teal-600" />
+                <h2 className="text-sm font-semibold text-gray-900">Requirements</h2>
+                <span className="rounded-full bg-teal-50 px-2 py-0.5 text-xs font-semibold text-teal-700">
+                  {requirementsPanelCount}
+                </span>
+              </div>
 
-          {requirementsSectionExpanded && (
-            <>
-          {/* Filters and Hierarchy Controls */}
-          <div className="p-4 border-b border-gray-200">
-          <div className="flex flex-wrap items-center gap-3">
-            {/* Multiselect Filters */}
-            <MultiSelectDropdown
-              label="Activity"
-              options={filterOptions.activities}
-              selected={filters.activities}
-              onChange={(val) => setFilters(f => ({ ...f, activities: val }))}
-              icon={<Activity size={14} />}
-              compact
-            />
-            <MultiSelectDropdown
-              label="City"
-              options={filterOptions.cities}
-              selected={filters.cities}
-              onChange={(val) => setFilters(f => ({ ...f, cities: val }))}
-              icon={<Building2 size={14} />}
-              compact
-            />
-            <MultiSelectDropdown
-              label="Area"
-              options={filterOptions.areas}
-              selected={filters.areas}
-              onChange={(val) => setFilters(f => ({ ...f, areas: val }))}
-              icon={<MapPin size={14} />}
-              compact
-            />
-            <MultiSelectDropdown
-              label="Club"
-              options={filterOptions.clubs}
-              selected={filters.clubs}
-              onChange={(val) => setFilters(f => ({ ...f, clubs: val }))}
-              icon={<Home size={14} />}
-              compact
-            />
+              <div className="flex flex-wrap items-center gap-2">
+                <MultiSelectDropdown
+                  label="City"
+                  options={filterOptions.cities}
+                  selected={filters.cities}
+                  onChange={(val) => setFilters(f => ({ ...f, cities: val, areas: [] }))}
+                  icon={<Building2 size={14} />}
+                  compact
+                />
+                <MultiSelectDropdown
+                  label="Activity"
+                  options={filterOptions.activities}
+                  selected={filters.activities}
+                  onChange={(val) => setFilters(f => ({ ...f, activities: val }))}
+                  icon={<Activity size={14} />}
+                  compact
+                />
+                <MultiSelectDropdown
+                  label="Area"
+                  options={filterOptions.areas}
+                  selected={filters.areas}
+                  onChange={(val) => setFilters(f => ({ ...f, areas: val }))}
+                  icon={<MapPin size={14} />}
+                  compact
+                />
+                <MultiSelectDropdown<string>
+                  label="Status"
+                  options={[
+                    { id: 'not_picked', name: 'Not Picked' },
+                    { id: 'picked', name: 'Picked' },
+                    { id: 'venue_aligned', name: 'Venue Aligned' },
+                    { id: 'leader_approval', name: 'Leader Approval Pending' }
+                  ]}
+                  selected={activeStatusFilters}
+                  onChange={(val) => setActiveStatusFilters(val)}
+                  icon={<Clock size={14} />}
+                  compact
+                />
 
-            <div className="h-6 w-px bg-gray-200" />
+                <button
+                  onClick={() => setShowDone(prev => !prev)}
+                  className={`rounded-md border px-2.5 py-1 text-xs font-medium transition-colors ${
+                    showDone
+                      ? 'border-emerald-300 bg-emerald-50 text-emerald-700'
+                      : 'border-gray-200 bg-white text-gray-500 hover:bg-gray-50'
+                  }`}
+                >
+                  Done
+                </button>
+                <button
+                  onClick={() => setShowDeprioritised(prev => !prev)}
+                  className={`rounded-md border px-2.5 py-1 text-xs font-medium transition-colors ${
+                    showDeprioritised
+                      ? 'border-amber-300 bg-amber-50 text-amber-700'
+                      : 'border-gray-200 bg-white text-gray-500 hover:bg-gray-50'
+                  }`}
+                >
+                  Deprioritised
+                </button>
 
-            {/* Team Filter Pills */}
-            <div className="flex items-center gap-2">
-              <Users size={14} className="text-gray-400" />
-              <div className="flex items-center gap-1">
-                {TEAM_KEYS.map(teamKey => {
-                  const team = TEAMS[teamKey];
-                  const isActive = filters.teams.includes(teamKey);
-                  return (
-                    <button
-                      key={teamKey}
-                      onClick={() => setFilters(f => ({
-                        ...f,
-                        teams: isActive
-                          ? f.teams.filter(t => t !== teamKey)
-                          : [...f.teams, teamKey]
-                      }))}
-                      className={`px-3 py-1 text-xs font-medium rounded-full transition-all duration-150 ${
-                        isActive
-                          ? 'text-white shadow-sm'
-                          : 'bg-white text-gray-600 hover:bg-gray-50 border border-gray-200'
-                      }`}
-                      style={isActive ? { backgroundColor: team.color.accent } : undefined}
-                    >
-                      {team.name}
-                    </button>
-                  );
-                })}
+                {(filters.activities.length > 0 || filters.cities.length > 0 || filters.areas.length > 0 ||
+                  activeStatusFilters.length !== 4 || showDone || showDeprioritised) && (
+                  <button
+                    onClick={() => {
+                      setFilters({ activities: [], cities: [], areas: [], clubs: [], teams: [] });
+                      setActiveStatusFilters(['not_picked', 'picked', 'venue_aligned', 'leader_approval']);
+                      setShowDone(false);
+                      setShowDeprioritised(false);
+                      setVenuePlatformTeamFilter(null);
+                    }}
+                    className="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-md transition-colors"
+                    title="Clear filters"
+                  >
+                    <X size={14} />
+                  </button>
+                )}
               </div>
             </div>
 
-            <div className="h-6 w-px bg-gray-200" />
-
-            {/* Venue Platform Team Filter (BAU/Supply) */}
-            <div className="flex items-center gap-1">
-              <button
-                onClick={() => setVenuePlatformTeamFilter(prev => prev === 'bau' ? null : 'bau')}
-                className={`px-3 py-1 text-xs font-medium rounded-full transition-all duration-150 ${
-                  venuePlatformTeamFilter === 'bau'
-                    ? 'bg-gray-700 text-white shadow-sm'
-                    : 'bg-white text-gray-600 hover:bg-gray-50 border border-gray-200'
-                }`}
-              >
-                BAU {summary ? `(${summary.bau_count})` : ''}
-              </button>
-              <button
-                onClick={() => setVenuePlatformTeamFilter(prev => prev === 'supply' ? null : 'supply')}
-                className={`px-3 py-1 text-xs font-medium rounded-full transition-all duration-150 ${
-                  venuePlatformTeamFilter === 'supply'
-                    ? 'bg-orange-500 text-white shadow-sm'
-                    : 'bg-white text-gray-600 hover:bg-gray-50 border border-gray-200'
-                }`}
-              >
-                Supply {summary ? `(${summary.supply_count})` : ''}
-              </button>
-            </div>
-
-            <div className="h-6 w-px bg-gray-200" />
-
-            {/* Status Filter - Multi-select dropdown */}
-            <div className="flex items-center gap-2">
-              <MultiSelectDropdown<string>
-                label="Status"
-                options={[
-                  { id: 'not_picked', name: 'Not Picked (NP)' },
-                  { id: 'picked', name: 'Picked (PK)' },
-                  { id: 'venue_aligned', name: 'Venue Aligned (VA)' },
-                  { id: 'leader_approval', name: 'Leader Approval Pending (LAP)' }
-                ]}
-                selected={activeStatusFilters}
-                onChange={(val) => setActiveStatusFilters(val)}
-                icon={<Clock size={14} />}
-                compact
-              />
-
-              {/* Done toggle button */}
-              <button
-                onClick={() => setShowDone(prev => !prev)}
-                className={`px-2.5 py-1 text-xs font-medium rounded-lg border transition-all ${
-                  showDone
-                    ? 'bg-emerald-50 text-emerald-700 border-emerald-300'
-                    : 'bg-white text-gray-500 border-gray-200 hover:border-gray-300 hover:bg-gray-50'
-                }`}
-              >
-                Done ({doneCount})
-              </button>
-
-              {/* Deprioritised toggle button */}
-              <button
-                onClick={() => setShowDeprioritised(prev => !prev)}
-                className={`px-2.5 py-1 text-xs font-medium rounded-lg border transition-all ${
-                  showDeprioritised
-                    ? 'bg-amber-50 text-amber-700 border-amber-300'
-                    : 'bg-white text-gray-500 border-gray-200 hover:border-gray-300 hover:bg-gray-50'
-                }`}
-              >
-                Deprioritised ({deprioritisedCount})
-              </button>
-            </div>
-
-            {/* Clear Filters */}
-            {(filters.activities.length > 0 || filters.cities.length > 0 || filters.areas.length > 0 ||
-              filters.clubs.length > 0 || filters.teams.length > 0 || venuePlatformTeamFilter !== null ||
-              activeStatusFilters.length !== 4 || showDone || showDeprioritised) && (
-              <>
-                <div className="h-6 w-px bg-gray-200" />
-                <button
-                  onClick={() => {
-                    setFilters({ activities: [], cities: [], areas: [], clubs: [], teams: [] });
-                    setActiveStatusFilters(['not_picked', 'picked', 'venue_aligned', 'leader_approval']);
-                    setShowDone(false);
-                    setShowDeprioritised(false);
-                    setVenuePlatformTeamFilter(null);
-                  }}
-                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-500 hover:text-gray-700 hover:bg-gray-50 rounded-lg transition-colors"
-                >
-                  <X size={12} />
-                  Clear
-                </button>
-              </>
-            )}
-          </div>
-
-          {/* Hierarchy Level Controls */}
-          <div className="mt-3 pt-3 border-t border-gray-100 flex items-center gap-4">
-            <div className="flex items-center gap-2">
-              <Layers size={14} className="text-gray-400" />
-              <span className="text-xs font-medium text-gray-500">Hierarchy Order:</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              {hierarchyLevels.map((level, index) => {
-                const isEnabled = enabledLevels.has(level);
-                const isDragging = draggingLevel === level;
-                const isDragTarget = draggingLevel && draggingLevel !== level;
-                const levelConfig: Record<HierarchyLevel, { icon: any; color: string; label: string }> = {
-                  activity: { icon: Activity, color: 'teal', label: 'Activity' },
-                  city: { icon: Building2, color: 'blue', label: 'City' },
-                  area: { icon: MapPin, color: 'cyan', label: 'Area' },
-                  priority: { icon: TrendingUp, color: 'red', label: 'Priority' }
-                };
-                const config = levelConfig[level];
-                const Icon = config.icon;
-
-                // Enhanced color styles
-                const colorStyles: Record<string, { enabled: string; disabled: string }> = {
-                  teal: {
-                    enabled: 'bg-teal-50 text-teal-700 border-teal-200 hover:bg-teal-100 hover:border-teal-300',
-                    disabled: 'bg-gray-50 text-gray-400 border-gray-200 hover:bg-gray-100 hover:border-gray-300'
-                  },
-                  blue: {
-                    enabled: 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100 hover:border-blue-300',
-                    disabled: 'bg-gray-50 text-gray-400 border-gray-200 hover:bg-gray-100 hover:border-gray-300'
-                  },
-                  cyan: {
-                    enabled: 'bg-cyan-50 text-cyan-700 border-cyan-200 hover:bg-cyan-100 hover:border-cyan-300',
-                    disabled: 'bg-gray-50 text-gray-400 border-gray-200 hover:bg-gray-100 hover:border-gray-300'
-                  },
-                  red: {
-                    enabled: 'bg-red-50 text-red-700 border-red-200 hover:bg-red-100 hover:border-red-300',
-                    disabled: 'bg-gray-50 text-gray-400 border-gray-200 hover:bg-gray-100 hover:border-gray-300'
-                  }
-                };
-                const style = colorStyles[config.color as keyof typeof colorStyles];
-
-                return (
-                  <div
-                    key={level}
-                    draggable
-                    onDragStart={(e) => {
-                      e.dataTransfer.effectAllowed = 'move';
-                      setDraggingLevel(level);
-                    }}
-                    onDragEnd={() => setDraggingLevel(null)}
-                    onDragOver={(e) => {
-                      e.preventDefault();
-                      e.dataTransfer.dropEffect = 'move';
-                    }}
-                    onDrop={(e) => {
-                      e.preventDefault();
-                      if (draggingLevel && draggingLevel !== level) {
-                        const newLevels = [...hierarchyLevels];
-                        const dragIdx = newLevels.indexOf(draggingLevel);
-                        const dropIdx = newLevels.indexOf(level);
-                        newLevels.splice(dragIdx, 1);
-                        newLevels.splice(dropIdx, 0, draggingLevel);
-                        setHierarchyLevels(newLevels);
+            {effectiveSummary && (
+              <div className="grid grid-cols-2 border-b border-gray-200 bg-gray-50/70 sm:grid-cols-4 xl:grid-cols-7">
+                {[
+                  { key: 'total', label: 'Total', count: effectiveSummary.total, color: 'text-teal-700' },
+                  { key: 'not_picked', label: 'Not Picked', count: effectiveSummary.not_picked, color: 'text-slate-700' },
+                  { key: 'picked', label: 'Picked', count: effectiveSummary.picked, color: 'text-blue-700' },
+                  { key: 'venue_aligned', label: 'Venue Aligned', count: effectiveSummary.venue_aligned, color: 'text-cyan-700' },
+                  { key: 'leader_approval', label: 'Approval', count: effectiveSummary.leader_approval, color: 'text-purple-700' },
+                  { key: 'done', label: 'Done', count: effectiveSummary.done, color: 'text-emerald-700' },
+                  { key: 'deprioritised', label: 'Deprioritised', count: effectiveSummary.deprioritised, color: 'text-amber-700' }
+                ].map(item => (
+                  <button
+                    key={item.key}
+                    type="button"
+                    onClick={() => {
+                      if (item.key === 'total') {
+                        setActiveStatusFilters(['not_picked', 'picked', 'venue_aligned', 'leader_approval']);
+                        setShowDone(false);
+                        setShowDeprioritised(false);
+                      } else if (item.key === 'done') {
+                        setActiveStatusFilters([]);
+                        setShowDone(true);
+                        setShowDeprioritised(false);
+                      } else if (item.key === 'deprioritised') {
+                        setActiveStatusFilters([]);
+                        setShowDone(false);
+                        setShowDeprioritised(true);
+                      } else {
+                        setActiveStatusFilters([item.key]);
+                        setShowDone(false);
+                        setShowDeprioritised(false);
                       }
                     }}
-                    style={{
-                      transitionDelay: `${index * 20}ms`,
-                      transform: isDragging
-                        ? 'scale(1.05) rotate(-2deg)'
-                        : isDragTarget
-                          ? 'scale(0.98)'
-                          : 'scale(1) rotate(0deg)',
-                      opacity: isDragging ? 0.7 : 1,
-                      boxShadow: isDragging
-                        ? '0 8px 20px -4px rgba(0,0,0,0.15), 0 4px 8px -2px rgba(0,0,0,0.1)'
-                        : 'none'
-                    }}
-                    className={`
-                      flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg cursor-grab active:cursor-grabbing
-                      border text-xs font-medium select-none
-                      transition-all duration-200 ease-out
-                      hover:shadow-md hover:-translate-y-0.5
-                      ${isEnabled ? style.enabled : style.disabled}
-                    `}
+                    className="flex items-center justify-between gap-2 border-b border-r border-gray-200 px-3 py-2 text-left transition-colors hover:bg-white xl:border-b-0"
                   >
-                    <GripVertical
-                      size={12}
-                      className={`transition-all duration-200 ${isDragging ? 'opacity-70 scale-110' : 'opacity-30'}`}
-                    />
-                    <Icon size={12} className={`transition-transform duration-200 ${isEnabled ? '' : 'opacity-50'}`} />
-                    <span className={`transition-opacity duration-200 ${isEnabled ? '' : 'opacity-60'}`}>
-                      {config.label}
-                    </span>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        e.preventDefault();
-                        setEnabledLevels(prev => {
-                          const next = new Set(prev);
-                          if (next.has(level)) {
-                            if (next.size > 1) next.delete(level);
-                          } else {
-                            next.add(level);
-                          }
-                          return next;
-                        });
-                      }}
-                      className={`
-                        ml-1 p-1 rounded-full transition-all duration-200 ease-out
-                        hover:scale-110 active:scale-95
-                        ${isEnabled
-                          ? 'bg-green-100/80 hover:bg-green-200 text-green-600'
-                          : 'bg-gray-200/80 hover:bg-gray-300 text-gray-400'
-                        }
-                      `}
-                    >
-                      <div
-                        className="transition-transform duration-200"
-                        style={{ transform: isEnabled ? 'rotate(0deg) scale(1)' : 'rotate(180deg) scale(0.9)' }}
+                    <span className="truncate text-[10px] font-semibold uppercase text-gray-400">{item.label}</span>
+                    <span className={`text-sm font-bold ${item.color}`}>{item.count}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {loading ? (
+              <div className="flex items-center justify-center py-20">
+                <Loader2 className="h-8 w-8 text-teal-500 animate-spin" />
+              </div>
+            ) : hierarchy.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-20 text-gray-400">
+                <MapPin className="h-12 w-12 mb-4 opacity-40" />
+                <p className="text-lg font-medium">No venue requirements found</p>
+                <p className="text-sm mt-1">Create your first requirement to get started</p>
+              </div>
+            ) : displayedHierarchy.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-12 text-gray-400">
+                <CheckCircle className="h-10 w-10 mb-3 opacity-40" />
+                <p className="text-sm font-medium">No requirements match current filters</p>
+              </div>
+            ) : (
+              <div className="max-h-[72vh] overflow-y-auto bg-gray-50/60 p-4 space-y-6">
+                {requirementGroups.map(group => {
+                  const groupStyles: Record<string, { dot: string; text: string }> = {
+                    red: { dot: 'bg-red-500', text: 'text-red-700' },
+                    teal: { dot: 'bg-teal-500', text: 'text-teal-700' },
+                    blue: { dot: 'bg-blue-500', text: 'text-blue-700' },
+                    slate: { dot: 'bg-slate-400', text: 'text-slate-600' }
+                  };
+                  const styles = groupStyles[group.color];
+                  const expanded = expandedRequirementGroups[group.key] === true;
+                  const locationMap = new Map<string, {
+                    key: string;
+                    city: string;
+                    areas: Set<string>;
+                    requirements: VenueRequirement[];
+                  }>();
+
+                  group.requirements.forEach(req => {
+                    const city = req.city_name || 'Unknown City';
+                    const area = req.area_name || 'Unknown Area';
+                    const locationKey = `${group.key}:${city}`;
+                    const location = locationMap.get(locationKey);
+                    if (location) {
+                      location.areas.add(area);
+                      location.requirements.push(req);
+                    } else {
+                      locationMap.set(locationKey, {
+                        key: locationKey,
+                        city,
+                        areas: new Set([area]),
+                        requirements: [req]
+                      });
+                    }
+                  });
+
+                  const locations = Array.from(locationMap.values()).sort((a, b) => a.city.localeCompare(b.city));
+
+                  return (
+                    <section key={group.key}>
+                      <button
+                        type="button"
+                        onClick={() => setExpandedRequirementGroups(current => ({
+                          ...current,
+                          [group.key]: !expanded
+                        }))}
+                        className={`flex w-full items-center gap-2 rounded-md px-2 py-2 text-left transition-colors hover:bg-white ${
+                          expanded ? 'mb-3' : ''
+                        }`}
                       >
-                        {isEnabled ? (
-                          <Check size={10} strokeWidth={3} />
+                        {expanded ? (
+                          <ChevronDown size={15} className="shrink-0 text-gray-400" />
                         ) : (
-                          <X size={10} strokeWidth={2.5} />
+                          <ChevronRight size={15} className="shrink-0 text-gray-400" />
                         )}
-                      </div>
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
+                        <span className={`h-2.5 w-2.5 rounded-full ${styles.dot}`} />
+                        <h3 className={`text-sm font-semibold ${styles.text}`}>{group.label}</h3>
+                        <span className="text-xs font-semibold text-gray-400">{group.requirements.length}</span>
+                        <span className="text-xs text-gray-400">{group.description}</span>
+                      </button>
 
-            <div className="flex-1" />
+                      {expanded && (
+                        <div className="space-y-4 pl-2">
+                          {locations.map(location => {
+                            const locationExpanded = expandedRequirementLocations[location.key] === true;
+                            return (
+                              <div key={location.key}>
+                                <button
+                                  type="button"
+                                  onClick={() => setExpandedRequirementLocations(current => ({
+                                    ...current,
+                                    [location.key]: !locationExpanded
+                                  }))}
+                                  className={`flex w-full items-center gap-2 rounded-md border border-gray-200 bg-white px-3 py-2 text-left transition-colors hover:bg-gray-50 ${
+                                    locationExpanded ? 'mb-3' : ''
+                                  }`}
+                                >
+                                  {locationExpanded ? (
+                                    <ChevronDown size={14} className="shrink-0 text-gray-400" />
+                                  ) : (
+                                    <ChevronRight size={14} className="shrink-0 text-gray-400" />
+                                  )}
+                                  <Building2 size={14} className="shrink-0 text-gray-400" />
+                                  <span className="text-xs font-semibold text-gray-700">{location.city}</span>
+                                  <span className="text-gray-300">/</span>
+                                  <MapPin size={13} className="shrink-0 text-gray-400" />
+                                  <span className="min-w-0 truncate text-xs text-gray-600">
+                                    {Array.from(location.areas).sort().join(', ')}
+                                  </span>
+                                  <span className="ml-auto shrink-0 text-xs font-semibold text-gray-400">
+                                    {location.requirements.length}
+                                  </span>
+                                </button>
 
-            {/* Expand/Collapse */}
-            <div className="flex items-center gap-2">
-              <button
-                onClick={(e) => { e.preventDefault(); expandAll(); }}
-                type="button"
-                className="px-3 py-1.5 text-xs font-medium text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
-              >
-                Expand All
-              </button>
-              <button
-                onClick={(e) => { e.preventDefault(); collapseAll(); }}
-                type="button"
-                className="px-3 py-1.5 text-xs font-medium text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
-              >
-                Collapse All
-              </button>
-            </div>
+                                {locationExpanded && (
+                                  <div className="grid grid-cols-1 gap-4 xl:grid-cols-2 2xl:grid-cols-3">
+                                    {location.requirements.map(req => (
+                                      <RequirementRow
+                                        key={req.id}
+                                        requirement={req}
+                                        onStatusChange={handleStatusChange}
+                                        onEdit={setEditingRequirement}
+                                        onDelete={setDeleteRequirement}
+                                      />
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </section>
+                  );
+                })}
+              </div>
+            )}
           </div>
-          </div>
-
-              {loading ? (
-                <div className="flex items-center justify-center py-20">
-                  <Loader2 className="h-8 w-8 text-teal-500 animate-spin" />
-                </div>
-              ) : hierarchy.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-20 text-gray-400">
-                  <MapPin className="h-12 w-12 mb-4 opacity-40" />
-                  <p className="text-lg font-medium">No venue requirements found</p>
-                  <p className="text-sm mt-1">Create your first requirement to get started</p>
-                </div>
-              ) : displayedHierarchy.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-12 text-gray-400">
-                  <CheckCircle className="h-10 w-10 mb-3 opacity-40" />
-                  <p className="text-sm font-medium">No requirements match current filters</p>
-                  <p className="text-xs mt-1">Try adjusting your status filters</p>
-                </div>
-              ) : (
-                <div ref={tableContainerRef} className="overflow-x-auto max-h-[60vh] overflow-y-auto">
-                <table className="w-full min-w-[1200px]">
-                  <thead className="sticky top-0 z-10">
-                    <tr className="border-b border-gray-200 bg-gray-50 shadow-sm">
-                      <th className="text-left py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[200px]">
-                        Hierarchy
-                      </th>
-                      <th className="text-left py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[110px]">
-                        Status
-                      </th>
-                      <th className="py-3 px-4 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider">Venue Type</th>
-                      <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[90px]">
-                        Day Type
-                      </th>
-                      <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[80px]">
-                        Capacity
-                      </th>
-                      <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[100px]">
-                        Time
-                      </th>
-                      <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[120px]">
-                        Amenities
-                      </th>
-                      <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[70px]">
-                        Age
-                      </th>
-                      <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[90px]">
-                        Completed
-                      </th>
-                      <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[60px]">
-                        TAT
-                      </th>
-                      <th className="text-center py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[120px]">
-                        Actions
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {displayedHierarchy.map(node => (
-                      <HierarchyRow key={node.id} node={node} />
-                    ))}
-                  </tbody>
-                </table>
-                </div>
-              )}
-            </>
-          )}
         </div>
 
         {/* Venue Repository - Collapsible Section */}
         <div className="mt-6">
-          <VenueRepository />
+          <VenueRepository defaultExpanded={false} />
         </div>
 
         {/* Venue Leads - Collapsible Section */}
         <div className="mt-6">
-          <VenueLeads />
+          <VenueLeads defaultExpanded={false} />
         </div>
       </div>
 
@@ -2492,7 +2002,7 @@ export default function VenueRequirementsDashboard() {
       )}
 
       {/* TAT Analysis Modal */}
-      {showTatModal && summary?.tat_stats && (
+      {showTatModal && effectiveSummary?.tat_stats && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
           <div className="absolute inset-0 bg-black/50" onClick={() => setShowTatModal(false)} />
           <div className="relative bg-white rounded-xl shadow-2xl w-full max-w-lg mx-4 overflow-hidden">
@@ -2522,15 +2032,15 @@ export default function VenueRequirementsDashboard() {
               {/* Stats Summary */}
               <div className="grid grid-cols-3 gap-4 mb-6">
                 <div className="bg-gray-50 rounded-lg p-4 text-center border border-gray-100">
-                  <div className="text-2xl font-bold text-green-600">{summary.tat_stats.average_tat}</div>
+                  <div className="text-2xl font-bold text-green-600">{effectiveSummary.tat_stats.average_tat}</div>
                   <div className="text-xs text-gray-500 mt-1">Average TAT (days)</div>
                 </div>
                 <div className="bg-gray-50 rounded-lg p-4 text-center border border-gray-100">
-                  <div className="text-2xl font-bold text-blue-600">{summary.tat_stats.total_completed}</div>
+                  <div className="text-2xl font-bold text-blue-600">{effectiveSummary.tat_stats.total_completed}</div>
                   <div className="text-xs text-gray-500 mt-1">Total Completed</div>
                 </div>
                 <div className="bg-gray-50 rounded-lg p-4 text-center border border-gray-100">
-                  <div className="text-2xl font-bold text-emerald-600">{summary.tat_stats.within_sla_percent}%</div>
+                  <div className="text-2xl font-bold text-emerald-600">{effectiveSummary.tat_stats.within_sla_percent}%</div>
                   <div className="text-xs text-gray-500 mt-1">Within {4} Days</div>
                 </div>
               </div>
@@ -2539,7 +2049,7 @@ export default function VenueRequirementsDashboard() {
               <div>
                 <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">Day-wise Completion Distribution</h4>
                 <div className="space-y-2">
-                  {summary.tat_stats.day_distribution.map((item, idx) => {
+                  {effectiveSummary.tat_stats.day_distribution.map((item, idx) => {
                     const barColors = ['bg-green-500', 'bg-emerald-500', 'bg-cyan-500', 'bg-blue-500', 'bg-amber-500', 'bg-orange-500', 'bg-red-500'];
                     const barColor = item.day === -1 ? 'bg-red-500' : barColors[Math.min(idx, barColors.length - 1)];
                     return (
@@ -2567,15 +2077,15 @@ export default function VenueRequirementsDashboard() {
               </div>
 
               {/* Insight Box */}
-              {summary.tat_stats.total_completed > 0 && (
+              {effectiveSummary.tat_stats.total_completed > 0 && (
                 <div className="mt-5 p-3 bg-amber-50 rounded-lg border border-amber-100">
                   <p className="text-sm text-amber-800">
-                    💡 <strong>{summary.tat_stats.within_sla_percent}% of venues</strong> are being closed within {4} days (SLA target)
+                    💡 <strong>{effectiveSummary.tat_stats.within_sla_percent}% of venues</strong> are being closed within {4} days (SLA target)
                   </p>
                 </div>
               )}
 
-              {summary.tat_stats.total_completed === 0 && (
+              {effectiveSummary.tat_stats.total_completed === 0 && (
                 <div className="mt-5 p-4 bg-gray-50 rounded-lg border border-gray-200 text-center">
                   <p className="text-sm text-gray-500">No completed venues yet to analyze TAT</p>
                 </div>
@@ -2779,7 +2289,7 @@ function EditRequirementModal({
   const [selectedClubId, setSelectedClubId] = useState<number | undefined>(requirement.club_id);
   const [selectedClubName, setSelectedClubName] = useState<string | undefined>(requirement.club_name);
   const [selectedLaunchId, setSelectedLaunchId] = useState<number | undefined>(requirement.launch_id);
-  const [selectedTargetId, setSelectedTargetId] = useState<number | undefined>(requirement.target_id);
+  const [selectedTargetId, setSelectedTargetId] = useState<number | undefined>((requirement as any).target_id);
 
   // Manual area entry mode (for areas not in DB)
   const [isManualArea, setIsManualArea] = useState(!requirement.area_id && !!requirement.area_name);
@@ -3250,7 +2760,7 @@ function CreateRequirementModal({
   // New scheduling fields
   const [dayTypeId, setDayTypeId] = useState<number | undefined>(undefined);
   const [selectedTimeSlots, setSelectedTimeSlots] = useState<TimeOfDay[]>([]);
-  const [amenitiesRequired, setAmenitiesRequired] = useState('');
+  const amenitiesRequired = '';
   const [capacity, setCapacity] = useState<CapacityBucket | undefined>(undefined);
   const [venueCategories, setVenueCategories] = useState<string[]>([]);
   const [amenitiesList, setAmenitiesList] = useState<string[]>([]);
@@ -3939,7 +3449,6 @@ function CreateRequirementModal({
   );
 }
 
-// Summary tile component
 interface SummaryTileProps {
   label: string;
   count: number;

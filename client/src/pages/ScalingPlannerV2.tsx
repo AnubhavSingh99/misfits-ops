@@ -1952,7 +1952,7 @@ function LaunchModal({ isOpen, onClose, context, onSave }: LaunchModalProps) {
   // Note: city_id and area_id are production IDs - set directly from context
   useEffect(() => {
     if (isOpen && context) {
-      setClubName('')
+      setClubName(context.club_name || '')
       setActivityName(context.activity_name || '')
       // Set city/area IDs directly from context (they're production IDs, matching the API)
       setSelectedCityId(context.city_id)
@@ -1966,7 +1966,26 @@ function LaunchModal({ isOpen, onClose, context, onSave }: LaunchModalProps) {
       setSelectedDayTypeId(null)
       setError(null)
     }
-  }, [isOpen])
+  }, [isOpen, context])
+
+  useEffect(() => {
+    if (!isOpen || selectedCityId || !selectedCityName || cities.length === 0) return
+    const matchedCity = cities.find(c => c.name.toLowerCase() === selectedCityName.toLowerCase())
+    if (matchedCity) {
+      setSelectedCityId(matchedCity.id)
+    }
+  }, [isOpen, selectedCityId, selectedCityName, cities])
+
+  useEffect(() => {
+    if (!isOpen || selectedAreaId || !selectedAreaName || areas.length === 0) return
+    const normalizedArea = selectedAreaName.toLowerCase()
+    const matchedArea = areas.find(a => a.name.toLowerCase() === normalizedArea)
+      || areas.find(a => a.name.toLowerCase().includes(normalizedArea) || normalizedArea.includes(a.name.toLowerCase()))
+    if (matchedArea) {
+      setSelectedAreaId(matchedArea.id)
+      setSelectedAreaName(matchedArea.name)
+    }
+  }, [isOpen, selectedAreaId, selectedAreaName, areas])
 
   if (!isOpen || !context) return null
 
@@ -2591,7 +2610,7 @@ function HierarchyRow({ node, level, expanded, onToggle, onEditTarget, onDeleteT
       {/* Leaders column - shows rolled up leaders_required from requirements */}
       <td className="py-3 px-3 text-center">
         {isTarget ? (
-          <div className="text-gray-400 text-xs">-</div>
+          <span className="text-gray-300 text-xs">-</span>
         ) : (
           <div className="flex items-center justify-center gap-1">
             {(node.leaders_required_total || 0) > 0 ? (

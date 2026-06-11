@@ -20,7 +20,6 @@ async function syncCities(): Promise<number> {
   const cities = await queryProduction(`
     SELECT id, name, state
     FROM city
-    WHERE is_active = true
     ORDER BY name
   `);
 
@@ -54,7 +53,6 @@ async function syncAreas(): Promise<number> {
     SELECT a.id, a.name, c.name as city_name
     FROM area a
     JOIN city c ON a.city_id = c.id
-    WHERE c.is_active = true
     ORDER BY c.name, a.name
   `);
 

@@ -117,6 +117,14 @@ const heavyEndpointLimiter = rateLimit({
   message: 'Too many requests to this endpoint, please try again later',
   standardHeaders: true,
   legacyHeaders: false,
+  skip: (req) => {
+    if (process.env.NODE_ENV === 'production') {
+      return false;
+    }
+
+    const ip = req.ip || req.socket.remoteAddress || '';
+    return ['::1', '127.0.0.1', '::ffff:127.0.0.1'].includes(ip);
+  },
 });
 
 // Apply rate limiting to API routes

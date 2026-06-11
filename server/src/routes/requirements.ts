@@ -19,7 +19,11 @@ function shouldUseRequirementsApiFallback(): boolean {
 
 async function fetchRequirementsFallback(req: Request): Promise<any | null> {
   if (!shouldUseRequirementsApiFallback()) return null;
-  const base = (process.env.LEADER_REQUIREMENTS_FALLBACK_URL || 'https://operations.misfits.net.in').trim().replace(/\/+$/, '');
+  const base = (
+    process.env.REQUIREMENTS_FALLBACK_URL ||
+    process.env.LEADER_REQUIREMENTS_FALLBACK_URL ||
+    'https://operations.misfits.net.in'
+  ).trim().replace(/\/+$/, '');
   if (!base) return null;
 
   const targetUrl = `${base}${req.originalUrl}`;
@@ -30,6 +34,85 @@ async function fetchRequirementsFallback(req: Request): Promise<any | null> {
   } catch {
     return null;
   }
+}
+
+function mergeLeaderStatusCounts(a: any = {}, b: any = {}) {
+  return {
+    not_picked: (a.not_picked || 0) + (b.not_picked || 0),
+    deprioritised: (a.deprioritised || 0) + (b.deprioritised || 0),
+    in_progress: (a.in_progress || 0) + (b.in_progress || 0),
+    done: (a.done || 0) + (b.done || 0)
+  };
+}
+
+function mergeLeaderHierarchy(baseNodes: any[] = [], extraNodes: any[] = []): any[] {
+  const merged = new Map<string, any>();
+
+  const addNode = (node: any) => {
+    const key = `${node.type || ''}:${String(node.name || '').toLowerCase().trim()}`;
+    const existing = merged.get(key);
+
+    if (!existing) {
+      merged.set(key, {
+        ...node,
+        status_counts: { ...(node.status_counts || {}) },
+        children: node.children ? mergeLeaderHierarchy(node.children, []) : undefined,
+        requirements: node.requirements ? [...node.requirements] : undefined
+      });
+      return;
+    }
+
+    existing.count = (existing.count || 0) + (node.count || 0);
+    existing.leaders_required_total = (existing.leaders_required_total || 0) + (node.leaders_required_total || 0);
+    existing.status_counts = mergeLeaderStatusCounts(existing.status_counts, node.status_counts);
+    existing.growth_effort_count = (existing.growth_effort_count || 0) + (node.growth_effort_count || 0);
+    existing.platform_effort_count = (existing.platform_effort_count || 0) + (node.platform_effort_count || 0);
+    existing.existing_leader_effort_count = (existing.existing_leader_effort_count || 0) + (node.existing_leader_effort_count || 0);
+
+    if (node.requirements) {
+      existing.requirements = [...(existing.requirements || []), ...node.requirements];
+    }
+    if (node.children) {
+      existing.children = mergeLeaderHierarchy(existing.children || [], node.children);
+    }
+  };
+
+  [...baseNodes, ...extraNodes].forEach(addNode);
+  return Array.from(merged.values());
+}
+
+function mergeLeaderSummaries(base: any = {}, extra: any = {}) {
+  return {
+    total: (base.total || 0) + (extra.total || 0),
+    leaders_required_total: (base.leaders_required_total || 0) + (extra.leaders_required_total || 0),
+    not_picked: (base.not_picked || 0) + (extra.not_picked || 0),
+    deprioritised: (base.deprioritised || 0) + (extra.deprioritised || 0),
+    in_progress: (base.in_progress || 0) + (extra.in_progress || 0),
+    done: (base.done || 0) + (extra.done || 0)
+  };
+}
+
+function mergeRequirementOptions(base: any = {}, extra: any = {}) {
+  const mergeList = (a: any[] = [], b: any[] = []) => {
+    const seen = new Set<string>();
+    const merged: any[] = [];
+
+    for (const item of [...a, ...b]) {
+      const key = String(item.name || '').toLowerCase().trim();
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      merged.push(item);
+    }
+
+    return merged.sort((left, right) => String(left.name || '').localeCompare(String(right.name || '')));
+  };
+
+  return {
+    activities: mergeList(base.activities, extra.activities),
+    cities: mergeList(base.cities, extra.cities),
+    areas: mergeList(base.areas, extra.areas),
+    clubs: mergeList(base.clubs, extra.clubs)
+  };
 }
 
 // =====================================================
@@ -377,10 +460,10 @@ router.get('/leaders/hierarchy', async (req: Request, res: Response) => {
       return node;
     };
 
-    const hierarchy = Array.from(hierarchyMap.values()).map(convertMapToArray);
+    let hierarchy = Array.from(hierarchyMap.values()).map(convertMapToArray);
 
     // Calculate summary
-    const summary = {
+    let summary = {
       total: requirements.length,
       leaders_required_total: requirements.reduce((sum: number, r: any) => sum + (r.leaders_required || 1), 0),
       not_picked: requirements.filter((r: any) => r.status === 'not_picked').length,
@@ -389,11 +472,10 @@ router.get('/leaders/hierarchy', async (req: Request, res: Response) => {
       done: requirements.filter((r: any) => r.status === 'done').length
     };
 
-    if (requirements.length === 0) {
-      const fallback = await fetchRequirementsFallback(req);
-      if (fallback?.success && (Array.isArray(fallback.hierarchy) || fallback.summary)) {
-        return res.json(fallback);
-      }
+    const fallback = await fetchRequirementsFallback(req);
+    if (fallback?.success && (Array.isArray(fallback.hierarchy) || fallback.summary)) {
+      hierarchy = mergeLeaderHierarchy(fallback.hierarchy || [], hierarchy);
+      summary = mergeLeaderSummaries(fallback.summary || {}, summary);
     }
 
     res.json({ success: true, hierarchy, summary });
@@ -439,23 +521,16 @@ router.get('/leaders/filter-options', async (req: Request, res: Response) => {
       `)
     ]);
 
-    const options = {
+    let options = {
       activities: activities.rows,
       cities: cities.rows,
       areas: areas.rows,
       clubs: clubs.rows
     };
 
-    const isLocalEmpty = options.activities.length === 0
-      && options.cities.length === 0
-      && options.areas.length === 0
-      && options.clubs.length === 0;
-
-    if (isLocalEmpty) {
-      const fallback = await fetchRequirementsFallback(req);
-      if (fallback?.success && fallback.options) {
-        return res.json(fallback);
-      }
+    const fallback = await fetchRequirementsFallback(req);
+    if (fallback?.success && fallback.options) {
+      options = mergeRequirementOptions(fallback.options, options);
     }
 
     res.json({
@@ -500,11 +575,15 @@ router.post('/leaders', async (req: Request, res: Response) => {
   try {
     const data: CreateRequirementRequest = req.body;
 
-    // Validate club_id or launch_id is required
-    if (!data.club_id && !data.launch_id) {
+    const hasHierarchyContext = (data.activity_id && data.city_id && data.area_id)
+      || (data.activity_name && data.city_name && data.area_name);
+
+    // Requirements can be tied to a club/launch, or created at area level for
+    // new-club demand before the club exists in production.
+    if (!data.club_id && !data.launch_id && !hasHierarchyContext) {
       return res.status(400).json({
         success: false,
-        error: 'Either club_id or launch_id is required. Every requirement must be linked to a club or launch.'
+        error: 'Either club_id, launch_id, or activity/city/area context is required.'
       });
     }
 
@@ -895,13 +974,26 @@ router.get('/venues/supply-demand', async (req: Request, res: Response) => {
     const totalInProgress = hierarchy.reduce((s, a) => s + a.supply_in_progress, 0);
     const totalGap = hierarchy.reduce((s, a) => s + a.gap, 0);
 
+    const summary = { total_demand: totalDemand, supply_done: totalDone, supply_in_progress: totalInProgress, gap: totalGap };
+
+    if (supplyResult.rows.length === 0) {
+      const fallback = await fetchRequirementsFallback(req);
+      if (fallback?.success && fallback.summary) {
+        return res.json(fallback);
+      }
+    }
+
     res.json({
       success: true,
-      summary: { total_demand: totalDemand, supply_done: totalDone, supply_in_progress: totalInProgress, gap: totalGap },
+      summary,
       hierarchy,
     });
   } catch (error) {
     console.error('Error fetching supply-demand:', error);
+    const fallback = await fetchRequirementsFallback(req);
+    if (fallback?.success) {
+      return res.json(fallback);
+    }
     res.status(500).json({ success: false, error: 'Failed to fetch supply-demand data' });
   }
 });
@@ -1381,9 +1473,20 @@ router.get('/venues/hierarchy', async (req: Request, res: Response) => {
       tat_stats: tatStats
     };
 
+    if (requirements.length === 0) {
+      const fallback = await fetchRequirementsFallback(req);
+      if (fallback?.success && (Array.isArray(fallback.hierarchy) || fallback.summary)) {
+        return res.json(fallback);
+      }
+    }
+
     res.json({ success: true, hierarchy, summary });
   } catch (error) {
     console.error('Error fetching venue requirements hierarchy:', error);
+    const fallback = await fetchRequirementsFallback(req);
+    if (fallback?.success) {
+      return res.json(fallback);
+    }
     res.status(500).json({ success: false, error: 'Failed to fetch hierarchy' });
   }
 });
