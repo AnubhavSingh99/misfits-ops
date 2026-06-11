@@ -191,8 +191,12 @@ function formatTimeObj(t?: { hour: number; minute: number }): string {
   return t.minute === 0 ? `${h} ${ampm}` : `${h}:${String(t.minute).padStart(2, '0')} ${ampm}`;
 }
 
-export function VenueRepository() {
-  const [isExpanded, setIsExpanded] = useState(false);
+interface VenueRepositoryProps {
+  defaultExpanded?: boolean;
+}
+
+export function VenueRepository({ defaultExpanded = true }: VenueRepositoryProps) {
+  const [isExpanded, setIsExpanded] = useState(defaultExpanded);
   const [loading, setLoading] = useState(false);
   const [venues, setVenues] = useState<Venue[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);

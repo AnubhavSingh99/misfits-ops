@@ -32,6 +32,8 @@ interface FilterOption {
   name: string;
   is_launch?: boolean;
   launch_id?: number;
+  club_id?: number;
+  club_name?: string;
 }
 
 // Generate default name from context
@@ -199,11 +201,27 @@ export function CreateLeaderRequirementModal({
     if (selectedActivityId && selectedCityId && selectedAreaId) {
       const fetchClubsAndLaunches = async () => {
         try {
-          // Use the original endpoint which already handles both clubs and launches
-          const res = await fetch(`${API_BASE}/scaling-tasks/filters/clubs?activity_ids=${selectedActivityId}&city_ids=${selectedCityId}&area_ids=${selectedAreaId}`);
+          const params = new URLSearchParams({
+            activity_id: String(selectedActivityId),
+            city_id: String(selectedCityId),
+            area_id: String(selectedAreaId)
+          });
+          const res = await fetch(`${API_BASE}/requirements/clubs-and-launches?${params}`);
           const data = await res.json();
           if (data.success) {
-            setClubs(data.options || []);
+            const clubOptions = (data.clubs || []).map((club: any) => ({
+              ...club,
+              id: `club_${club.id}`,
+              name: club.name
+            }));
+            const launchOptions = (data.launches || []).map((launch: any) => ({
+              ...launch,
+              id: `launch_${launch.id}`,
+              launch_id: launch.id,
+              is_launch: true,
+              name: `${launch.name} (Launch)`
+            }));
+            setClubs([...clubOptions, ...launchOptions]);
           }
         } catch (err) {
           console.error('Failed to fetch clubs and launches:', err);
@@ -269,10 +287,10 @@ export function CreateLeaderRequirementModal({
       setSelectedClubId(undefined);
       setSelectedLaunchId(club.launch_id);
       setIsLaunchSelected(true);
-      setSelectedClubName(club.name.replace('🚀 ', '')); // Remove emoji for display
+      setSelectedClubName(club.name.replace(' (Launch)', ''));
     } else if (value) {
       // It's a regular club
-      setSelectedClubId(parseInt(value));
+      setSelectedClubId(parseInt(value.replace('club_', ''), 10));
       setSelectedLaunchId(undefined);
       setIsLaunchSelected(false);
       setSelectedClubName(club?.name);
@@ -409,23 +427,17 @@ export function CreateLeaderRequirementModal({
                 </select>
               </div>
               <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">Club / Launch *</label>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Club / Launch</label>
                 <select
-                  value={isLaunchSelected ? `launch_${selectedLaunchId}` : (selectedClubId || '')}
+                  value={isLaunchSelected ? `launch_${selectedLaunchId}` : (selectedClubId ? `club_${selectedClubId}` : '')}
                   onChange={handleClubChange}
-                  disabled={!selectedAreaId || (selectedAreaId && clubs.length === 0)}
-                  className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-sm bg-white disabled:bg-gray-100 disabled:cursor-not-allowed ${selectedAreaId && clubs.length === 0 ? 'border-amber-300 text-amber-600' : 'border-gray-300'}`}
+                  disabled={!selectedAreaId}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-sm bg-white disabled:bg-gray-100 disabled:cursor-not-allowed"
                 >
-                  {selectedAreaId && clubs.length === 0 ? (
-                    <option value="">No clubs, add a launch first</option>
-                  ) : (
-                    <>
-                      <option value="">Select Club</option>
-                      {clubs.map(c => (
-                        <option key={c.id} value={c.id}>{c.name}</option>
-                      ))}
-                    </>
-                  )}
+                  <option value="">New club at area level</option>
+                  {clubs.map(c => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
                 </select>
               </div>
             </div>
@@ -514,7 +526,7 @@ export function CreateLeaderRequirementModal({
             </div>
 
             {/* Actions */}
-            <div className="flex gap-3 pt-2">
+            <div className="sticky bottom-0 -mx-6 flex gap-3 border-t border-gray-100 bg-white px-6 pt-3 pb-1">
               <button
                 type="button"
                 onClick={onClose}

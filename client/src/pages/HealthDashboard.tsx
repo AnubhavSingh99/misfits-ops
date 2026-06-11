@@ -40,6 +40,14 @@ import {
   type HealthClubComment,
   type HealthDashboardClub,
 } from '../components/HealthDashboardOverlays';
+import { getWeekBounds, formatWeekLabel, type WeekOption } from '../components/scaling';
+
+function formatLocalDate(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
 
 interface ClubHealth {
   club_pk?: number;
@@ -132,12 +140,18 @@ export function HealthDashboard() {
   const [showTrends, setShowTrends] = useState(false);
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [meetupWeek, setMeetupWeek] = useState<WeekOption>('last_completed');
+  const [meetupCustomWeekStart, setMeetupCustomWeekStart] = useState<Date | null>(null);
+  const meetupWeekBounds = useMemo(
+    () => getWeekBounds(meetupWeek, meetupCustomWeekStart || undefined),
+    [meetupCustomWeekStart, meetupWeek]
+  );
   const [showHealthInfo, setShowHealthInfo] = useState(false);
   const [hoveredClub, setHoveredClub] = useState<HealthPopupClub>(null);
   const [hoveredClubPosition, setHoveredClubPosition] = useState<ClubMeetupPopupPosition | null>(null);
   const [hoveredClubLoadingId, setHoveredClubLoadingId] = useState<number | null>(null);
   const [hoveredClubError, setHoveredClubError] = useState<string | null>(null);
-  const [hoveredClubDataById, setHoveredClubDataById] = useState<Record<number, ClubMeetupPopupData>>({});
+  const [hoveredClubDataById, setHoveredClubDataById] = useState<Record<string, ClubMeetupPopupData>>({});
   const popupHideTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const popupHoverRef = useRef(false);
   const hoveredClubIdRef = useRef<number | null>(null);
@@ -156,6 +170,9 @@ export function HealthDashboard() {
   const [showPriorityDrawer, setShowPriorityDrawer] = useState(false);
 
   const getClubKey = useCallback((club: Pick<ClubHealth, 'club_pk' | 'id'>) => club.club_pk ?? Number(club.id), []);
+  const getMeetupCacheKey = useCallback((clubId: number) => {
+    return `${clubId}:${formatLocalDate(meetupWeekBounds.start)}:${formatLocalDate(meetupWeekBounds.end)}`;
+  }, [meetupWeekBounds.end, meetupWeekBounds.start]);
 
   const priorityClubs = useMemo(() => {
     return clubs
@@ -316,12 +333,12 @@ export function HealthDashboard() {
   useEffect(() => {
     fetchHealthData();
 
-    // Set up auto-refresh every 30 seconds if enabled
+    // Set up auto-refresh every 60 seconds if enabled
     let interval: NodeJS.Timeout | undefined;
     if (autoRefresh) {
       interval = setInterval(() => {
         fetchHealthData();
-      }, 30000); // 30 seconds
+      }, 60000); // 60 seconds
     }
 
     return () => {
@@ -442,6 +459,18 @@ export function HealthDashboard() {
       }
     });
 
+  const filteredClubMetrics = filteredClubs.reduce(
+    (counts, club) => {
+      counts.total += 1;
+      if (club.health_status === 'healthy') counts.healthy += 1;
+      if (club.health_status === 'at_risk') counts.atRisk += 1;
+      if (club.health_status === 'critical') counts.critical += 1;
+      if (club.health_status === 'dormant') counts.dormant += 1;
+      return counts;
+    },
+    { total: 0, healthy: 0, atRisk: 0, critical: 0, dormant: 0 }
+  );
+
   // Filter options for MultiSelectDropdown (needs {id, name} format)
   const filterOptions = useMemo(() => {
     const cities = Array.from(new Set(clubs.map(club => club.city)))
@@ -525,12 +554,17 @@ export function HealthDashboard() {
 
   const loadClubMeetupData = useCallback(async (clubId: number) => {
     const requestSeq = ++popupRequestSeqRef.current;
+    const cacheKey = getMeetupCacheKey(clubId);
+    const params = new URLSearchParams({
+      week_start: formatLocalDate(meetupWeekBounds.start),
+      week_end: formatLocalDate(meetupWeekBounds.end),
+    });
 
     try {
       setHoveredClubLoadingId(clubId);
       setHoveredClubError(null);
 
-      const response = await fetch(`/api/targets/clubs/${clubId}/meetup-details`);
+      const response = await fetch(`/api/targets/clubs/${clubId}/meetup-details?${params.toString()}`);
       if (!response.ok) {
         throw new Error('Failed to load meetup details');
       }
@@ -542,7 +576,7 @@ export function HealthDashboard() {
 
       setHoveredClubDataById(prev => ({
         ...prev,
-        [clubId]: result,
+        [cacheKey]: result,
       }));
     } catch (error) {
       if (popupRequestSeqRef.current !== requestSeq || hoveredClubIdRef.current !== clubId) {
@@ -555,7 +589,7 @@ export function HealthDashboard() {
         setHoveredClubLoadingId(null);
       }
     }
-  }, []);
+  }, [getMeetupCacheKey, meetupWeekBounds.end, meetupWeekBounds.start]);
 
   const updateHoverPopupPosition = useCallback((rect: DOMRect) => {
     const popupWidth = Math.min(720, window.innerWidth - 32);
@@ -599,13 +633,31 @@ export function HealthDashboard() {
     setHoveredClubError(null);
     updateHoverPopupPosition(event.currentTarget.getBoundingClientRect());
 
-    if (hoveredClubDataById[clubPk]) {
+    const cacheKey = getMeetupCacheKey(clubPk);
+
+    if (hoveredClubDataById[cacheKey]) {
       setHoveredClubLoadingId(null);
       return;
     }
 
     void loadClubMeetupData(clubPk);
-  }, [hoveredClubDataById, loadClubMeetupData, updateHoverPopupPosition]);
+  }, [getMeetupCacheKey, hoveredClubDataById, loadClubMeetupData, updateHoverPopupPosition]);
+
+  useEffect(() => {
+    if (!hoveredClub || hoveredClubIdRef.current === null) {
+      return;
+    }
+
+    const clubPk = hoveredClubIdRef.current;
+    const cacheKey = getMeetupCacheKey(clubPk);
+    if (hoveredClubDataById[cacheKey]) {
+      setHoveredClubLoadingId(null);
+      setHoveredClubError(null);
+      return;
+    }
+
+    void loadClubMeetupData(clubPk);
+  }, [getMeetupCacheKey, hoveredClub, hoveredClubDataById, loadClubMeetupData]);
 
   const handleClubRowLeave = useCallback(() => {
     scheduleHideHoverPopup();
@@ -838,7 +890,7 @@ export function HealthDashboard() {
                 onChange={(e) => setAutoRefresh(e.target.checked)}
                 className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
               />
-              <span className="ml-2 text-sm text-gray-700">Auto-refresh (30s)</span>
+              <span className="ml-2 text-sm text-gray-700">Auto-refresh (60s)</span>
             </label>
             {lastUpdated && (
               <span className="text-xs text-gray-500">
@@ -863,7 +915,7 @@ export function HealthDashboard() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-gray-600">Total Clubs</p>
-                <p className="text-2xl font-bold text-gray-900">{metrics.total_clubs}</p>
+                <p className="text-2xl font-bold text-gray-900">{filteredClubMetrics.total}</p>
               </div>
               <Users className="h-8 w-8 text-blue-600" />
             </div>
@@ -874,12 +926,14 @@ export function HealthDashboard() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-gray-600">Healthy Clubs</p>
-                <p className="text-2xl font-bold text-green-600">{metrics.healthy_clubs}</p>
+                <p className="text-2xl font-bold text-green-600">{filteredClubMetrics.healthy}</p>
               </div>
               <CheckCircle className="h-8 w-8 text-green-600" />
             </div>
             <p className="text-xs text-gray-500 mt-2">
-              {Math.round((metrics.healthy_clubs / metrics.total_clubs) * 100)}% of total
+              {filteredClubMetrics.total > 0
+                ? Math.round((filteredClubMetrics.healthy / filteredClubMetrics.total) * 100)
+                : 0}% of total
             </p>
           </div>
 
@@ -887,7 +941,7 @@ export function HealthDashboard() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-gray-600">At Risk</p>
-                <p className="text-2xl font-bold text-yellow-600">{metrics.at_risk_clubs}</p>
+                <p className="text-2xl font-bold text-yellow-600">{filteredClubMetrics.atRisk}</p>
               </div>
               <AlertTriangle className="h-8 w-8 text-yellow-600" />
             </div>
@@ -898,7 +952,7 @@ export function HealthDashboard() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-gray-600">Critical</p>
-                <p className="text-2xl font-bold text-red-600">{metrics.critical_clubs}</p>
+                <p className="text-2xl font-bold text-red-600">{filteredClubMetrics.critical}</p>
               </div>
               <XCircle className="h-8 w-8 text-red-600" />
             </div>
@@ -909,7 +963,7 @@ export function HealthDashboard() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-gray-600">Dormant</p>
-                <p className="text-2xl font-bold text-orange-600">{metrics.dormant_clubs || 0}</p>
+                <p className="text-2xl font-bold text-orange-600">{filteredClubMetrics.dormant}</p>
               </div>
               <Activity className="h-8 w-8 text-orange-600" />
             </div>
@@ -1283,7 +1337,15 @@ export function HealthDashboard() {
           clubArea={hoveredClub.area}
           loading={hoveredClubLoadingId === (hoveredClub.club_pk ?? Number(hoveredClub.id))}
           error={hoveredClubError}
-          data={hoveredClubDataById[hoveredClub.club_pk ?? Number(hoveredClub.id)] || null}
+          data={hoveredClubDataById[getMeetupCacheKey(hoveredClub.club_pk ?? Number(hoveredClub.id))] || null}
+          weekLabel={formatWeekLabel(meetupWeekBounds.start, meetupWeekBounds.end)}
+          selectedWeek={meetupWeek}
+          weekBounds={meetupWeekBounds}
+          onWeekChange={setMeetupWeek}
+          onCustomWeekChange={(start) => {
+            setMeetupCustomWeekStart(start);
+            setMeetupWeek('custom');
+          }}
           onMouseEnter={handlePopupMouseEnter}
           onMouseLeave={handlePopupMouseLeave}
         />

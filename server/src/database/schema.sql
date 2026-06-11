@@ -198,6 +198,25 @@ CREATE TABLE health_club_comments (
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE health_weekly_club_notes (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  club_pk INTEGER NOT NULL,
+  club_id VARCHAR(100),
+  club_name VARCHAR(255) NOT NULL,
+  week_start DATE NOT NULL,
+  week_end DATE NOT NULL,
+  analyst_comment TEXT,
+  operational_notes TEXT,
+  hypothesis TEXT,
+  action_item TEXT,
+  owner VARCHAR(255),
+  follow_up_status VARCHAR(50),
+  problem_tag VARCHAR(100),
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE (club_pk, week_start)
+);
+
 -- 7. Team Performance & Gamification
 CREATE TABLE team_performance (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -230,6 +249,9 @@ CREATE INDEX idx_poc_structure_cities ON poc_structure USING GIN(cities);
 CREATE INDEX idx_health_metrics_meetup_time ON health_metrics(meetup_id, measured_at);
 CREATE INDEX idx_health_club_priorities_created_at ON health_club_priorities(created_at DESC);
 CREATE INDEX idx_health_club_comments_club_pk_created_at ON health_club_comments(club_pk, created_at DESC);
+CREATE INDEX idx_health_weekly_notes_week_start ON health_weekly_club_notes(week_start DESC);
+CREATE INDEX idx_health_weekly_notes_club_pk ON health_weekly_club_notes(club_pk);
+CREATE INDEX idx_health_weekly_notes_owner ON health_weekly_club_notes(owner);
 
 -- TRIGGERS for Real-time Updates
 CREATE OR REPLACE FUNCTION update_meetup_health()

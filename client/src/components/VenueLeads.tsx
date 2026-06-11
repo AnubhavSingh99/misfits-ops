@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import {
   ChevronDown, ChevronUp, MapPin, Loader2, RefreshCw,
@@ -201,8 +202,12 @@ const SEL  = `${INP} bg-white`;
 
 // ── Component ────────────────────────────────────────────────────────────────
 
-export function VenueLeads() {
-  const [isExpanded, setIsExpanded]   = useState(false);
+interface VenueLeadsProps {
+  defaultExpanded?: boolean;
+}
+
+export default function VenueLeads({ defaultExpanded = true }: VenueLeadsProps) {
+  const [isExpanded, setIsExpanded]   = useState(defaultExpanded);
   const [loading, setLoading]         = useState(false);
   const [leads, setLeads]             = useState<VenueLead[]>([]);
   const [stats, setStats]             = useState<Stats | null>(null);
