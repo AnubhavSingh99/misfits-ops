@@ -3,6 +3,7 @@ import { logger } from '../utils/logger';
 
 // Get token lazily to ensure dotenv has loaded
 const getSlackBotToken = () => process.env.SLACK_BOT_TOKEN || '';
+const getStartClubLeadSlackChannel = () => process.env.SYC_SLACK_CHANNEL_ID || SLACK_CHANNELS.ops.id;
 const SLACK_API_URL = 'https://slack.com/api';
 
 // User IDs to tag on SLA breach
@@ -37,6 +38,20 @@ interface SlackResponse {
   channel?: string;
 }
 
+interface StartClubLead {
+  id: number | string;
+  application_ref?: string;
+  name?: string;
+  city_name?: string;
+  city?: string;
+  sub_area?: string;
+  activity_name?: string;
+  activity?: string;
+  user_phone?: string;
+  status?: string;
+  stage_age_hours?: number | string;
+}
+
 /**
  * Post a message to Slack
  */
@@ -65,6 +80,248 @@ async function postMessage(channel: string, text: string, blocks?: any[]): Promi
   } catch (error) {
     logger.error('Failed to post to Slack:', error);
     return { ok: false, error: 'Network error' };
+  }
+}
+
+async function updateMessage(channel: string, ts: string, text: string, blocks?: any[]): Promise<SlackResponse> {
+  try {
+    const response = await fetch(`${SLACK_API_URL}/chat.update`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${getSlackBotToken()}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        channel,
+        ts,
+        text,
+        blocks
+      })
+    });
+
+    const data = await response.json() as SlackResponse;
+    if (!data.ok) {
+      logger.error(`Slack update API error: ${data.error}`);
+    }
+    return data;
+  } catch (error) {
+    logger.error('Failed to update Slack message:', error);
+    return { ok: false, error: 'Network error' };
+  }
+}
+
+async function ensureStartClubSlackTable() {
+  if (!pool) return;
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS syc_slack_lead_notifications (
+      application_id BIGINT PRIMARY KEY,
+      slack_channel TEXT NOT NULL,
+      slack_message_ts TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      acted_by TEXT,
+      action_taken TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+}
+
+function field(label: string, value: any) {
+  const normalized = String(value ?? '').trim() || 'N/A';
+  return {
+    type: 'mrkdwn',
+    text: `*${label}:*\n${normalized}`
+  };
+}
+
+function buildStartClubLeadBlocks(lead: StartClubLead, resolved?: { text: string; context: string }) {
+  const leadId = String(lead.id);
+  const title = lead.application_ref || `SYC-${leadId}`;
+  const cityParts = [lead.city || lead.city_name, lead.sub_area].filter(Boolean);
+
+  const blocks: any[] = [
+    {
+      type: 'header',
+      text: {
+        type: 'plain_text',
+        text: `Potential Lead: ${lead.name || title}`,
+        emoji: true
+      }
+    },
+    {
+      type: 'section',
+      fields: [
+        field('Lead ID', title),
+        field('Name', lead.name),
+        field('City', cityParts.join(' | ')),
+        field('Activity', lead.activity || lead.activity_name),
+        field('Phone', lead.user_phone),
+        field('Status', lead.status || 'ON_HOLD')
+      ]
+    }
+  ];
+
+  if (resolved) {
+    blocks.push({
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text: resolved.text
+      }
+    });
+    blocks.push({
+      type: 'context',
+      elements: [{ type: 'mrkdwn', text: resolved.context }]
+    });
+    return blocks;
+  }
+
+  blocks.push({
+    type: 'actions',
+    block_id: `syc_lead_${leadId}`,
+    elements: [
+      {
+        type: 'button',
+        text: { type: 'plain_text', text: 'Approve', emoji: true },
+        style: 'primary',
+        action_id: 'syc_lead_approve',
+        value: JSON.stringify({ lead_id: leadId, action: 'approve' })
+      },
+      {
+        type: 'button',
+        text: { type: 'plain_text', text: 'Reject', emoji: true },
+        style: 'danger',
+        action_id: 'syc_lead_reject',
+        value: JSON.stringify({ lead_id: leadId, action: 'reject' })
+      }
+    ]
+  });
+
+  return blocks;
+}
+
+export async function sendStartClubPotentialLeadNotification(lead: StartClubLead): Promise<{ success: boolean; messageTs?: string; error?: string }> {
+  try {
+    const token = getSlackBotToken();
+    if (!token) {
+      logger.warn('Start Club Slack notification skipped: SLACK_BOT_TOKEN is not configured');
+      return { success: false, error: 'SLACK_BOT_TOKEN is not configured' };
+    }
+
+    const applicationId = Number.parseInt(String(lead.id), 10);
+    if (!Number.isFinite(applicationId)) {
+      return { success: false, error: 'Invalid lead id' };
+    }
+
+    await ensureStartClubSlackTable();
+
+    if (pool) {
+      const existing = await pool.query(
+        `SELECT slack_channel, slack_message_ts
+         FROM syc_slack_lead_notifications
+         WHERE application_id = $1 AND status = 'pending'
+         LIMIT 1`,
+        [applicationId]
+      );
+      if (existing.rows.length > 0) {
+        return { success: true, messageTs: existing.rows[0].slack_message_ts };
+      }
+    }
+
+    const channel = getStartClubLeadSlackChannel();
+    const text = `Potential lead waiting for review: ${lead.name || lead.application_ref || applicationId}`;
+    const response = await postMessage(channel, text, buildStartClubLeadBlocks(lead));
+
+    if (!response.ok || !response.ts) {
+      return { success: false, error: response.error || 'Slack message failed' };
+    }
+
+    if (pool) {
+      await pool.query(
+        `INSERT INTO syc_slack_lead_notifications (application_id, slack_channel, slack_message_ts, status)
+         VALUES ($1, $2, $3, 'pending')
+         ON CONFLICT (application_id)
+         DO UPDATE SET slack_channel = EXCLUDED.slack_channel,
+                       slack_message_ts = EXCLUDED.slack_message_ts,
+                       status = 'pending',
+                       acted_by = NULL,
+                       action_taken = NULL,
+                       updated_at = NOW()`,
+        [applicationId, response.channel || channel, response.ts]
+      );
+    }
+
+    return { success: true, messageTs: response.ts };
+  } catch (error: any) {
+    logger.error('Failed to send Start Club potential lead Slack notification:', error);
+    return { success: false, error: error?.message || 'Failed to send Slack notification' };
+  }
+}
+
+export async function updateStartClubLeadSlackMessage(
+  lead: StartClubLead,
+  result: { action: 'approve' | 'reject'; actorName?: string; channel?: string; messageTs?: string; error?: string }
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const applicationId = Number.parseInt(String(lead.id), 10);
+    const actionLabel = result.action === 'approve' ? 'Approved for interview' : 'Rejected';
+    const actor = result.actorName ? ` by ${result.actorName}` : '';
+    const resolved = result.error
+      ? {
+          text: `Could not ${result.action} this lead: ${result.error}`,
+          context: 'The dashboard was not updated. Please review this lead manually.'
+        }
+      : {
+          text: `${actionLabel}${actor}`,
+          context: result.action === 'approve'
+            ? 'Lead moved to Interview Pending.'
+            : 'Lead moved to Rejected.'
+        };
+
+    let channel = result.channel;
+    let ts = result.messageTs;
+
+    if ((!channel || !ts) && pool && Number.isFinite(applicationId)) {
+      await ensureStartClubSlackTable();
+      const existing = await pool.query(
+        `SELECT slack_channel, slack_message_ts
+         FROM syc_slack_lead_notifications
+         WHERE application_id = $1
+         LIMIT 1`,
+        [applicationId]
+      );
+      channel = channel || existing.rows[0]?.slack_channel;
+      ts = ts || existing.rows[0]?.slack_message_ts;
+    }
+
+    if (!channel || !ts) {
+      return { success: false, error: 'Slack message reference not found' };
+    }
+
+    const text = `${actionLabel}${actor}: ${lead.name || lead.application_ref || lead.id}`;
+    const response = await updateMessage(channel, ts, text, buildStartClubLeadBlocks(lead, resolved));
+
+    if (!response.ok) {
+      return { success: false, error: response.error || 'Slack update failed' };
+    }
+
+    if (pool && Number.isFinite(applicationId) && !result.error) {
+      await pool.query(
+        `UPDATE syc_slack_lead_notifications
+         SET status = 'resolved',
+             acted_by = $2,
+             action_taken = $3,
+             updated_at = NOW()
+         WHERE application_id = $1`,
+        [applicationId, result.actorName || null, result.action]
+      );
+    }
+
+    return { success: true };
+  } catch (error: any) {
+    logger.error('Failed to update Start Club lead Slack message:', error);
+    return { success: false, error: error?.message || 'Failed to update Slack message' };
   }
 }
 

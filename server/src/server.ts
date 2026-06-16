@@ -38,6 +38,7 @@ import { addClient as addSharkTankSSEClient } from './services/sharkTank/sseMana
 import supportProxyRoutes from './routes/supportProxy';
 import startYourClubRoutes from './routes/startYourClub';
 import venueLeadsRoutes from './routes/venueLeads';
+import slackRoutes from './routes/slack';
 import { addClient as addStartClubSSEClient } from './services/startYourClub/sseManager';
 
 // Import services
@@ -95,11 +96,17 @@ app.options('*', cors({
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Cache-Control', 'Pragma', 'Expires'],
 }));
 
+function captureRawBody(req: any, _res: any, buf: Buffer) {
+  if (buf?.length) {
+    req.rawBody = Buffer.from(buf);
+  }
+}
+
 // General middleware
 app.use(compression());
 app.use(morgan('combined'));
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: '10mb', verify: captureRawBody }));
+app.use(express.urlencoded({ extended: true, verify: captureRawBody }));
 
 // Rate limiting for API endpoints
 const apiLimiter = rateLimit({
@@ -174,6 +181,7 @@ app.use('/api/shark-tank/webhook', sharkTankWebhookRoutes);
 app.use('/api/shark-tank/pending-replies', sharkTankPendingRepliesRoutes);
 app.use('/api/start-club', startYourClubRoutes);
 app.use('/api/venue-leads', venueLeadsRoutes);
+app.use('/api/slack', slackRoutes);
 // SSE endpoint for Shark Tank CRM real-time updates
 app.get('/api/shark-tank/events', (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
