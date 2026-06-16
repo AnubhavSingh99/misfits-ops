@@ -7,6 +7,7 @@ import { broadcast } from '../services/startYourClub/sseManager';
 import { misfitsApi, misfitsSuperAdminApi } from '../services/startYourClub/misfitsApi';
 import { callGrpc } from '../services/grpcClient';
 import { logger } from '../utils/logger';
+import { sendStartClubPotentialLeadNotification } from '../services/slackService';
 
 const CITY_SUB_AREA_SEPARATOR = ' | ';
 const DELHI_SUB_AREAS = ['North Delhi', 'South Delhi', 'East Delhi', 'West Delhi', 'Central Delhi', 'New Delhi'];
@@ -1150,6 +1151,14 @@ async function appendPotentialLeadNote(applicationId: number, note: string) {
   });
 }
 
+function notifyPotentialLeadInSlack(lead: any) {
+  if (String(lead?.status || '').toUpperCase() !== 'ON_HOLD') return;
+
+  sendStartClubPotentialLeadNotification(lead).catch((error) => {
+    logger.warn('Failed to notify Slack for potential lead:', error?.message || error);
+  });
+}
+
 // GET /admin/all — List all applications (filterable, sortable, paginated)
 router.get('/admin/all', async (req: Request, res: Response) => {
   try {
@@ -2122,6 +2131,9 @@ router.post('/admin/create-lead', async (req: Request, res: Response) => {
 
     const freshApp = await fetchFreshApplicationById(createdApplicationId);
     broadcast('application_updated', freshApp || { id: createdApplicationId, status: normalizedTargetStatus });
+    if (normalizedTargetStatus === 'ON_HOLD') {
+      notifyPotentialLeadInSlack(freshApp || { id: createdApplicationId, status: 'ON_HOLD' });
+    }
     res.status(201).json({ success: true, data: freshApp || apiRes.data });
   } catch (error: any) {
     logger.error('Failed to create lead:', error);
@@ -2516,6 +2528,9 @@ router.patch('/admin/:id/review', async (req: Request, res: Response) => {
     const toStatus = statusMap[effectiveAction] || 'UNDER_REVIEW';
 
     broadcast('application_updated', { id, status: toStatus });
+    if (toStatus === 'ON_HOLD') {
+      notifyPotentialLeadInSlack(freshApp);
+    }
     res.json({ success: true, data: freshApp });
   } catch (error: any) {
     logger.error('Failed to review application:', error);
@@ -2633,6 +2648,9 @@ router.patch('/admin/:id/status', async (req: Request, res: Response) => {
     const freshApp = mapAppRow(updated.rows[0]);
 
     broadcast('application_updated', { id, status: to_status });
+    if (String(to_status).toUpperCase() === 'ON_HOLD') {
+      notifyPotentialLeadInSlack(freshApp);
+    }
     res.json({ success: true, data: freshApp });
   } catch (error: any) {
     logger.error('Failed to update status:', error);
@@ -2679,6 +2697,9 @@ router.patch('/admin/:id/force-status', async (req: Request, res: Response) => {
     }
 
     broadcast('application_updated', { id, status });
+    if (String(status).toUpperCase() === 'ON_HOLD') {
+      notifyPotentialLeadInSlack(freshApp);
+    }
     res.json({ success: true, data: freshApp });
   } catch (error: any) {
     logger.error('Failed to force-status lead:', error);
@@ -3029,6 +3050,9 @@ router.patch('/admin/:id/reject', async (req: Request, res: Response) => {
     const freshApp = mapAppRow(updated.rows[0]);
 
     broadcast('application_updated', { id, status: freshApp.status || 'REJECTED' });
+    if (String(freshApp.status || '').toUpperCase() === 'ON_HOLD') {
+      notifyPotentialLeadInSlack(freshApp);
+    }
     res.json({ success: true, data: freshApp });
   } catch (error: any) {
     logger.error('Failed to reject application:', error);
