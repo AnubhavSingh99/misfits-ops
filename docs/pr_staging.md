@@ -74,7 +74,7 @@ The staging EC2 box needs:
 - passwordless `sudo` for writing `/etc/nginx/conf.d` and reloading Nginx
 - a shared environment file at `/home/ec2-user/pr-staging/.env`
 
-The shared env file should contain the same safe runtime values the backend needs for staging, such as database, Redis, Slack, gRPC, and external API settings. PR-specific values like `PORT`, `FRONTEND_URL`, and `NODE_ENV` are injected by the deploy script.
+The shared env file should contain the same safe runtime values the backend needs for staging, such as database, Redis, Slack, gRPC, and external API settings. During deploy, it is copied into each PR release root and into `server/.env`, because the compiled backend reads env from the server working directory. PR-specific values like `PORT`, `FRONTEND_URL`, and `NODE_ENV` are injected by the deploy script.
 
 ## DNS
 
