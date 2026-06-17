@@ -1,0 +1,45 @@
+name: Production Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Prepare SSH key
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.PROD_DEPLOY_SSH_KEY || secrets.PR_STAGING_SSH_KEY }}
+          DEPLOY_HOST: ${{ secrets.PROD_DEPLOY_HOST || secrets.PR_STAGING_HOST || '3.108.218.47' }}
+        run: |
+          test -n "$DEPLOY_SSH_KEY"
+          mkdir -p ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/production_deploy_key
+          chmod 600 ~/.ssh/production_deploy_key
+          ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts
+
+      - name: Deploy production
+        env:
+          DEPLOY_HOST: ${{ secrets.PROD_DEPLOY_HOST || secrets.PR_STAGING_HOST || '3.108.218.47' }}
+          DEPLOY_USER: ${{ secrets.PROD_DEPLOY_USER || secrets.PR_STAGING_USER || 'ec2-user' }}
+          DEPLOY_PATH: ${{ vars.PROD_DEPLOY_PATH || '/home/ec2-user/misfits-ops' }}
+          PM2_APP: ${{ vars.PROD_PM2_APP || 'misfits-ops' }}
+          WEB_ROOT: ${{ vars.PROD_WEB_ROOT || '/var/www/operations' }}
+          HEALTH_URL: ${{ vars.PROD_HEALTH_URL || 'http://localhost/health' }}
+          DEPLOY_BRANCH: main
+          DEPLOY_SHA: ${{ github.event_name == 'push' && github.sha || '' }}
+          SSH_KEY_PATH: ~/.ssh/production_deploy_key
+        run: bash scripts/production_deploy.sh

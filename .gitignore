@@ -174,3 +174,4 @@ ecosystem.config.js
 *.sh
 !scripts/pr_staging_deploy.sh
 !scripts/pr_staging_cleanup.sh
+!scripts/production_deploy.sh
