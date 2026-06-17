@@ -1121,7 +1121,7 @@ function normalizeRejectionInput(rawReason: any, rawNote?: any): { reason: strin
 
 function isPotentialLeadDecision(rawPotentialLead: any, rawReason: any): boolean {
   const reasonInput = String(rawReason || '').trim();
-  if (reasonInput === 'potential_lead' || reasonInput === 'no_leader_requirement') return true;
+  if (reasonInput === 'potential_lead') return true;
 
   if (typeof rawPotentialLead === 'boolean') return rawPotentialLead;
 
@@ -2467,7 +2467,8 @@ router.patch('/admin/:id/review', async (req: Request, res: Response) => {
     const potentialLead = action === 'reject'
       && normalizedRejection.reason === 'other'
       && isPotentialLeadDecision(potential_lead, rejection_reason);
-    const effectiveAction = potentialLead ? 'on_hold' : action;
+    // Potential-lead rejection is a tag/repository signal, not an ON_HOLD transition.
+    const effectiveAction = action;
 
     if (!['select_for_interview', 'reject', 'on_hold'].includes(action)) {
       return res.status(400).json({ success: false, error: 'Invalid action. Must be select_for_interview, reject, or on_hold' });
@@ -2972,38 +2973,13 @@ router.patch('/admin/:id/reject', async (req: Request, res: Response) => {
     if (currentStatusResult.rows.length === 0) {
       return res.status(404).json({ success: false, error: 'Application not found' });
     }
-    const currentStatus = String(currentStatusResult.rows[0].status || '').trim().toUpperCase();
-    // Business rule:
-    // If a lead is already ON_HOLD, rejecting (even with "Potential Lead") should
-    // move it to REJECTED, not keep it in ON_HOLD.
-    const shouldMoveToOnHold = potentialLead && currentStatus !== 'ON_HOLD';
 
     if (!normalizedRejection.reason) {
       return res.status(400).json({ success: false, error: 'Rejection reason is required' });
     }
 
-    if (shouldMoveToOnHold) {
-      try {
-        await callGrpc('SuperAdminService', 'StartYourClubReviewApplication', {
-          application_id: parseInt(id),
-          outcome: 2, // ON_HOLD
-          screening_ratings: ratings || {},
-          rejection_reason: ''
-        });
-      } catch (holdErr: any) {
-        logger.warn('Review-on-hold failed, falling back to direct status patch:', holdErr.message);
-        const apiRes = await misfitsApi('PATCH', `/start-your-club/admin/${id}/status`, { status: 'ON_HOLD' });
-        if (!apiRes.ok) {
-          const fallbackError = apiRes.error || apiRes.data?.message || holdErr.message;
-          const bestError = fallbackError === 'fetch failed' ? (holdErr.message || fallbackError) : fallbackError;
-          return res.status(apiRes.status || 500).json({ success: false, error: bestError });
-        }
-      }
-
-      if (normalizedRejection.note) {
-        await appendPotentialLeadNote(parseInt(id), normalizedRejection.note);
-      }
-    } else if (ratings && Object.keys(ratings).length > 0) {
+    // Potential-lead rejection should remain REJECTED; only the explicit On Hold action creates ON_HOLD.
+    if (ratings && Object.keys(ratings).length > 0) {
       // If ratings are provided, save them via the review endpoint (reject outcome) to preserve them
       try {
         await callGrpc('SuperAdminService', 'StartYourClubReviewApplication', {
