@@ -172,3 +172,5 @@ ecosystem.config.js
 
 # Script files
 *.sh
+!scripts/pr_staging_deploy.sh
+!scripts/pr_staging_cleanup.sh
