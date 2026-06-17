@@ -84,6 +84,8 @@ Create a wildcard DNS record pointing to the staging server:
 *.operations-staging.misfits.net.in -> 3.108.218.47
 ```
 
+If this is managed in Cloudflare, set the record to **DNS only** unless Cloudflare has an SSL certificate that covers nested PR hosts like `pr-142.operations-staging.misfits.net.in`. The default Cloudflare wildcard certificate usually covers only one subdomain level, so a proxied nested wildcard can redirect to HTTPS and then fail TLS before the request reaches Nginx.
+
 ## Manual Commands
 
 Deploy a PR manually:
