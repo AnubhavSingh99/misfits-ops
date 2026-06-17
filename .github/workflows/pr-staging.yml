@@ -47,6 +47,15 @@ jobs:
           chmod 600 ~/.ssh/pr_staging_key
           ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts
 
+      - name: Select deployment automation
+        id: automation
+        run: |
+          if [ -f automation/scripts/pr_staging_deploy.sh ]; then
+            echo "dir=automation" >> "$GITHUB_OUTPUT"
+          else
+            echo "dir=pr-source" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Deploy PR staging
         id: deploy
         env:
@@ -64,7 +73,7 @@ jobs:
           PR_STAGING_SSL_CERT_PATH: ${{ vars.PR_STAGING_SSL_CERT_PATH }}
           PR_STAGING_SSL_KEY_PATH: ${{ vars.PR_STAGING_SSL_KEY_PATH }}
           PR_STAGING_SOURCE_DIR: ${{ github.workspace }}/pr-source
-        run: bash automation/scripts/pr_staging_deploy.sh
+        run: bash "${{ steps.automation.outputs.dir }}/scripts/pr_staging_deploy.sh"
 
       - name: Comment staging URL
         env:
@@ -99,6 +108,15 @@ jobs:
           chmod 600 ~/.ssh/pr_staging_key
           ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts
 
+      - name: Select deployment automation
+        id: automation
+        run: |
+          if [ -f automation/scripts/pr_staging_cleanup.sh ]; then
+            echo "dir=automation" >> "$GITHUB_OUTPUT"
+          else
+            echo "dir=." >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Remove PR staging
         id: cleanup
         env:
@@ -111,7 +129,7 @@ jobs:
           PR_STAGING_SCHEME: ${{ vars.PR_STAGING_SCHEME || 'http' }}
           PR_STAGING_REMOTE_ROOT: ${{ vars.PR_STAGING_REMOTE_ROOT || '/home/ec2-user/pr-staging' }}
           PR_STAGING_WEB_ROOT: ${{ vars.PR_STAGING_WEB_ROOT || '/var/www/pr-staging' }}
-        run: bash automation/scripts/pr_staging_cleanup.sh
+        run: bash "${{ steps.automation.outputs.dir }}/scripts/pr_staging_cleanup.sh"
 
       - name: Comment cleanup
         env:
