@@ -1,0 +1,141 @@
+name: PR Staging
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  deploy:
+    if: github.event.action != 'closed' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    concurrency:
+      group: pr-staging-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    steps:
+      - name: Check out PR code
+        uses: actions/checkout@v4
+        with:
+          path: pr-source
+
+      - name: Check out deployment automation
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.ref }}
+          path: automation
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: |
+            pr-source/client/package-lock.json
+            pr-source/server/package-lock.json
+
+      - name: Prepare SSH key
+        env:
+          PR_STAGING_SSH_KEY: ${{ secrets.PR_STAGING_SSH_KEY }}
+          DEPLOY_HOST: ${{ secrets.PR_STAGING_HOST || '3.108.218.47' }}
+        run: |
+          test -n "$PR_STAGING_SSH_KEY"
+          mkdir -p ~/.ssh
+          printf '%s\n' "$PR_STAGING_SSH_KEY" > ~/.ssh/pr_staging_key
+          chmod 600 ~/.ssh/pr_staging_key
+          ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts
+
+      - name: Select deployment automation
+        id: automation
+        run: |
+          if [ -f automation/scripts/pr_staging_deploy.sh ]; then
+            echo "dir=automation" >> "$GITHUB_OUTPUT"
+          else
+            echo "dir=pr-source" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Deploy PR staging
+        id: deploy
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_SHA: ${{ github.event.pull_request.head.sha }}
+          DEPLOY_HOST: ${{ secrets.PR_STAGING_HOST || '3.108.218.47' }}
+          DEPLOY_USER: ${{ secrets.PR_STAGING_USER || 'ec2-user' }}
+          SSH_KEY_PATH: ~/.ssh/pr_staging_key
+          STAGING_BASE_DOMAIN: ${{ vars.PR_STAGING_BASE_DOMAIN || 'operations-staging.misfits.net.in' }}
+          PR_STAGING_SCHEME: ${{ vars.PR_STAGING_SCHEME || 'http' }}
+          PR_STAGING_REMOTE_ROOT: ${{ vars.PR_STAGING_REMOTE_ROOT || '/home/ec2-user/pr-staging' }}
+          PR_STAGING_WEB_ROOT: ${{ vars.PR_STAGING_WEB_ROOT || '/var/www/pr-staging' }}
+          PR_STAGING_ENV_FILE: ${{ vars.PR_STAGING_ENV_FILE || '/home/ec2-user/pr-staging/.env' }}
+          PR_STAGING_PORT_BASE: ${{ vars.PR_STAGING_PORT_BASE || '15000' }}
+          PR_STAGING_SSL_CERT_PATH: ${{ vars.PR_STAGING_SSL_CERT_PATH }}
+          PR_STAGING_SSL_KEY_PATH: ${{ vars.PR_STAGING_SSL_KEY_PATH }}
+          PR_STAGING_SOURCE_DIR: ${{ github.workspace }}/pr-source
+        run: bash "${{ steps.automation.outputs.dir }}/scripts/pr_staging_deploy.sh"
+
+      - name: Comment staging URL
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PUBLIC_URL: ${{ steps.deploy.outputs.public_url }}
+        run: |
+          gh pr comment "$PR_NUMBER" --body "PR staging is ready: ${PUBLIC_URL}"
+
+  cleanup:
+    if: github.event.action == 'closed' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    concurrency:
+      group: pr-staging-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
+    steps:
+      - name: Check out deployment automation
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.ref }}
+          path: automation
+
+      - name: Prepare SSH key
+        env:
+          PR_STAGING_SSH_KEY: ${{ secrets.PR_STAGING_SSH_KEY }}
+          DEPLOY_HOST: ${{ secrets.PR_STAGING_HOST || '3.108.218.47' }}
+        run: |
+          test -n "$PR_STAGING_SSH_KEY"
+          mkdir -p ~/.ssh
+          printf '%s\n' "$PR_STAGING_SSH_KEY" > ~/.ssh/pr_staging_key
+          chmod 600 ~/.ssh/pr_staging_key
+          ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts
+
+      - name: Select deployment automation
+        id: automation
+        run: |
+          if [ -f automation/scripts/pr_staging_cleanup.sh ]; then
+            echo "dir=automation" >> "$GITHUB_OUTPUT"
+          else
+            echo "dir=." >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Remove PR staging
+        id: cleanup
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_SHA: ${{ github.event.pull_request.head.sha }}
+          DEPLOY_HOST: ${{ secrets.PR_STAGING_HOST || '3.108.218.47' }}
+          DEPLOY_USER: ${{ secrets.PR_STAGING_USER || 'ec2-user' }}
+          SSH_KEY_PATH: ~/.ssh/pr_staging_key
+          STAGING_BASE_DOMAIN: ${{ vars.PR_STAGING_BASE_DOMAIN || 'operations-staging.misfits.net.in' }}
+          PR_STAGING_SCHEME: ${{ vars.PR_STAGING_SCHEME || 'http' }}
+          PR_STAGING_REMOTE_ROOT: ${{ vars.PR_STAGING_REMOTE_ROOT || '/home/ec2-user/pr-staging' }}
+          PR_STAGING_WEB_ROOT: ${{ vars.PR_STAGING_WEB_ROOT || '/var/www/pr-staging' }}
+        run: bash "${{ steps.automation.outputs.dir }}/scripts/pr_staging_cleanup.sh"
+
+      - name: Comment cleanup
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PUBLIC_URL: ${{ steps.cleanup.outputs.public_url }}
+        run: |
+          gh pr comment "$PR_NUMBER" --body "PR staging removed: ${PUBLIC_URL}"
