@@ -719,9 +719,8 @@ function LeadRow({
   };
 
   const requiresRejectionComment = rejectionReason === 'other';
-  const autoPotentialLead = rejectionReason === 'no_leader_requirement';
   const requiresPotentialLeadDecision = rejectionReason === 'other';
-  const isPotentialLead = autoPotentialLead || (requiresPotentialLeadDecision && potentialLeadDecision === 'yes');
+  const isPotentialLead = requiresPotentialLeadDecision && potentialLeadDecision === 'yes';
   const normalizedRejectionReason = rejectionReason;
   const normalizedRejectionNote = requiresRejectionComment
     ? rejectionComment.trim()
@@ -854,7 +853,7 @@ function LeadRow({
     if (action === 'reject') {
       body.rejection_reason = normalizedRejectionReason;
       if (normalizedRejectionNote) body.rejection_note = normalizedRejectionNote;
-      if (autoPotentialLead || requiresPotentialLeadDecision) body.potential_lead = isPotentialLead;
+      if (requiresPotentialLeadDecision) body.potential_lead = isPotentialLead;
     }
     const res = await fetch(`${API_BASE}/admin/${app.id}/review`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
@@ -983,7 +982,7 @@ function LeadRow({
     if (!body.rejection_note && detail?.status === 'INTERVIEW_PENDING' && interviewNotScheduledNote) {
       body.rejection_note = interviewNotScheduledNote;
     }
-    if (autoPotentialLead || requiresPotentialLeadDecision) body.potential_lead = isPotentialLead;
+    if (requiresPotentialLeadDecision) body.potential_lead = isPotentialLead;
     // Include ratings if we're in review states
     if (['UNDER_REVIEW', 'ON_HOLD'].includes(detail?.status || '')) {
       body.ratings = screeningRatings;
