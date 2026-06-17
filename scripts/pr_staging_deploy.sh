@@ -246,15 +246,31 @@ cd "$REMOTE_RELEASE_DIR/server"
 npm ci
 npm run build
 
+SERVER_ENTRY="dist/server.js"
+if [[ ! -f "$SERVER_ENTRY" && -f "dist/server/src/server.js" ]]; then
+  SERVER_ENTRY="dist/server/src/server.js"
+fi
+if [[ ! -f "$SERVER_ENTRY" ]]; then
+  echo "Compiled server entry not found. Looked for dist/server.js and dist/server/src/server.js." >&2
+  find dist -maxdepth 5 -type f | sort | sed -n '1,80p' >&2 || true
+  exit 1
+fi
+
 pm2 delete "$PM2_APP" >/dev/null 2>&1 || true
 PORT="$API_PORT" FRONTEND_URL="$PUBLIC_URL" NODE_ENV="$SERVER_NODE_ENV" \
-  pm2 start npm --name "$PM2_APP" -- run start:compiled
+  pm2 start "$SERVER_ENTRY" --name "$PM2_APP"
 pm2 save >/dev/null || true
 
 sudo mv "$NGINX_CONF_TMP" "$NGINX_CONF_TARGET"
 sudo nginx -t
 sudo systemctl reload nginx || sudo service nginx reload
 
+for _ in {1..30}; do
+  if curl -fsS "http://127.0.0.1:${API_PORT}/health" >/dev/null; then
+    break
+  fi
+  sleep 1
+done
 curl -fsS "http://127.0.0.1:${API_PORT}/health" >/dev/null
 
 rm -f "$SOURCE_ARCHIVE" "$CLIENT_DIST_ARCHIVE"
