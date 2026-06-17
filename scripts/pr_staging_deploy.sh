@@ -238,9 +238,12 @@ tar -xzf "$CLIENT_DIST_ARCHIVE" -C "$WEB_DIR"
 
 if [[ -f "$PR_STAGING_ENV_FILE" ]]; then
   cp "$PR_STAGING_ENV_FILE" "$REMOTE_RELEASE_DIR/.env"
+  cp "$PR_STAGING_ENV_FILE" "$REMOTE_RELEASE_DIR/server/.env"
 else
   touch "$REMOTE_RELEASE_DIR/.env"
+  touch "$REMOTE_RELEASE_DIR/server/.env"
 fi
+chmod 600 "$REMOTE_RELEASE_DIR/.env" "$REMOTE_RELEASE_DIR/server/.env"
 
 cd "$REMOTE_RELEASE_DIR/server"
 npm ci
