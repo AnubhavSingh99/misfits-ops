@@ -1173,24 +1173,7 @@ export default function LeaderRequirementsDashboard({
         </div>
 
         {/* Summary Tiles */}
-        {summary && (
-          isCompact ? (
-            <div className="flex flex-wrap items-center gap-2 mb-5">
-              {[
-                { label: 'Requirements', count: summary.total, tone: 'bg-slate-100 text-slate-700' },
-                { label: 'Leaders', count: summary.leaders_required_total ?? summary.total, tone: 'bg-indigo-50 text-indigo-700' },
-                { label: 'Not Picked', count: summary.not_picked, tone: 'bg-slate-100 text-slate-700' },
-                { label: 'In Progress', count: summary.in_progress, tone: 'bg-blue-50 text-blue-700' },
-                { label: 'Done', count: summary.done, tone: 'bg-emerald-50 text-emerald-700' },
-                { label: 'Paused', count: summary.deprioritised, tone: 'bg-amber-50 text-amber-700' },
-              ].map(stat => (
-                <span key={stat.label} className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium ${stat.tone}`}>
-                  <span className="uppercase tracking-wide opacity-70">{stat.label}</span>
-                  <span className="font-mono text-sm">{stat.count}</span>
-                </span>
-              ))}
-            </div>
-          ) : (
+        {summary && !isCompact && (
             <div className="grid grid-cols-3 md:grid-cols-4 xl:grid-cols-6 gap-2 mb-4">
               <SummaryTile
                 label="Requirements"
@@ -1229,7 +1212,6 @@ export default function LeaderRequirementsDashboard({
                 color="amber"
               />
             </div>
-          )
         )}
 
         {/* Filters and Hierarchy Controls */}
